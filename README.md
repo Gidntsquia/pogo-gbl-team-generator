@@ -77,6 +77,28 @@ Try it on the bundled fixture:
 node src/cli.js fixtures/sample-pokegenie.csv
 ```
 
+### Best Buddy (level 51) mons
+
+Poke Genie's CSV export doesn't carry a Best Buddy column, so the importer
+can't tell which of your Pokemon are eligible for the extra Best Buddy level
+(51, one level above the normal cap of 50) purely from a stock export. If
+you want a Best Buddy mon scored and built at its true level-51 potential,
+add the column yourself before running the CLI:
+
+- **Poke Genie CSV**: add a `Best Buddy` (or `Buddy`) column and put a
+  truthy value (`TRUE`, `Yes`, `Y`, or `1`) in it for each Best Buddy mon,
+  blank/`FALSE`/`No` otherwise.
+- **Generic CSV**: add a `bestbuddy` column with the same truthy values —
+  see `mapGenericRow` in `src/importer/index.js` for the exact header
+  aliases recognized (`bestbuddy`, `best buddy`, `buddy`).
+
+The importer recognizes these headers opportunistically in both formats
+(see `src/importer/index.js`); a mon without the column just defaults to
+`bestBuddy: false`, matching a non-Best-Buddy Pokemon. When set, the engine
+levels that mon up to 51 instead of 50 (see `buildPokemon` in
+`src/engine/harness.js`), which can raise its best-possible CP-1500 IV
+spread's stat product slightly.
+
 ### Tuning the search (speed vs. thoroughness)
 
 Total 3v3 battles run = `C(topK, 3) candidate teams × meta teams × 9 lead
@@ -125,9 +147,10 @@ small search size, and checks the resulting report file.
 ## Known limitations / not yet implemented
 
 See `ROADMAP.md` for the full backlog. Notably:
-- No Best Buddy (level 51) detection from Poke Genie exports — the
-  importer only picks it up if a generic CSV explicitly has a
-  `Best Buddy` column.
+- No *automatic* Best Buddy (level 51) detection — a stock Poke Genie
+  export carries no Best Buddy column, so it must be added by hand (see
+  "Best Buddy (level 51) mons" above) for those mons to be scored/built at
+  level 51.
 - Teams are built and scored using each Pokemon's pvpoke-*recommended*
   moveset, not your Pokemon's actual currently-learned moves.
 - Meta teams are a fixed curated pool, not weighted by observed usage.
