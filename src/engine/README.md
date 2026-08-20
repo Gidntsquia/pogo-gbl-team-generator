@@ -7,14 +7,73 @@ produce comes from executing `vendor/pvpoke`'s unmodified JS.
 
 ## Files
 
-- `pvpokeLoader.js` — loads seven vendor/pvpoke source files into a Node
+- `pvpokeLoader.js` — loads pvpoke's battle-engine source files into a Node
   `vm` context with a small browser-globals shim (see below). Exports
-  `loadPvpokeEngine(opts?)`.
+  `loadPvpokeEngine(opts?)` (the seven core engine files) and
+  `loadTrainingModules(context, vendorRoot)` (adds `Player`, `TrainingAI`,
+  `DecisionOption` plus the AI difficulty archetypes, for team battles).
 - `harness.js` — the public API: `initEngine`, `buildPokemon`, `simBattle`.
   Builds on `pvpokeLoader.js` by injecting gamemaster + ranking data read
   directly from `vendor/pvpoke/src/data/*.json`, and adding the small
   amount of glue logic pvpoke's UI code doesn't expose as a standalone
   function (see the comment in `buildPokemon` about the level-search loop).
+- `teamBattle.js` — headless **3v3 team battles** via pvpoke's own
+  Training-mode ("emulate") engine and `TrainingAI`. Exports
+  `initTeamBattle(ctx)` and `battleTeams(ctx, {teamA, teamB, leadA, leadB,
+  difficulty, seed})`. See "3v3 team battles" below.
+
+## 3v3 team battles (`teamBattle.js`)
+
+pvpoke's Training mode is the real GBL 3v3 engine: `Battle.js` run in
+`emulate` mode with a `Player` per side (team of 3, shared pool of 2 shields,
+45-second switch timer) and `TrainingAI` deciding leads, shields, switches,
+charged-move usage, and baiting. `battleTeams` runs that engine unmodified
+and returns `{ winner: 'a'|'b'|'tie', survivorsHp, summary }`. It does **not**
+reimplement any battle math, AI, or shield/switch logic — it only supplies
+the three things a browserless run is missing:
+
+1. **A deterministic virtual clock.** Emulate mode is written for a live page:
+   it schedules charged-move animation phases (~6–10 s) and the on-faint
+   switch window (~2–13 s) with real `setTimeout`, while a 500 ms
+   `setInterval` steps the battle. Headless, `teamBattle.js` steps the battle
+   itself and drains a virtual timer queue in fire-time order between steps —
+   reproducing the exact ordering pvpoke relies on (e.g. the AI's ~2–5 s
+   switch choice firing before the 13 s force-switch fallback) with no real
+   waiting. `setInterval` is a no-op because pvpoke's own emulate main loop is
+   never started.
+2. **Seeded RNG (the RNG policy).** `TrainingAI` makes several *randomized*
+   decisions (shield-energy guesses, weighted switch/strategy choices,
+   overfarm rolls), so raw emulate battles are non-deterministic. `battleTeams`
+   swaps the vm's `Math.random` for a seeded mulberry32 PRNG, re-seeded at the
+   start of every battle. **RNG is pinned, not aggregated:** a battle is fully
+   reproducible for a given `(teams, leads, difficulty, seed)`. When `seed` is
+   omitted it is derived deterministically from the matchup, so repeated calls
+   with identical inputs still agree. Callers that want to study AI variance
+   can vary `seed` and aggregate (see ROADMAP's "TrainingAI variance study").
+3. **Symmetric both-players-are-AI wiring.** Emulate mode assumes player 0 is
+   a human and hardwires a few hooks to player 1 only (initial matchup
+   evaluation, on-faint AI switching, switch-timer re-evaluation).
+   `battleTeams` drives *both* sides with `TrainingAI` at the chosen
+   `difficulty` (0–3; default **3 = "Champion"**, the strongest), mirroring
+   those hooks onto player 0 (it overrides `Battle#forceSwitch` to use
+   `decideSwitch` for any fainted AI player, and `Player#decrementSwitchTimer`
+   for player 0). It also sets `sandbox` mode so the engine honors the AI's
+   shield decisions in `useMove`, with `buffChanceModifier = 0` to match
+   emulate's normal buff-application chance.
+
+**Balance / tolerance.** A residual player-1 edge remains from pvpoke's
+emulate design, so mirror matches land *near* 50/50 rather than exactly:
+across all 9 lead pairings of a top-meta team against itself the split is
+5–4. `test/teamBattle.test.js` therefore asserts neither side takes more than
+6 of 9 pairings (win rate inside `[2/9, 7/9]`), not a hard 50/50. A blatantly
+dominant team (3 top-meta mons vs 3 joke mons) wins **all 9** pairings.
+
+**Instance rules.** As with `simBattle`, `teamA` and `teamB` must be distinct
+Pokemon instances from each other (pvpoke mutates `.index`/battle state on the
+objects it is handed); for a mirror match, build the same species twice. Every
+`battleTeams` call resets the Pokemon it is given, so instances may be reused
+across sequential calls, and a **fresh `Battle`** is constructed per call
+(matching pvpoke's own `MatchHandler`).
 
 ## Why a `vm` sandbox instead of a browser
 

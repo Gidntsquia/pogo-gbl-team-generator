@@ -31,6 +31,27 @@ const ENGINE_FILES = [
   'src/js/battle/Battle.js',
 ];
 
+// pvpoke's Training-mode (3v3 team battle) modules, loaded on demand by
+// loadTrainingModules() into a context that already has ENGINE_FILES. These
+// are the only pieces needed to drive full team battles: Player (per-side
+// team + shields + switch timer), TrainingAI (lead/shield/switch decision
+// logic + difficulty), and DecisionOption (weighted choice struct the AI
+// returns). The interface/DOM/analytics training files are deliberately NOT
+// loaded -- teamBattle.js drives the turn loop itself, so nothing here
+// touches jQuery or the DOM. See src/engine/teamBattle.js.
+const TRAINING_FILES = [
+  'src/js/training/DecisionOption.js',
+  'src/js/training/TrainingAI.js',
+  'src/js/pokemon/Player.js',
+];
+
+// aiArchetypes.json normally arrives via TrainingAI.js's own top-level
+// `$.getJSON(...)` (a no-op under our jQuery stub), leaving its `aiData`
+// global as []. We load the file ourselves and assign it into the context so
+// `props = aiData[level]` in the TrainingAI constructor resolves to a real
+// difficulty archetype.
+const AI_ARCHETYPES_REL = 'src/data/training/aiArchetypes.json';
+
 /**
  * Build the minimal set of browser globals pvpoke's engine code touches.
  *
@@ -136,4 +157,51 @@ export function loadPvpokeEngine(opts = {}) {
   }
 
   return { context, GameMaster, Battle, Pokemon, vendorRoot };
+}
+
+/**
+ * Load pvpoke's Training-mode team-battle modules (Player, TrainingAI,
+ * DecisionOption) into an already-initialized engine context and populate the
+ * AI archetype data. Idempotent: safe to call more than once on the same
+ * context (re-running the class/function declarations is harmless and the
+ * archetype assignment is just overwritten).
+ *
+ * @param {object} context - the vm context from loadPvpokeEngine (ctx.context)
+ * @param {string} vendorRoot - ctx.vendorRoot
+ * @returns {{ Player: any, TrainingAI: any, aiData: any[] }}
+ */
+export function loadTrainingModules(context, vendorRoot) {
+  for (const relPath of TRAINING_FILES) {
+    const absPath = path.join(vendorRoot, relPath);
+    let source;
+    try {
+      source = readFileSync(absPath, 'utf8');
+    } catch (err) {
+      throw new Error(
+        `pvpokeLoader: could not read ${absPath} -- is vendor/pvpoke checked out? ` +
+          `Run scripts/setup.sh. (${err.message})`
+      );
+    }
+    new vm.Script(source, { filename: absPath }).runInContext(context);
+  }
+
+  const aiPath = path.join(vendorRoot, AI_ARCHETYPES_REL);
+  const aiData = JSON.parse(readFileSync(aiPath, 'utf8'));
+  // Overwrite the empty `aiData` global that TrainingAI.js declared at load
+  // time (its own $.getJSON fetch is a no-op under our stub).
+  context.aiData = aiData;
+
+  // Player is a `class` declaration, so it lives in the context's global
+  // lexical scope rather than as an own-property of the global object;
+  // read it back through the context instead of off `context.*`.
+  const Player = vm.runInContext('Player', context);
+  const TrainingAI = vm.runInContext('TrainingAI', context);
+  if (!Player || !TrainingAI) {
+    throw new Error(
+      'pvpokeLoader: training sandbox did not expose Player/TrainingAI after loading -- ' +
+        'vendor/pvpoke may be on an incompatible commit.'
+    );
+  }
+
+  return { Player, TrainingAI, aiData };
 }
