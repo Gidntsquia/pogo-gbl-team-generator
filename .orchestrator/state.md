@@ -1,13 +1,15 @@
 # Orchestrator state — pogo-gbl-team-generator
 
-Phase: 3 (execute). Resume: reconcile with ListAgents/git status; integrate any landed packets (P1/P2 first), then dispatch P3 (needs P1) and P4 (can use fixture matrix), then P5, P6.
+**RETIRED 2026-08-20 — project switched to Routine mode (user directive: no more session subagents).** Source of truth is now GOALS.md (queue) + PROGRESS.md (log) + ROADMAP.md (why) + PLAN.md Rev 2 (3v3 design). This file is historical; on resume, follow the /orchestrate skill's Routine-mode flow (git pull, GOALS checkboxes, RemoteTrigger list_runs) — do not dispatch session workers.
+
+Phase: 3 (execute, routine-supervised).
 
 ## Packet board
 | id | status | agent | attempts | note |
 |----|--------|-------|----------|------|
-| P1 | running | sonnet worker (bg) | 1 | engine harness — critical path; fallback if headless load fails: Playwright vs local pvpoke page |
+| P1 | done | — | 1 | landed c8baa6c; 20/20 tests, EXACT rankings reproduction. Sharp edges for P3/P4 in src/engine/README.md: p1/p2 must be distinct instances; reuse ctx.battle is safe; buildPokemon takes base speciesId + shadow flag |
+| P3 | running | sonnet worker (bg) | 1 | scoring matrix vs groups/great.json; meta movesets applied via live pvpoke Pokemon methods on harness-built mons |
 | P2 | running | sonnet worker (bg, relaunch) | 1 | importer — first run killed by session limit @94%; partial src/importer/{csv,gamemaster,util}.js kept for relaunched worker to review+finish (limit deaths don't count as attempts) |
-| P3 | ready (blocked by P1) | — | 0 | scoring matrix |
 | P4 | ready (blocked by P3 shape; fixture ok) | — | 0 | team search |
 | P5 | ready (blocked by P2,P3,P4) | — | 0 | CLI + report |
 | P6 | ready (blocked by all) | — | 0 | e2e + README |
@@ -27,3 +29,4 @@ One background `sleep 1800 && echo WATCHDOG_TICK` armed after each dispatch wave
 - 2026-08-20: scaffold created (PLAN, CLAUDE, state, package.json, .gitignore), pvpoke vendored @ ea601f0, initial commit. P1+P2 dispatched (sonnet, background).
 - 2026-08-20 ~12:30pm ET: session usage limit hit (94%→cap). P2 worker killed mid-run (partial importer left on disk); P1 worker SURVIVED and kept running. Limit reset 12:30pm; next window resets 5:30pm ET.
 - 2026-08-20 post-reset: user directive — self-resume without manual /orchestrate. Skill playbook rewritten: standing watchdog + reset-timed resume timer pairs. P2 relaunched (review+finish partial work). Watchdog armed.
+- 2026-08-20: P1 landed + committed (c8baa6c) after orchestrator re-ran tests (20/20, 124ms). P3 dispatched — concurrency back to 2 (P2+P3): fresh usage window (0% at 12:30 reset), judged safe despite post-limit caution rule.

@@ -2,6 +2,8 @@
 
 Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, no build step. 2-space indent, small focused modules, JSDoc on exported functions.
 
+**Fresh clone / start of every scheduled run:** `bash scripts/setup.sh` FIRST — `vendor/pvpoke` is gitignored and absent until it runs. Work queue: GOALS.md (rules in its header). Run log: PROGRESS.md (append-only). Why + backlog: ROADMAP.md. Design: PLAN.md (Rev 2 = current).
+
 - Tests: `node --test test/<file>.test.js` for one packet; `npm test` for everything. Test only with node's built-in `node:test` + `node:assert`.
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
 - `vendor/pvpoke` is a pinned read-only sparse clone (gitignored). Load/execute its code and data; never edit it, never reimplement its battle math. Need a path not checked out? `git -C vendor/pvpoke sparse-checkout add <path>`.

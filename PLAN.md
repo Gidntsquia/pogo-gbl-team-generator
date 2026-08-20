@@ -17,6 +17,8 @@ CLI that reads your Pokemon collection (Poke Genie export CSV or a simple generi
 - **Matrix** (scoring out): `{ mons: [{ speciesId, name, score, leadIn }], meta: [speciesId…], ratings: { [userMonKey]: { [metaSpeciesId]: { s00, s11, s22 } } } }` — userMonKey disambiguates duplicates (`speciesId#row`).
 - **Teams** (team search out): `[{ members: [3 userMonKeys], score, coveragePct, threats: [uncovered metaSpeciesIds] }]` sorted best-first.
 
+> **Rev 2 (2026-08-20): the project pivoted to 3v3 team battles — see "Rev 2" section at the bottom. The packet table below is historical (P1/P2 landed as described); the live work queue is GOALS.md.**
+
 ## Packets
 | id | goal | owns (touch nothing else) | deps | verify |
 |----|------|--------------------------|------|--------|
@@ -30,5 +32,18 @@ CLI that reads your Pokemon collection (Poke Genie export CSV or a simple generi
 Milestone 1 (MVP) = P1–P6. **Stretch:** restrict sims to each mon's current moves; HTML report; `--cp 2500` flag; usage-weighted meta; safe-swap analysis; web UI.
 
 ## Scoring & team metric (tunable, documented here)
-- Per-mon score = mean over meta of weighted battle rating (0.25·s00 + 0.50·s11 + 0.25·s22).
-- A team **covers** a meta mon if any member's s11 rating vs it ≥ 500. Team score = coveragePct (primary) + mean weighted rating (tiebreak). Report each team's uncovered threats.
+- Per-mon score = mean over meta of weighted battle rating (0.25·s00 + 0.50·s11 + 0.25·s22). *(Still live — used for candidate pruning and per-mon report insight.)*
+- ~~A team covers a meta mon if any member's s11 rating vs it ≥ 500…~~ **Superseded by Rev 2: teams are ranked by simulated 3v3 team-battle results, not 1v1 coverage.**
+
+## Rev 2 — 3v3 team-battle pivot (2026-08-20, user directive)
+The user wants candidate teams evaluated in **team battles against meta TEAMS**, not by aggregating 1v1 matchups.
+
+**Primary path — pvpoke's own 3v3 machinery, headless.** pvpoke's Training mode implements full GBL team battles natively: `Battle.js` in *emulate* mode with `src/js/pokemon/Player.js` (team of 3, shared pool of 2 shields per player, switch timer) and `src/js/training/` (TrainingAI: lead/swap/shield decision logic, difficulty levels). Extend the P1 vm-loader to include these modules and expose `battleTeams(ctx, {teamA, teamB, leadA, leadB, difficulty})` → `{winner, survivorsHp, summary}`. Fix the highest AI difficulty; if the AI has stochastic elements, either pin its RNG or aggregate repeated runs — document which. This is not an approximation: it is pvpoke's real team-battle engine.
+
+**Fallback — chained-1v1 battle tree (only if emulate mode proves genuinely infeasible headless, with findings written up first).** Translate 1v1 sims into a 3v3: leads fight (1v1 sim); on a faint, the losing side sends its best remaining counter (chosen from the 1v1 matrix); the survivor carries its remaining HP and energy into the next 1v1 (pvpoke's sim supports custom starting HP/energy); enumerate each player's shared-2-shield allocations across their mons; resolve the outcome tree. Documented plainly as an approximation (no switch-timer dynamics, deterministic switch policy).
+
+**Meta opponents are real teams:** pvpoke ships curated Great League teams in `vendor/pvpoke/src/data/training/` — that's the opponent pool (fallback: compose teams from `groups/great.json` top entries).
+
+**Pipeline (Rev 2):** import collection → 1v1 scoring matrix (pruning + insight + fallback switch policy) → candidate teams = C(topK, 3), no duplicated species (shadow/base count as same species) → every candidate battles every meta team across all 3×3 lead pairings via `battleTeams` → rank by mean win rate (tiebreak: mean surviving-HP margin) → report: per candidate team, win% vs each meta team, best lead, hardest opposing teams.
+
+**Interface (new, for the team evaluator):** `evaluateTeams(ctx, {candidates: [[3 userMonKeys]], metaTeams, matrix, opts})` → `[{members, winRate, bestLead, perMeta: [{metaTeamId, wins, losses, avgHpMargin}], hardestTeams}]` sorted best-first. Work queue and acceptance criteria live in **GOALS.md**.
