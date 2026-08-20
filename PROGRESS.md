@@ -28,3 +28,7 @@ Project bootstrapped in an interactive session; switching to the scheduled-routi
 - **Verify commands run clean THIS fire:** `node --test test/teamBattle.test.js` → 7/7; `npm test` → 60/60 green.
 - **Gotchas recorded:** (a) emulate's shield path only honors the AI's decision when `sandbox=true` (else `useMove` falls back to the simulate auto-shield AI and ignores `forceShields`) — so `setSandboxMode(true)` then `setBuffChanceModifier(0)` is required. (b) `class` declarations in the vm are NOT own-properties of the global object — read them via `vm.runInContext('Name', context)`. (c) pvpoke has stray debug `console.log`s in the emulate path (Player.startSwitchTimer, Battle.setNewPokemon) — teamBattle silences vm `console.log/info/debug` (keeps warn/error).
 - **Next:** T3 — meta team pool from `vendor/pvpoke/src/data/training/teams/` (explore format; pick Great League set; export `loadMetaTeams`). T2b is NOT needed (emulate path succeeded). T2 now unblocks T3/T4.
+
+## 2026-08-20T18:03Z — orchestrator (supervision)
+- Verified T2 locally: fb1fc6a pulled, `node --test test/teamBattle.test.js` 7/7 green on macOS/Node 26. Primary 3v3 path confirmed on a second machine.
+- Appended a note to T4: evaluate all candidates from the same fixed side so pvpoke emulate's residual player-1 edge cancels in relative rankings; report absolute win% as carrying that constant offset.
