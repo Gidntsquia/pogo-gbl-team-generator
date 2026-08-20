@@ -141,6 +141,15 @@ describe('evaluateTeams', () => {
       assert.ok([0, 1, 2].includes(t.bestLead.index));
       assert.equal(t.bestLead.key, t.members[t.bestLead.index].key);
       assert.ok(t.hardestTeams.length >= 1 && t.hardestTeams.length <= 3);
+
+      assert.ok(t.safeSwap, 'safeSwap present');
+      assert.ok([0, 1, 2].includes(t.safeSwap.index));
+      assert.notEqual(t.safeSwap.index, t.bestLead.index, 'safeSwap is never the best lead');
+      assert.equal(t.safeSwap.key, t.members[t.safeSwap.index].key);
+      assert.ok(
+        t.safeSwap.avgHpPct >= 0 && t.safeSwap.avgHpPct <= 1,
+        'safeSwap avgHpPct is a 0..1 fraction'
+      );
     }
     // Sorted best-first.
     for (let i = 1; i < ranked.length; i++) {

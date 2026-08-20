@@ -59,6 +59,7 @@ test('renderReport writes a Markdown report that names >= 1 team', async () => {
   // Names at least one recommended team (its first member's display name).
   const firstMember = report.rankedTeams[0].members[0].name;
   assert.ok(md.includes(firstMember), 'report names a recommended team member');
+  assert.match(md, /Safest first switch:/, 'report surfaces the safe-swap pick per team');
 
   // The invalid fixture row ("Freakemon") must surface as a warning.
   assert.match(md, /## Collection warnings/);

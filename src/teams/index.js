@@ -7,7 +7,13 @@
 // is reimplemented here: every win/loss comes from battleTeams, which runs
 // pvpoke's own Training-mode emulate engine. This module only does the
 // combinatorics (which teams to try, from which mons) and the bookkeeping
-// (tally wins, average HP margins, pick the best lead).
+// (tally wins, average HP margins, pick the best lead and the safest switch).
+//
+// Safe-swap analysis (ROADMAP known-gap): each battle already reports
+// per-member surviving HP (survivorsHp.aPerMon); safeSwap picks, among the
+// two non-lead members, whichever averages the highest remaining-HP fraction
+// across every battle where it was switched in rather than leading. Free --
+// no additional battles are run for it.
 //
 // Fixed-side convention (see PROGRESS.md 2026-08-20T17:59Z / 18:03Z): pvpoke's
 // emulate mode carries a small residual player-1 side edge. Every candidate is
@@ -51,6 +57,11 @@ const PAIRINGS_PER_META = LEADS.length * LEADS.length; // 9
  * @property {PerMetaResult[]} perMeta - one entry per meta team.
  * @property {Array<{metaTeamId:string, name:string, winRate:number}>} hardestTeams
  *   Up to 3 meta teams with the lowest win rate for this candidate.
+ * @property {{index:number, key:string, speciesId:string, name:string, avgHpPct:number}|null} safeSwap
+ *   Of the two members that are NOT bestLead, whichever comes out of its
+ *   non-lead battles (i.e. every battle where it was switched in rather than
+ *   leading) with the highest average remaining-HP fraction. Computed from
+ *   the same battles already run for winRate -- no extra battle budget.
  */
 
 /** Base species of a user mon (collection speciesIds are already base ids -- shadow is a flag). */
@@ -176,6 +187,11 @@ export function evaluateTeams(ctx, params) {
     let hpMarginSum = 0;
     const perMeta = [];
 
+    // Per-member remaining-HP fraction, counted only over battles where this
+    // member was NOT leadA (i.e. it was switched in) -- for safeSwap below.
+    const swapHpSum = [0, 0, 0];
+    const swapHpCount = [0, 0, 0];
+
     for (const metaTeam of metaTeams) {
       const teamB = metaTeam.members.map((m) => m.pokemon);
       let wins = 0;
@@ -184,6 +200,11 @@ export function evaluateTeams(ctx, params) {
       let hpSum = 0;
 
       for (const leadA of LEADS) {
+        // battleTeams reorders teamA as [lead, ...rest] (see engine's
+        // orderWithLead); survivorsHp.aPerMon comes back in THAT order, so
+        // map it back to original member indices to attribute HP correctly.
+        const orderedIndices = [leadA, ...LEADS.filter((i) => i !== leadA)];
+
         for (const leadB of LEADS) {
           const r = battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty: opts.difficulty });
           const margin = r.survivorsHp.a - r.survivorsHp.b;
@@ -197,6 +218,14 @@ export function evaluateTeams(ctx, params) {
             ties += 1;
             leadWins[leadA] += 0.5;
           }
+
+          r.survivorsHp.aPerMon.forEach((hp, k) => {
+            const memberIdx = orderedIndices[k];
+            if (memberIdx === leadA) return; // only non-lead (switched-in) appearances count
+            const maxHp = members[memberIdx].pokemon.stats.hp;
+            swapHpSum[memberIdx] += maxHp > 0 ? hp / maxHp : 0;
+            swapHpCount[memberIdx] += 1;
+          });
         }
       }
 
@@ -231,6 +260,17 @@ export function evaluateTeams(ctx, params) {
     }));
     const bestLead = bestBy(leadStats, (l) => l.winRate);
 
+    const swapStats = members
+      .map((m, i) => ({
+        index: i,
+        key: m.key,
+        speciesId: m.speciesId,
+        name: m.name,
+        avgHpPct: swapHpCount[i] > 0 ? swapHpSum[i] / swapHpCount[i] : 0,
+      }))
+      .filter((s) => s.index !== bestLead.index);
+    const safeSwap = swapStats.length ? bestBy(swapStats, (s) => s.avgHpPct) : null;
+
     const hardestTeams = [...perMeta]
       .sort((a, b) => a.winRate - b.winRate)
       .slice(0, 3)
@@ -243,6 +283,7 @@ export function evaluateTeams(ctx, params) {
       bestLead,
       perMeta,
       hardestTeams,
+      safeSwap,
     });
 
     completed += 1;

@@ -76,6 +76,12 @@ function renderTeamSection(team, rank) {
   lines.push(`- **Overall win rate:** ${pct(team.winRate)}`);
   lines.push(`- **Best lead:** ${team.bestLead.name} (${pct(team.bestLead.winRate)} when leading)`);
   lines.push(`- **Avg surviving-HP margin:** ${signed(team.avgHpMargin)}`);
+  if (team.safeSwap) {
+    lines.push(
+      `- **Safest first switch:** ${team.safeSwap.name} ` +
+        `(avg ${pct(team.safeSwap.avgHpPct)} HP remaining when switched in)`
+    );
+  }
   if (team.hardestTeams.length) {
     const hard = team.hardestTeams
       .map((h) => `${h.name} (${pct(h.winRate)})`)
