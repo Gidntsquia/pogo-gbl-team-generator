@@ -132,6 +132,36 @@ function applyGroupMoveset(pokemon, { fastMove, chargedMoves }) {
 }
 
 /**
+ * Build ONE meta/group entry (`{speciesId, fastMove, chargedMoves}`) into a
+ * battle-ready pvpoke Pokemon with that exact moveset, at pvpoke's own default
+ * CP-1500 IV spread. Shared with src/meta/teams.js so the "_shadow" suffix
+ * handling, default-IV lookup and moveset application exist in exactly one
+ * place.
+ *
+ * @param {object} ctx - from initEngine (src/engine/harness.js)
+ * @param {GroupEntry} entry
+ * @returns {MetaMon}
+ */
+export function buildMetaMon(ctx, entry) {
+  const shadow = entry.speciesId.endsWith(SHADOW_SUFFIX);
+  const baseSpeciesId = shadow ? entry.speciesId.slice(0, -SHADOW_SUFFIX.length) : entry.speciesId;
+  const lookupId = resolveLookupId(ctx.gm, baseSpeciesId, shadow);
+  const ivs = defaultCp1500Ivs(ctx, lookupId);
+
+  const pokemon = buildPokemon(ctx, { speciesId: baseSpeciesId, ivs, shadow });
+  applyGroupMoveset(pokemon, entry);
+
+  return {
+    speciesId: entry.speciesId,
+    baseSpeciesId,
+    shadow,
+    fastMove: entry.fastMove,
+    chargedMoves: entry.chargedMoves,
+    pokemon,
+  };
+}
+
+/**
  * Load the current Great League meta and build each entry exactly once,
  * using pvpoke's own default CP-1500 IV spread and the group's specified
  * moveset (not pvpoke's recommended-moveset heuristic).
@@ -150,24 +180,7 @@ export function loadMeta(ctx, opts = {}) {
   const rawEntries = opts.groupEntries ?? readGroupEntries(ctx, opts.groupFile ?? DEFAULT_GROUP_FILE);
   const entries = typeof opts.metaLimit === 'number' ? rawEntries.slice(0, opts.metaLimit) : rawEntries;
 
-  return entries.map((entry) => {
-    const shadow = entry.speciesId.endsWith(SHADOW_SUFFIX);
-    const baseSpeciesId = shadow ? entry.speciesId.slice(0, -SHADOW_SUFFIX.length) : entry.speciesId;
-    const lookupId = resolveLookupId(ctx.gm, baseSpeciesId, shadow);
-    const ivs = defaultCp1500Ivs(ctx, lookupId);
-
-    const pokemon = buildPokemon(ctx, { speciesId: baseSpeciesId, ivs, shadow });
-    applyGroupMoveset(pokemon, entry);
-
-    return {
-      speciesId: entry.speciesId,
-      baseSpeciesId,
-      shadow,
-      fastMove: entry.fastMove,
-      chargedMoves: entry.chargedMoves,
-      pokemon,
-    };
-  });
+  return entries.map((entry) => buildMetaMon(ctx, entry));
 }
 
 /**
