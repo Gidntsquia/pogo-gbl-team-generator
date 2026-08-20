@@ -270,7 +270,19 @@ export function computeLeadIn(ratingsBySpecies) {
  *   meta: string[],
  *   ratings: Object<string, Object<string, {s00:number, s11:number, s22:number}>>,
  *   warnings: string[],
+ *   builtMons: Object<string, {speciesId: string, name: string, pokemon: object}>,
  * }}
+ *   `builtMons` is keyed by the same userMonKey as `ratings` and exposes the
+ *   already-built, battle-ready Pokemon instance for each scored user mon --
+ *   an addition to PLAN.md's Matrix shape (backward compatible: an additive
+ *   field, existing consumers of mons/meta/ratings/warnings are unaffected).
+ *   PLAN.md's team evaluator (src/teams/index.js, GOALS T4) takes `matrix` as
+ *   one of its inputs and needs to resolve a userMonKey to something it can
+ *   hand to battleTeams; the Matrix shape as originally specified had no such
+ *   path (mons/ratings carry ratings data, not IVs or instances), so rather
+ *   than have the evaluator re-derive/rebuild Pokemon from raw collection
+ *   rows a second time, scoreCollection now reuses the instances it already
+ *   builds once here. See PROGRESS.md's T4 entry for this interface note.
  */
 export function scoreCollection(ctx, mons, opts = {}) {
   const { gm } = ctx;
@@ -299,6 +311,7 @@ export function scoreCollection(ctx, mons, opts = {}) {
 
   const ratings = {};
   const outMons = [];
+  const builtMons = {};
   const total = built.length;
   let completed = 0;
 
@@ -325,6 +338,7 @@ export function scoreCollection(ctx, mons, opts = {}) {
       score: computeWeightedScore(perMeta),
       leadIn: computeLeadIn(perMeta),
     });
+    builtMons[user.key] = { speciesId: user.speciesId, name: user.name, pokemon: user.pokemon };
 
     completed += 1;
     opts.onProgress?.({ completed, total, speciesId: user.speciesId });
@@ -335,5 +349,6 @@ export function scoreCollection(ctx, mons, opts = {}) {
     meta: meta.map((m) => m.speciesId),
     ratings,
     warnings,
+    builtMons,
   };
 }
