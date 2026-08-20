@@ -15,3 +15,7 @@ Project bootstrapped in an interactive session; switching to the scheduled-routi
 - **Gotcha recorded:** pvpoke Pokemon objects live in a vm realm, so `array.map(...)` yields a foreign-realm Array that `assert.deepEqual` rejects on the prototype reference-equality check. Normalized with `Array.from(...)` in the test. Anything comparing pvpoke-vm collections in future tests must do the same.
 - **Verify command run clean THIS fire:** `node --test test/scoring.test.js` → 11/11; `npm test` → 53/53 green.
 - **Next:** T2 — 3v3 engine via pvpoke Training/emulate mode headless (`src/engine/teamBattle.js` + loader additions, Player.js + src/js/training/). Seq-gated; T1 now unblocks it.
+
+## 2026-08-20T17:10Z — orchestrator (queue hygiene)
+- Converted T0 from a queue checkbox into standing-rule gate G0: the first fire correctly treated it as a per-fire gate and left it unchecked, but rule 7 ("take the first unchecked ticket") would point every future zero-memory fire at a permanently-unchecked T0 — ambiguity removed. Fallback instructions preserved verbatim in G0. Queue head is now T2.
+- Orchestrator re-verified the first fire locally: 491eade pulled, `npm test` 53/53 green on macOS/Node 26. Routine is confirmed live end-to-end (clone → setup.sh → tests → commit → push).
