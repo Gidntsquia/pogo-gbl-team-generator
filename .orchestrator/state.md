@@ -16,6 +16,7 @@ Target: tournament-scale runs (10^5–10^6 battles) ≥4x faster on THIS Mac (8 
 | T23 GA core module (evolve.js) | ready (parallel-safe with T20–T22) | ROUTINE | 0 | pure seeded selection/mutation logic, fake-fitness unit tests |
 | T24 evolution driver (evolve.mjs) | ready (after T21+T23) | ROUTINE | 0 | battles via persistent executor; checkpoints; per-gen analytics |
 | T25 evolution report + README | ready (after T24) | ROUTINE | 0 | trajectory tables, cores, acceptance run |
+| T26 Yasser Aleed community teams (data) | ready (parallel-safe) | ROUTINE | 0 | 13 GL teams transcribed from Jaxon's 15 stream screenshots INTO the ticket text (fires can't see images); card text authoritative over visual reads; Corviknight ID uncertain |
 
 ## Decisions log
 - **Session mode, not Routine** — every acceptance bar is a perf number on Jaxon's Mac; sandbox is ~2.4x slower (T14: 172 vs 73 ms/battle) with few vCPUs, so cloud fires structurally cannot verify this initiative.
@@ -33,8 +34,11 @@ Target: tournament-scale runs (10^5–10^6 battles) ≥4x faster on THIS Mac (8 
 
 - **Adjudication on determinism (16:05Z):** investigation PROVED the known stale-`.index`/`.battle` mechanism and validated a zero-cost stamp fix — but also DISPROVED the Rev 4 bit-identity goal as stated: a second in-battle mechanism flips a reproduced knife-edge battle even with pre-battle state bit-identical. Decision: land the proven fix (T20, narrow provable bar), get reproducibility-at-fixed-(seed,threads) via deterministic partitioning (T21), keep serial as cross-config reference, queue mechanism 2 (T20b) BEHIND the evolution tickets — user value first, ~0.28% rank-preserving residue is acceptable meanwhile. No known-red acceptance tests.
 
-## Watchdog
-Armed ~15:40Z until ~16:10Z (sleep 1800, WATCHDOG_TICK).
+## Watchdog / supervision
+Session sleep-watchdog retired (no in-session workers remain — routines-first). Supervision = session cron 87fb3dba (`9,29,49 * * * *`, created 16:12Z, session-only, 7-day expiry): reconciles origin GOALS/git + RemoteTrigger runs, eager-dispatches on idle, runs T22's local measurement itself via Bash when its code half lands. Routine trig_01JfxVRAW8FQYvnGSpEdkFoG ENABLED (hourly :43) + fired 16:12Z (cse_014Dg8tYF2nLv85WKaErQUQr, working T20).
+
+## SESSION CAP (2026-08-21 ~17:05Z) — RESOLVED 18:25Z: reset passed; T21 run cse_01AWPB died to the cap ~17:17Z without committing (box still unchecked, nothing lost), 17:43Z cron fire rejected in seconds; re-fired eagerly at 18:25Z (cse_01YKXio7FPfi7sW8aygkYUNb, redoing T21). Normal supervision resumed.
+Session usage hit 99% (resets 2:10pm ET = 18:10Z). Posture: no discretionary session calls until reset. Ground truth at cap: T19+T20 landed/pushed (origin 107bf37); T21 in flight in CLOUD run cse_01AWPBZWeqoXtFGLsyrRaHfw (started 16:43Z, healthy at 16:54Z). Cloud cron (:43 hourly, ENABLED) is the self-resume floor — if the account window also caps cloud fires, the first :43 tick after reset resumes the queue automatically; nothing is lost either way (zero-memory + GOALS checkboxes). Session supervision crons (87fb3dba at :09/:29/:49 + a stale-prompt one) resume working ticks after reset on their own; failed ticks during the cap are harmless. NO local `npm test`/bench runs until T22-code lands AND budget is comfortable.
 
 ## Resume (cold read)
 If workers dead with no results: reset T19 to ready and hand it to the ROUTINE too (per Jaxon's no-new-subagents directive — T19's correctness is test-verifiable in sandbox; the orchestrator runs its local baseline numbers itself via Bash). T20a findings optional (a T20 fire can re-derive from engine README "Known limitation" + variance-study.mjs). Routine re-enable: RemoteTrigger update trig_01JfxVRAW8FQYvnGSpEdkFoG {"enabled": true} when initiative lands.
