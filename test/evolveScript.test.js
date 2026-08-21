@@ -73,6 +73,19 @@ test('completes and produces a well-formed report + all checkpoints + analytics 
   assert.ok(shared.importWarnings.some((w) => /freakemon/i.test(w)), 'unknown-species row surfaced as a warning');
   assert.match(md, /## Collection warnings/);
 
+  assert.ok(shared.htmlPath, 'htmlPath recorded on the result');
+  assert.ok(existsSync(shared.htmlPath), 'report.html written');
+  const html = readFileSync(shared.htmlPath, 'utf8');
+  assert.match(html, /<!doctype html>/i);
+  assert.match(html, /<title>/i);
+  assert.match(html, /Evolutionary Team Search Report/);
+  assert.match(html, /<h2>Generation-by-generation summary<\/h2>/);
+  assert.match(html, /<h2>Species trajectory/);
+  assert.match(html, /<h2>Top cores/);
+  assert.match(html, /<h2>Elite team detail<\/h2>/);
+  assert.ok(html.includes(top.members[0].name), 'HTML report names the top team');
+  assert.doesNotMatch(html, /<script/i);
+
   for (let g = 0; g < TINY.generations; g++) {
     const p = path.join(SHARED_DIR, `evolve-gen${g}.json`);
     assert.ok(existsSync(p), `generation ${g} checkpoint written`);
@@ -205,6 +218,24 @@ test('opts.threads (persistent worker-pool executor) produces a well-formed run 
 
   const report = readFileSync(threaded.reportPath, 'utf8');
   assert.match(report, /threads: 2 \(worker-pool executor\)/);
+});
+
+test('opts.noHtml skips writing the HTML report; opts.html sends it to a custom path', async () => {
+  const noHtmlDir = tmpOutDir('gbl-evolve-nohtml-');
+  const noHtmlResult = await runEvolution(FIXTURE, { ...TINY, outDir: noHtmlDir, out: path.join(noHtmlDir, 'r.md'), noHtml: true });
+  assert.equal(noHtmlResult.htmlPath, null, 'htmlPath is null when noHtml is set');
+  assert.ok(!existsSync(path.join(noHtmlDir, 'my-teams-evolve.html')), 'no HTML file written');
+
+  const customDir = tmpOutDir('gbl-evolve-customhtml-');
+  const customHtmlPath = path.join(customDir, 'custom-report.html');
+  const customResult = await runEvolution(FIXTURE, {
+    ...TINY,
+    outDir: customDir,
+    out: path.join(customDir, 'r.md'),
+    html: customHtmlPath,
+  });
+  assert.equal(customResult.htmlPath, customHtmlPath);
+  assert.ok(existsSync(customHtmlPath), 'HTML written to the custom path');
 });
 
 test('--fixed-opponents reuses the same opponent draw for every generation', async () => {

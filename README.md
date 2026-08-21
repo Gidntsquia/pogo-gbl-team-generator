@@ -273,6 +273,66 @@ read its output, including the `--batches` mode that shows the persistent
 worker pool's boot-cost amortization across repeated batches (the pattern
 `scripts/tournament.mjs` and large multi-call runs actually use).
 
+### Evolutionary team search (`scripts/evolve.mjs`)
+
+Where `src/cli.js` and `scripts/tournament.mjs` sample a fixed set of
+candidate teams and battle every one of them the same number of times,
+`scripts/evolve.mjs` runs a seeded **genetic algorithm** instead: a
+population of candidate teams is repeatedly battled, the worst performers
+are culled, some survivors "mutate" (one team member swapped for another),
+fresh immigrant teams keep new species entering the pool, and the process
+repeats until the best teams converge or a cap is hit. The idea is that
+battle budget concentrates on already-good teams instead of being spread
+evenly across a static sample.
+
+```bash
+node scripts/evolve.mjs fixtures/sample-pokegenie.csv --population 8 --opponents-per-gen 3 --generations 3 --seed my-seed
+```
+
+**The selection scheme, in plain words** (see `PLAN.md` Rev 5 for the full
+design): every generation, every team in the population is battled against
+a fresh sample of opponent teams. The bottom 25% by win rate die. Each
+*surviving* team then rolls a chance to mutate — the better a team did
+relative to the rest of that generation, the more likely it mutates (from a
+5% floor for the weakest survivors up to a 40% ceiling for the top) — and a
+successful roll swaps exactly one team member for a different, meta-weighted
+pick from your collection. The dead slots are refilled by these mutants plus
+a small floor (~10% of the population) of brand-new random "immigrant"
+teams, so the population never fully closes off to new ideas. This repeats
+either until the top-10 team composition hasn't changed for 3 generations
+in a row (convergence), or a generation/time cap is hit — the report says
+which one stopped the run.
+
+**Flags** (`node scripts/evolve.mjs --help` for the full list with
+defaults): `--population`, `--opponents-per-gen`, and `--generations` size
+the search (battles per generation ≈ `population × opponents-per-gen × 3`);
+`--seed` controls reproducibility; `--threads` battles through the same
+persistent worker-pool executor `--threads` uses elsewhere in this repo
+(defaults to `max(1, cpus - 1)`); `--deadline-minutes` stops the run before
+starting another generation once past budget; `--fixed-opponents` reuses one
+opponent draw for every generation instead of a fresh one each time;
+`--elites` controls how many of the final generation's top teams get the
+full 9-lead-pairing report treatment (best lead, safe swap); `--cp`,
+`--score-meta`, `--pool`, `--curated-ratio`, and `--exclude` mean the same
+thing they do elsewhere in this repo.
+
+**Reproducibility:** the same `--seed` (with everything else held equal)
+reproduces the *identical* population trajectory, generation by generation —
+population sampling, opponent draws, mutation rolls, and immigrant picks are
+all derived from that one seed. Change the seed and you get a different
+(but still deterministic) trajectory.
+
+**Output:** `out/my-teams-evolve.md` / `out/my-teams-evolve.html` (same
+`--out`/`--html`/`--no-html` flags as the other CLIs) report the final
+elite teams (win%, best lead, safe swap, hardest opponents), a
+generation-by-generation summary, a species-trajectory table (representation
+per generation for the top species), and the top elite 2-species "cores".
+Per-generation checkpoints (`out/evolve-gen<N>.json`) and a rolling
+analytics file (`out/evolve-generations.json`) are also written — a killed
+run resumes from its last completed generation automatically. All of the
+analytics are **free**: they're computed by counting over data the battles
+already produced, with no extra battles run to collect them.
+
 ## How scoring works
 
 - **1v1 matrix** (`src/scoring`): each of your Pokemon is simulated 1v1

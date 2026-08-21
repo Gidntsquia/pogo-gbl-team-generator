@@ -69,7 +69,12 @@
 //   --exclude a,b            species ids excluded from candidate teams     (none)
 //   --difficulty D           AI difficulty 0-3 override                   (engine default, 3)
 //   --out PATH               final Markdown report path            (<out-dir>/my-teams-evolve.md)
-//   --out-dir DIR            checkpoints + DONE marker + default report   ("out")
+//   --html PATH              final HTML report path (self-contained, no
+//                            build step, mirrors src/cli.js's --html /
+//                            src/report/index.js's renderReportHtml pattern,
+//                            GOALS T25)              (<out-dir>/my-teams-evolve.html)
+//   --no-html                skip writing the HTML report                 (off)
+//   --out-dir DIR            checkpoints + DONE marker + default reports  ("out")
 //   --help                   print this help and exit
 //
 // BUDGET MATH (PLAN Rev 5's own example): battles/generation = population x
@@ -137,6 +142,7 @@ const DEFAULTS = Object.freeze({
   pool: 40,
   curatedRatio: 0.4,
   outDir: 'out',
+  html: 'my-teams-evolve.html', // resolved against outDir unless --html/opts.html is absolute or explicit
 });
 
 // Used only if a generation somehow measures 0 battles (every battle errored)
@@ -162,6 +168,17 @@ function pct(x) {
 function signed(x) {
   const s = x.toFixed(1);
   return x > 0 ? `+${s}` : s;
+}
+
+/** Escape text for safe interpolation into HTML (report data includes raw CSV/species strings). */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
 }
 
 function formatDuration(ms) {
@@ -711,6 +728,210 @@ function renderEvolveReport(result) {
   return out.join('\n');
 }
 
+/**
+ * Render the same run result as a single self-contained HTML page (no
+ * external CSS/JS/fonts -- opens directly via `file://`), mirroring
+ * src/report/index.js's renderReportHtml pattern (same section order and
+ * content as {@link renderEvolveReport}, just HTML markup). All interpolated
+ * text sourced from user CSV/gamemaster data is HTML-escaped.
+ *
+ * @param {object} result - same shape renderEvolveReport takes.
+ * @returns {string} HTML document text.
+ */
+function renderEvolveReportHtml(result) {
+  const { config, generationRecords, elites, stopReason, importWarnings, league } = result;
+  const threadsLabel = (r) => (r.threadsUsed ? `${r.threadsUsed} (worker-pool executor)` : 'serial');
+  const settingsLine = [
+    `population=${config.population}`,
+    `opponents-per-gen=${config.opponentsPerGen}`,
+    `generations cap=${config.generations}`,
+    `elites=${config.eliteCount}`,
+    config.fixedOpponents ? 'fixed-opponents (one draw reused every generation)' : null,
+    `score-meta=${config.scoreMeta}`,
+    `pool=${config.pool}`,
+    `curated-ratio=${config.curatedRatio}`,
+    `threads=${generationRecords.length ? threadsLabel(generationRecords[generationRecords.length - 1]) : 'n/a'}`,
+    config.excludeSpecies.length ? `excluded species: ${config.excludeSpecies.map(escapeHtml).join(', ')}` : null,
+    config.difficulty !== null ? `AI difficulty override: ${config.difficulty}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  const totalBattles = generationRecords.reduce((s, r) => s + r.timing.battleCount, 0) + result.eliteTiming.battleCount;
+  const totalErrors = generationRecords.reduce((s, r) => s + r.timing.errorCount, 0) + result.eliteTiming.errorCount;
+
+  const out = [];
+  out.push('<!doctype html>');
+  out.push('<html lang="en">');
+  out.push('<head>');
+  out.push('<meta charset="utf-8">');
+  out.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
+  out.push(`<title>${escapeHtml(league.name)} Evolutionary Team Search Report${result.collectionPath ? ` -- ${escapeHtml(result.collectionPath)}` : ''}</title>`);
+  out.push(`<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  .callout { background: rgba(127,127,127,0.12); border-left: 4px solid currentColor;
+    padding: 0.75rem 1rem; border-radius: 0.25rem; }
+  .settings { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+  section.team { border: 1px solid rgba(127,127,127,0.3); border-radius: 0.5rem;
+    padding: 1rem 1.25rem; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
+  th, td { text-align: left; padding: 0.3rem 0.6rem; border-bottom: 1px solid rgba(127,127,127,0.25); }
+  th { font-weight: 600; }
+  td:not(:first-child), th:not(:first-child) { text-align: right; }
+  .team-stats { list-style: none; padding: 0; margin: 0.5rem 0; }
+  .team-stats li { padding: 0.15rem 0; }
+</style>`);
+  out.push('</head>');
+  out.push('<body>');
+
+  out.push(`<h1>${escapeHtml(league.name)} Evolutionary Team Search Report</h1>`);
+  out.push(`<p>Collection: <code>${escapeHtml(result.collectionPath)}</code>` +
+    `<br>Generated: ${escapeHtml(new Date().toISOString())}` +
+    `<br>Run started: ${escapeHtml(result.runStartedAt)}</p>`);
+  out.push(
+    '<p>Genetic-algorithm search (PLAN.md Rev 5): a population of candidate teams is repeatedly battled, the ' +
+      'worst performers die, some survivors mutate one team member, fresh immigrant teams keep the gene pool ' +
+      "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. Every " +
+      "battle runs through pvpoke's own 3v3 emulate engine (<code>battleTeams</code>, " +
+      '<code>src/engine/teamBattle.js</code>) -- no battle math is reimplemented here.</p>'
+  );
+  out.push(
+    '<p class="callout"><strong>Reading the win%:</strong> every team is always evaluated as team A (the ' +
+      'fixed-side convention from <code>src/teams/index.js</code>), so pvpoke emulate mode\'s small residual ' +
+      "player-1 edge is a constant offset shared by every team -- it cancels in the <em>relative</em> ranking, " +
+      'but absolute win% carries that constant offset.</p>'
+  );
+
+  out.push('<h2>Settings</h2>');
+  out.push(`<p class="settings">Seed: <code>${escapeHtml(config.seed)}</code> (per-generation opponent draws: ` +
+    `<code>-gen&lt;N&gt;</code>; population sampling: <code>-gen0</code>)<br>` +
+    `League: ${escapeHtml(league.name)} (cp=${config.cp})<br>` +
+    `${escapeHtml(settingsLine)}</p>`);
+
+  out.push('<h2>Run summary</h2>');
+  out.push('<ul>');
+  out.push(`<li>Generations run: ${generationRecords.length} of a ${config.generations} cap</li>`);
+  out.push(`<li>Stop reason: ${escapeHtml(stopReason)}</li>`);
+  out.push(`<li>Total battles: ${totalBattles} (${totalErrors} errors, skip-and-continue)</li>`);
+  out.push(`<li>Total elapsed: ${escapeHtml(formatDuration(result.totalElapsedMs))}</li>`);
+  out.push('</ul>');
+
+  out.push('<h2>Generation-by-generation summary</h2>');
+  out.push('<table>');
+  out.push('<thead><tr><th>Gen</th><th>Mean fitness</th><th>Max fitness</th><th>Battles</th>' +
+    '<th>Errors</th><th>Survived</th><th>Mutant</th><th>Immigrant</th><th>Elapsed</th></tr></thead>');
+  out.push('<tbody>');
+  for (const r of generationRecords) {
+    const oc = r.analytics.originCounts;
+    out.push(
+      `<tr><td>${r.generation}${r.resumed ? ' <em>(resumed)</em>' : ''}</td>` +
+        `<td>${(r.analytics.meanFitness * 100).toFixed(1)}%</td>` +
+        `<td>${(r.analytics.maxFitness * 100).toFixed(1)}%</td>` +
+        `<td>${r.timing.battleCount}</td><td>${r.timing.errorCount}</td>` +
+        `<td>${oc ? oc.survived : '-'}</td><td>${oc ? oc.mutant : '-'}</td><td>${oc ? oc.immigrant : '-'}</td>` +
+        `<td>${escapeHtml(formatDuration(r.timing.elapsedMs))}</td></tr>`
+    );
+  }
+  out.push('</tbody></table>');
+
+  const lastAnalytics = generationRecords.length ? generationRecords[generationRecords.length - 1].analytics : null;
+  out.push('<h2>Species trajectory (representation per generation)</h2>');
+  if (!lastAnalytics || lastAnalytics.speciesStats.length === 0) {
+    out.push('<p><em>No species data available.</em></p>');
+  } else {
+    const topSpecies = lastAnalytics.speciesStats.slice(0, TRAJECTORY_SPECIES_CAP).map((s) => s.speciesId);
+    out.push('<table>');
+    out.push(`<thead><tr><th>Species</th>${generationRecords.map((r) => `<th>Gen ${r.generation}</th>`).join('')}</tr></thead>`);
+    out.push('<tbody>');
+    for (const speciesId of topSpecies) {
+      const row = generationRecords.map((r) => {
+        const s = r.analytics.speciesStats.find((x) => x.speciesId === speciesId);
+        return `<td>${s ? pct(s.representation) : '-'}</td>`;
+      });
+      out.push(`<tr><td>${escapeHtml(speciesId)}</td>${row.join('')}</tr>`);
+    }
+    out.push('</tbody></table>');
+    if (lastAnalytics.speciesStatsTruncated) {
+      out.push(`<p><em>Species list capped at ${SPECIES_STATS_CAP} per generation in the analytics JSON; ` +
+        `showing the top ${TRAJECTORY_SPECIES_CAP} by final representation here.</em></p>`);
+    }
+  }
+
+  out.push('<h2>Top cores (elite 2-species pairs, final generation)</h2>');
+  if (!lastAnalytics || lastAnalytics.topCores.length === 0) {
+    out.push('<p><em>No core data available.</em></p>');
+  } else {
+    out.push('<table>');
+    out.push('<thead><tr><th>Core</th><th>Count among top 10</th></tr></thead>');
+    out.push('<tbody>');
+    for (const c of lastAnalytics.topCores) out.push(`<tr><td>${escapeHtml(c.core)}</td><td>${c.count}</td></tr>`);
+    out.push('</tbody></table>');
+  }
+
+  out.push(`<h2>Top ${elites.length} teams (final-generation elites, full 9-lead-pairing evaluation)</h2>`);
+  if (elites.length === 0) {
+    out.push('<p><em>No elite teams were produced.</em></p>');
+  } else {
+    out.push('<table>');
+    out.push('<thead><tr><th>Rank</th><th>Team</th><th>Win%</th><th>Best lead</th><th>Avg HP margin</th></tr></thead>');
+    out.push('<tbody>');
+    elites.forEach((t, i) => {
+      out.push(
+        `<tr><td>${i + 1}</td><td>${escapeHtml(t.members.map((m) => m.name).join(', '))}</td>` +
+          `<td>${pct(t.winRate)}</td><td>${escapeHtml(t.bestLead.name)}</td><td>${signed(t.avgHpMargin)}</td></tr>`
+      );
+    });
+    out.push('</tbody></table>');
+  }
+
+  out.push('<h2>Elite team detail</h2>');
+  elites.forEach((t, i) => {
+    out.push('<section class="team">');
+    out.push(`<h3>${i + 1}. ${escapeHtml(t.members.map((m) => m.name).join(', '))}</h3>`);
+    out.push('<ul class="team-stats">');
+    out.push(`<li><strong>Win rate:</strong> ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)</li>`);
+    out.push(`<li><strong>Best lead:</strong> ${escapeHtml(t.bestLead.name)} (${pct(t.bestLead.winRate)} when leading)</li>`);
+    if (t.safeSwap) {
+      out.push(
+        `<li><strong>Safest first switch:</strong> ${escapeHtml(t.safeSwap.name)} ` +
+          `(avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)</li>`
+      );
+    }
+    out.push(`<li><strong>Avg surviving-HP margin:</strong> ${signed(t.avgHpMargin)}</li>`);
+    out.push('</ul>');
+    out.push('<p>5 hardest opponents (by win%):</p>');
+    out.push('<table>');
+    out.push('<thead><tr><th>Opponent</th><th>Win%</th><th>W</th><th>L</th><th>T</th><th>HP margin</th></tr></thead>');
+    out.push('<tbody>');
+    for (const h of t.hardestOpponents) {
+      out.push(
+        `<tr><td>${escapeHtml(h.name)}${h.label ? ` <em>(${escapeHtml(h.label)})</em>` : ''}</td>` +
+          `<td>${pct(h.winRate)}</td><td>${h.wins}</td><td>${h.losses}</td><td>${h.ties}</td>` +
+          `<td>${signed(h.avgHpMargin)}</td></tr>`
+      );
+    }
+    out.push('</tbody></table>');
+    out.push('</section>');
+  });
+
+  out.push('<h2>Collection warnings</h2>');
+  if (importWarnings.length === 0) {
+    out.push('<p><em>None -- every row imported and scored cleanly.</em></p>');
+  } else {
+    out.push('<ul>');
+    for (const w of importWarnings) out.push(`<li>${escapeHtml(w)}</li>`);
+    out.push('</ul>');
+  }
+
+  out.push('</body>');
+  out.push('</html>');
+
+  return out.join('\n');
+}
+
 function renderDoneMarker(result) {
   const lines = [new Date().toISOString()];
   lines.push(`Evolution complete: ${result.generationRecords.length} generation(s) run (${result.stopReason}).`);
@@ -751,7 +972,10 @@ function renderDoneMarker(result) {
  *     run and reused across every generation AND the final elites pass.
  *     Omitted/falsy keeps the serial battleTeams loop. NOT part of the
  *     checkpoint fingerprint (pure performance knob).
- *   outDir?:string, out?:string,
+ *   outDir?:string, out?:string, - out = Markdown report path.
+ *   html?:string, noHtml?:boolean, - HTML report path (default
+ *     <outDir>/my-teams-evolve.html) and an opt-out (mirrors src/cli.js's
+ *     --html/--no-html), GOALS T25.
  *   onProgress?:(p:{generation:number, completed:number, total:number, startedAt:number})=>void,
  *   onLog?:(msg:string)=>void,
  * }} [opts]
@@ -761,6 +985,8 @@ export async function runEvolution(csvPath, opts = {}) {
   const config = buildRunConfig(csvPath, opts);
   const outDir = opts.outDir ?? DEFAULTS.outDir;
   const reportPath = opts.out ?? path.join(outDir, 'my-teams-evolve.md');
+  const writeHtml = opts.noHtml !== true;
+  const htmlPath = opts.html ?? path.join(outDir, DEFAULTS.html);
   mkdirSync(outDir, { recursive: true });
 
   const log = (msg) => opts.onLog?.(msg);
@@ -960,6 +1186,7 @@ export async function runEvolution(csvPath, opts = {}) {
     const result = {
       collectionPath: csvPath,
       reportPath,
+      htmlPath: writeHtml ? htmlPath : null,
       outDir,
       donePath: path.join(outDir, 'evolve-DONE'),
       config,
@@ -981,6 +1208,13 @@ export async function runEvolution(csvPath, opts = {}) {
     mkdirSync(path.dirname(path.resolve(reportPath)), { recursive: true });
     writeFileSync(reportPath, markdown, 'utf8');
     log(`report written to ${reportPath}`);
+
+    if (writeHtml) {
+      const html = renderEvolveReportHtml(result);
+      mkdirSync(path.dirname(path.resolve(htmlPath)), { recursive: true });
+      writeFileSync(htmlPath, html, 'utf8');
+      log(`HTML report written to ${htmlPath}`);
+    }
 
     writeFileSync(result.donePath, renderDoneMarker(result), 'utf8');
     log(`evolve: DONE (${result.donePath})`);
@@ -1020,7 +1254,9 @@ Options:
   --exclude a,b            species ids excluded from candidate teams   (default: none)
   --difficulty D           AI difficulty 0-3 override                 (default: engine default, 3)
   --out PATH               final Markdown report path                 (default <out-dir>/my-teams-evolve.md)
-  --out-dir DIR            checkpoints + DONE marker + default report  (default "${DEFAULTS.outDir}")
+  --html PATH              final HTML report path                     (default <out-dir>/${DEFAULTS.html})
+  --no-html                skip writing the HTML report
+  --out-dir DIR            checkpoints + DONE marker + default reports (default "${DEFAULTS.outDir}")
   --help                   print this help and exit
 `;
 
@@ -1068,6 +1304,8 @@ async function main(argv) {
         exclude: { type: 'string' },
         difficulty: { type: 'string' },
         out: { type: 'string' },
+        html: { type: 'string' },
+        'no-html': { type: 'boolean' },
         'out-dir': { type: 'string' },
         help: { type: 'boolean' },
       },
@@ -1103,6 +1341,8 @@ async function main(argv) {
     difficulty: values.difficulty !== undefined ? intFlag(values.difficulty, 'difficulty', undefined) : undefined,
     outDir: values['out-dir'] ?? DEFAULTS.outDir,
     out: values.out,
+    html: values.html,
+    noHtml: !!values['no-html'],
   };
 
   const realLog = console.log;
@@ -1128,6 +1368,7 @@ async function main(argv) {
   }
   say('');
   say(`Full report written to ${result.reportPath}`);
+  if (result.htmlPath) say(`HTML report written to ${result.htmlPath}`);
   say(`Done marker written to ${result.donePath}`);
 }
 
