@@ -289,11 +289,13 @@ file) throws a clear error rather than silently falling back.
 end-to-end against `rankings-2500.json`, the same "reproduces pvpoke's own
 ratings exactly" pattern the CP-1500 tests use below.
 
-This covers the **engine layer only**. `src/scoring/index.js`'s
-`defaultCp1500Ivs`, `src/meta/teams.js`/`src/meta/usage.js`'s hardcoded
-`.../1500.json` data paths, and a `--cp` CLI flag are NOT yet wired to this
-— see ROADMAP.md's "--cp 2500 / Ultra League flag" gap for the remaining
-scope.
+This covers the **engine layer**. GOALS T18b threaded `ctx.cp` through
+`src/scoring/index.js`'s `defaultIvsForCp` (formerly `defaultCp1500Ivs`) and
+`src/meta/teams.js`/`src/meta/usage.js`'s vendor-file paths. A `--cp` CLI
+flag, and which meta GROUP file (`groups/great.json` vs `groups/ultra.json`)
+represents "the meta" at a non-1500 cp, are still NOT wired — see
+ROADMAP.md's "--cp 2500 / Ultra League flag" gap for the remaining scope
+(GOALS T18c).
 
 ## API contract
 

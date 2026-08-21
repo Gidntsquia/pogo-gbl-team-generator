@@ -103,15 +103,24 @@ function resolveLookupId(gm, baseSpeciesId, shadow) {
 }
 
 /**
- * pvpoke's own default (max-stat-product) IV spread for CP 1500, read
- * directly from gamemaster data rather than recomputed. Layout verified in
- * vendor/pvpoke/src/js/pokemon/Pokemon.js (the "gamemaster" IV-strategy
- * branch of Pokemon#initialize): `defaultIVs.cp1500 == [level, atk, def, hp]`.
+ * pvpoke's own default (max-stat-product) IV spread for ctx's CP cap (GOALS
+ * T18b: 1500 by default, or whatever `initEngine({ cp })` was called with),
+ * read directly from gamemaster data rather than recomputed. Layout verified
+ * in vendor/pvpoke/src/js/pokemon/Pokemon.js (the "gamemaster" IV-strategy
+ * branch of Pokemon#initialize): `defaultIVs.cp<N> == [level, atk, def, hp]`.
+ *
+ * Note: gamemaster also carries an alternate `cp2500l40` spread (a
+ * level-40-capped variant) for some species alongside `cp2500` -- T18's own
+ * engine test already settled which one `rankings-2500.json` assumes by
+ * reproducing its ratings bit-for-bit using `cp2500` (not `cp2500l40`), so
+ * this function uses the plain `cp<N>` key for every cap, matching that
+ * verified result rather than re-deriving it.
  */
-function defaultCp1500Ivs(ctx, lookupId) {
-  const combo = ctx.gm.getPokemonById(lookupId)?.defaultIVs?.cp1500;
+function defaultIvsForCp(ctx, lookupId) {
+  const cpKey = `cp${ctx.cp}`;
+  const combo = ctx.gm.getPokemonById(lookupId)?.defaultIVs?.[cpKey];
   if (!combo) {
-    throw new Error(`loadMeta: no gamemaster defaultIVs.cp1500 for "${lookupId}"`);
+    throw new Error(`loadMeta: no gamemaster defaultIVs.${cpKey} for "${lookupId}"`);
   }
   const [, atk, def, hp] = combo;
   return { atk, def, hp };
@@ -145,7 +154,7 @@ export function applyGroupMoveset(pokemon, { fastMove, chargedMoves }) {
 /**
  * Build ONE meta/group entry (`{speciesId, fastMove, chargedMoves}`) into a
  * battle-ready pvpoke Pokemon with that exact moveset, at pvpoke's own default
- * CP-1500 IV spread. Shared with src/meta/teams.js so the "_shadow" suffix
+ * IV spread for ctx's CP cap (GOALS T18b). Shared with src/meta/teams.js so the "_shadow" suffix
  * handling, default-IV lookup and moveset application exist in exactly one
  * place.
  *
@@ -157,7 +166,7 @@ export function buildMetaMon(ctx, entry) {
   const shadow = entry.speciesId.endsWith(SHADOW_SUFFIX);
   const baseSpeciesId = shadow ? entry.speciesId.slice(0, -SHADOW_SUFFIX.length) : entry.speciesId;
   const lookupId = resolveLookupId(ctx.gm, baseSpeciesId, shadow);
-  const ivs = defaultCp1500Ivs(ctx, lookupId);
+  const ivs = defaultIvsForCp(ctx, lookupId);
 
   const pokemon = buildPokemon(ctx, { speciesId: baseSpeciesId, ivs, shadow });
   applyGroupMoveset(pokemon, entry);
@@ -195,7 +204,7 @@ export function buildRecommendedMon(ctx, speciesId) {
   const lookupId = resolveLookupId(ctx.gm, baseSpeciesId, shadow);
   if (!ctx.gm.getPokemonById(lookupId)) return null;
 
-  const ivs = defaultCp1500Ivs(ctx, lookupId);
+  const ivs = defaultIvsForCp(ctx, lookupId);
   const pokemon = buildPokemon(ctx, { speciesId: baseSpeciesId, ivs, shadow });
 
   return {

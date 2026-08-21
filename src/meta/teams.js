@@ -1,10 +1,11 @@
 // JavaScript Document
 //
-// Meta opponent team pool. Loads pvpoke's own curated Great League 3v3 teams
-// (vendor/pvpoke/src/data/training/teams/gobattleleague/1500.json) and builds
-// each member into a battle-ready pvpoke Pokemon via the scoring module's
-// buildMetaMon (which itself only calls pvpoke's own Pokemon methods -- no
-// battle math or moveset logic is reimplemented here).
+// Meta opponent team pool. Loads pvpoke's own curated 3v3 teams
+// (vendor/pvpoke/src/data/training/teams/gobattleleague/<cp>.json, cp from
+// ctx.cp -- GOALS T18b) and builds each member into a battle-ready pvpoke
+// Pokemon via the scoring module's buildMetaMon (which itself only calls
+// pvpoke's own Pokemon methods -- no battle math or moveset logic is
+// reimplemented here).
 //
 // These teams are the opponent pool the 3v3 evaluator (T4) battles every
 // candidate team against. See PLAN.md's Rev 2 section: "Meta opponents are
@@ -15,11 +16,15 @@ import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { buildMetaMon, buildRecommendedMon } from '../scoring/index.js';
 
-// pvpoke's own "GO Battle League" curated Great League (CP 1500) preset set:
-// 25 three-mon teams, each member with an explicit fast + two charged moves.
-// This is the file pvpoke's Training mode offers as the "GO Battle League"
-// opponent presets, so it tracks the live meta as the pin is bumped.
-const DEFAULT_TEAMS_FILE = 'src/data/training/teams/gobattleleague/1500.json';
+// pvpoke's own "GO Battle League" curated preset set, one file per CP cap
+// (1500.json/2500.json/10000.json vendored -- great/ultra/master league,
+// respectively); the Great League 1500.json is 25 three-mon teams, each
+// member with an explicit fast + two charged moves. This is the file
+// pvpoke's Training mode offers as the "GO Battle League" opponent presets,
+// so it tracks the live meta as the pin is bumped.
+function defaultTeamsFile(ctx) {
+  return `src/data/training/teams/gobattleleague/${ctx.cp}.json`;
+}
 
 // GOALS T10b: community-curated Great League teams (top-player recommended +
 // off-meta), committed at the repo root (not vendor -- this is our own data,
@@ -217,14 +222,14 @@ export function loadCommunityTeams(ctx, opts = {}) {
  *   `limit` caps how many teams are built (default: all), sliced off the
  *   merged (vendor + community) list -- see the ordering note above.
  *   `teamsFile` overrides which pvpoke training-teams file is read (default:
- *   the GO Battle League Great League presets); path is relative to
- *   ctx.vendorRoot. `communityFile`/`communityEntries` are forwarded to
+ *   the GO Battle League presets for ctx.cp -- GOALS T18b); path is relative
+ *   to ctx.vendorRoot. `communityFile`/`communityEntries` are forwarded to
  *   loadCommunityTeams. `includeCommunity: false` restores the pre-T10b
  *   vendor-only pool (testability / an explicit opt-out).
  * @returns {MetaTeam[]}
  */
 export function loadMetaTeams(ctx, opts = {}) {
-  const teamsFile = opts.teamsFile ?? DEFAULT_TEAMS_FILE;
+  const teamsFile = opts.teamsFile ?? defaultTeamsFile(ctx);
   const vendorTeams = buildVendorTeams(ctx, teamsFile);
 
   const community = opts.includeCommunity === false ? [] : loadCommunityTeams(ctx, opts);

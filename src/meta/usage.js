@@ -3,18 +3,24 @@
 // Per-species meta usage weights, powering the weighted samplers in
 // src/meta/sampleTeams.js (T10) and src/teams/sample.js (T11). See PLAN.md's
 // Rev 3 section: usage weight = normalized (score/100)^gamma, where score is
-// pvpoke's own 0-100 Great League ranking score (vendored
-// vendor/pvpoke/src/data/rankings/all/overall/rankings-1500.json), optionally
-// overridden by a committed freshness snapshot (data/meta-usage.json, written
-// by scripts/refresh-usage.mjs). No battle math here -- this is pure
-// arithmetic over pvpoke's own published ranking scores.
+// pvpoke's own 0-100 ranking score for ctx.cp (vendored
+// vendor/pvpoke/src/data/rankings/all/overall/rankings-<cp>.json, cp from
+// ctx.cp -- GOALS T18b; Great League/1500 by default), optionally overridden
+// by a committed freshness snapshot (data/meta-usage.json, written by
+// scripts/refresh-usage.mjs). No battle math here -- this is pure arithmetic
+// over pvpoke's own published ranking scores.
+//
+// Note (GOALS T18b): the Great League meta GROUP file
+// (src/data/groups/great.json, DEFAULT_GROUP_FILE below) is NOT threaded by
+// ctx.cp here -- which meta-group pool represents "the current meta" for a
+// non-Great-League cp (e.g. groups/ultra.json for cp 2500) is a design
+// decision left to GOALS T18c alongside its community-teams-file interaction
+// question, not a mechanical path substitution like the two files below.
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
 const DEFAULT_GROUP_FILE = 'src/data/groups/great.json';
-const DEFAULT_TRAINING_FILE = 'src/data/training/teams/gobattleleague/1500.json';
-const DEFAULT_RANKINGS_FILE = 'src/data/rankings/all/overall/rankings-1500.json';
 
 // Default snapshot path, relative to the process cwd -- mirrors src/cli.js's
 // "out/report.md" convention (both assume the CLI/tests run from repo root).
@@ -32,6 +38,16 @@ const DEFAULT_GAMMA = 2.5;
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));
+}
+
+/** Default training-teams file for ctx's CP cap (GOALS T18b), mirroring src/meta/teams.js. */
+function defaultTrainingFile(ctx) {
+  return `src/data/training/teams/gobattleleague/${ctx.cp}.json`;
+}
+
+/** Default vendored rankings file for ctx's CP cap (GOALS T18b). */
+function defaultRankingsFile(ctx) {
+  return `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
 }
 
 function readTrainingSpeciesIds(raw) {
@@ -66,7 +82,7 @@ function collectSpeciesUniverse(ctx, opts, scoreBySpecies) {
     opts.groupEntries ?? readJson(path.join(ctx.vendorRoot, opts.groupFile ?? DEFAULT_GROUP_FILE));
   const trainingIds =
     opts.trainingSpeciesIds ??
-    readTrainingSpeciesIds(readJson(path.join(ctx.vendorRoot, opts.trainingFile ?? DEFAULT_TRAINING_FILE)));
+    readTrainingSpeciesIds(readJson(path.join(ctx.vendorRoot, opts.trainingFile ?? defaultTrainingFile(ctx))));
 
   const ids = new Set(scoreBySpecies.keys());
   for (const g of groupEntries) ids.add(g.speciesId);
@@ -118,7 +134,7 @@ function loadScoreBySpecies(ctx, opts) {
   }
 
   const rankings =
-    opts.rankingsEntries ?? readJson(path.join(ctx.vendorRoot, opts.rankingsFile ?? DEFAULT_RANKINGS_FILE));
+    opts.rankingsEntries ?? readJson(path.join(ctx.vendorRoot, opts.rankingsFile ?? defaultRankingsFile(ctx)));
   return new Map(rankings.map((r) => [r.speciesId, r.score]));
 }
 
