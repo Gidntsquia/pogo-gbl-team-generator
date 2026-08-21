@@ -10,7 +10,7 @@
 - **Shield-scenario weighting review**: 0.25/0.50/0.25 for the 1v1 matrix was a judgment call; revisit once 3v3 results exist to compare against.
 - **HTML report** (nicer than out/report.md), potentially a published status/report page.
 - **--cp 2500 / Ultra League flag** (engine already parameterizes the cap internally; expose it end-to-end).
-- **Usage-weighted meta**: weight meta mons/teams by observed usage rather than uniformly.
+- **Usage-weighted meta**: absorbed into the sampling initiative (GOALS T9–T12, 2026-08-21) — usage weights now power both opponent- and candidate-team sampling.
 - **Safe-swap analysis**: per recommended team, which member is the safest first switch.
 - **TrainingAI variance study**: if T2 pinned RNG, quantify how much AI randomness moves team rankings (repeat-run confidence intervals).
 - **Vendor refresh discipline**: bump the pvpoke pin on a cadence (meta shifts each season); re-run T0 validation after any bump.

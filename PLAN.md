@@ -47,3 +47,13 @@ The user wants candidate teams evaluated in **team battles against meta TEAMS**,
 **Pipeline (Rev 2):** import collection → 1v1 scoring matrix (pruning + insight + fallback switch policy) → candidate teams = C(topK, 3), no duplicated species (shadow/base count as same species) → every candidate battles every meta team across all 3×3 lead pairings via `battleTeams` → rank by mean win rate (tiebreak: mean surviving-HP margin) → report: per candidate team, win% vs each meta team, best lead, hardest opposing teams.
 
 **Interface (new, for the team evaluator):** `evaluateTeams(ctx, {candidates: [[3 userMonKeys]], metaTeams, matrix, opts})` → `[{members, winRate, bestLead, perMeta: [{metaTeamId, wins, losses, avgHpMargin}], hardestTeams}]` sorted best-first. Work queue and acceptance criteria live in **GOALS.md**.
+
+## Rev 3 — weighted-sampling surface expansion (2026-08-21, user directive)
+The exhaustive path (candidates = C(topK,3), opponents = fixed curated list) couples coverage to battle count. Rev 3 decouples them by weighted sampling on BOTH sides of the matchup while holding battles ≈ flat:
+- **Usage weights** (`src/meta/usage.js`): per-species weight from vendored `rankings-1500.json` scores (deterministic base), optionally refreshed from pvpoke's live rankings JSON into a committed `data/meta-usage.json` snapshot — never a hard network dependency, tests never touch the network.
+- **Opponent sampler** (`src/meta/sampleTeams.js`): opponents = mixture of curated training teams + weighted-random 3-mon compositions from the meta pool (weight ∝ usage). Seeded PRNG lives in `src/util/rng.js` (no npm deps; sampling machinery, not battle math).
+- **Candidate sampler** (`src/teams/sample.js`): candidate teams sampled from a wide deduped user-mon pool, P(mon) ∝ blend(normalized 1v1 matrix score, species usage weight) — the user's own meta mons appear on more candidate teams.
+- **`evaluateTeams` is UNCHANGED** — samplers are pure list generators feeding its existing `candidates`/`metaTeams` params. The exhaustive path remains available via `--exhaustive`.
+- Everything seeded + deterministic by default; the report prints sampling settings + seed for reproducibility.
+
+**Interfaces (Rev 3):** `loadUsageWeights(ctx, opts)` → `Map<speciesId, weight>` (normalized, positive); `sampleOpponentTeams(ctx, {count, weights, seed, curatedRatio, curated})` → same shape as `loadMetaTeams` output; `sampleCandidateTeams({matrix, pool, weights, count, seed, excludeSpecies})` → `[[3 userMonKeys]…]`. Queue: GOALS.md T9–T12.
