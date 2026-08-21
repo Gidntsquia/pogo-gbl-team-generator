@@ -33,9 +33,9 @@
     { "id": "jp-cup-c2", "name": "JP Nature Cup — balance", "tier": "off-meta", "members": ["ninetales", "jellicent", "quagsire"] },
     { "id": "jp-cup-c3", "name": "JP Nature Cup — grass bait gimmick", "tier": "off-meta", "members": ["mantine", "seismitoad", "quagsire"] },
     { "id": "jp-cup-c4", "name": "JP Nature Cup — Blaziken surprise", "tier": "off-meta", "members": ["blaziken", "cradily", "lanturn"] },
-    { "id": "jp-party-d1", "name": "JP player party (新バトルパーティ)", "tier": "off-meta", "members": ["araquanid", "basculin", "carbink"], "uncertain": true, "notes": "slot 2 nickname is IV gibberish; blue fish sprite read as Basculin (alt: Lumineon — a live S27 pick per Jaxon's AlexBrown1e correction)" },
+    { "id": "jp-party-d1", "name": "JP player party (新バトルパーティ)", "tier": "off-meta", "members": ["araquanid", "lanturn", "carbink"], "notes": "confirmed by Jaxon (slot 2 = Lanturn)" },
     { "id": "jp-party-d2", "name": "JP player party (自然界)", "tier": "off-meta", "members": ["jellicent", "ludicolo", "sandslash_alolan_shadow"] },
-    { "id": "jp-party-d3", "name": "JP player party (スーパーリーグ, open GL)", "tier": "off-meta", "members": ["diggersby", "fearow", "annihilape_shadow"], "uncertain": true, "notes": "labeled オニスズメ (Spearow) but CP 1495 exceeds Spearow's max — nickname-of-base-stage pattern → Fearow, sprite agrees" },
+    { "id": "jp-party-d3", "name": "JP player party (スーパーリーグ, open GL)", "tier": "off-meta", "members": ["diggersby", "fearow", "annihilape_shadow"], "notes": "confirmed by Jaxon (Fearow)" },
     { "id": "getgeisted", "name": "GetGeisted (player party)", "tier": "off-meta", "members": ["dusclops", "sealeo", "primeape_shadow"], "notes": "Dusclops is shiny in the screenshot (cosmetic only)" }
   ]
 }
