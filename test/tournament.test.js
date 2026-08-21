@@ -171,7 +171,15 @@ test('deterministic: two fresh runs with the same seed produce an identical stag
 // bug, which would misalign far more than one battle in 36).
 const WIN_RATE_TOLERANCE = 3 / 36;
 
-test('opts.threads (worker-pool executor, batched per candidate) produces win rates within tolerance of the serial path', async () => {
+// GOALS T21 (supersedes T15c's per-candidate batching): opts.threads now
+// boots ONE persistent executor for the WHOLE run (see runTournament) and
+// each stage submits its entire battle set as a single continueOnError
+// run() call (see runFunnelStage) instead of one runBattles() call per
+// candidate. The win-rate-within-tolerance assertions below are unchanged
+// (same underlying correctness bar); this test also now checks the new
+// threadsUsed bookkeeping (report + checkpoints recording the actual thread
+// count per stage, per the ticket's explicit requirement).
+test('opts.threads (persistent worker-pool executor, batched per stage) produces win rates within tolerance of the serial path', async () => {
   const THREADS_TINY = {
     scoreMeta: 4,
     pool: 8,
@@ -220,6 +228,30 @@ test('opts.threads (worker-pool executor, batched per candidate) produces win ra
   const threadedErrors =
     threaded.stage1.timing.errorCount + threaded.stage2.timing.errorCount + threaded.stage3.timing.errorCount;
   assert.equal(threadedErrors, 0, 'no battle-batch errors on a clean fixture run');
+
+  // GOALS T21: threadsUsed recorded per stage (report + checkpoints) --
+  // serial run shows null on every stage, the threaded run shows the actual
+  // thread count passed, on every stage (proof the SAME executor config
+  // reached all 3 stages, not just stage 1).
+  for (const s of [serial.stage1, serial.stage2, serial.stage3]) {
+    assert.equal(s.threadsUsed, null, 'serial run: threadsUsed is null');
+  }
+  for (const s of [threaded.stage1, threaded.stage2, threaded.stage3]) {
+    assert.equal(s.threadsUsed, 2, 'threaded run: threadsUsed reflects opts.threads on every stage');
+  }
+
+  const threadedReport = readFileSync(threaded.reportPath, 'utf8');
+  assert.match(
+    threadedReport,
+    /- threads: stage1=2 \(worker-pool executor\), stage2=2 \(worker-pool executor\), stage3=2 \(worker-pool executor\)/,
+    'report Settings section shows the thread count used per stage'
+  );
+  const serialReport = readFileSync(serial.reportPath, 'utf8');
+  assert.match(
+    serialReport,
+    /- threads: stage1=serial, stage2=serial, stage3=serial/,
+    'report Settings section shows "serial" per stage when threads is unset'
+  );
 });
 
 test('resume: deleting only the stage-3 checkpoint + DONE re-runs just stage 3 (stages 1-2 skipped)', async () => {

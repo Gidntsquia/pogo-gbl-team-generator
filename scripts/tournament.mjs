@@ -57,10 +57,10 @@
 //                           after stage 2 (see "DEADLINE SELF-TUNING" below) (450)
 //   --exclude a,b          species ids excluded from candidate teams (none)
 //   --difficulty D         AI difficulty 0-3 override               (engine default, 3)
-//   --threads N            GOALS T15c: battle through the worker-pool executor
-//                           (src/engine/parallel.js), batched per candidate;
-//                           omit for the original serial battleTeams loop
-//                           (default: not set, i.e. serial)
+//   --threads N            GOALS T21: battle through ONE persistent worker-pool
+//                           executor shared across all 3 stages (src/engine/
+//                           parallel.js); this CLI defaults to max(1, cpus-1)
+//                           (--threads 1 for the old serial reference mode)
 //   --out PATH             final Markdown report path         (<out-dir>/my-teams-tournament.md)
 //   --out-dir DIR          checkpoints + DONE marker + default report dir ("out")
 //   --help                 print this help and exit
@@ -109,7 +109,7 @@ import { parseArgs } from 'node:util';
 import { importCollection } from '../src/importer/index.js';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
-import { runBattles } from '../src/engine/parallel.js';
+import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadMetaTeams } from '../src/meta/teams.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
@@ -366,41 +366,106 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
 // ---------------------------------------------------------------------------
 
 /**
- * @param {object} ctx - from initEngine; ctx.vendorRoot is used by the threaded path to boot worker engine contexts.
+ * @param {object} ctx - from initEngine.
  * @param {{
  *   candidates: string[][], matrix: object,
  *   opponents: Array<{id:string, name:string, label?:string, members:Array<{pokemon:object, spec:object}>}>,
  *   pairingsFor: (candidateSig:string, opponentId:string) => Array<{leadA:number, leadB:number}>,
  *   difficulty?: number,
  *   trackLeads?: boolean, - compute bestLead/safeSwap/perMeta/hardestOpponents/curated-vs-sampled (stage 3 only)
- *   threads?: number, - GOALS T15c: when set, every battle for a given candidate (across
- *     all its opponents/pairings) is batched into ONE src/engine/parallel.js
- *     runBattles() call instead of driving battleTeams() serially. Batched per
- *     CANDIDATE (not per whole stage) so a failure only costs that candidate's
- *     battles, not the whole stage.
- *   onProgress?: (p:{completed:number, total:number, startedAt:number}) => void,
+ *   executor?: {run(specs):Promise<Array<{ok:true,value:object}|{ok:false,error:{message:string}}>>}, -
+ *     GOALS T21: when supplied (a src/engine/parallel.js createExecutor()
+ *     instance created with `continueOnError: true`), every battle for the
+ *     WHOLE STAGE (every candidate x every opponent x every pairing) is
+ *     submitted as ONE `executor.run()` call instead of driving battleTeams()
+ *     serially -- per-STAGE batching against runTournament's ONE persistent
+ *     pool, not per-candidate (T15c's now-superseded design): continueOnError
+ *     means a single bad spec only costs THAT battle (a `{ok:false}` result
+ *     slot), matching the serial path's own per-battle skip-and-continue
+ *     exactly, while still letting the pool spread the WHOLE stage's battles
+ *     across every worker instead of one candidate's battles at a time. A
+ *     worker CRASH (as opposed to a bad spec) is still fatal to the in-flight
+ *     `run()` call (src/engine/parallel.js's documented crash policy, even
+ *     under continueOnError) and is caught here, marking every spec in the
+ *     stage as failed -- accepted as a rare-infra-fault tradeoff for the much
+ *     more common bad-individual-spec case's finer isolation; the executor
+ *     transparently boots a fresh pool on the NEXT `run()` call (the next
+ *     stage), so a crash never leaves runTournament stuck.
+ *     Omitted/undefined keeps the original serial battleTeams loop.
+ *   onProgress?: (p:{completed:number, total:number, startedAt:number}) => void, -
+ *     called as candidates are TALLIED, same completed-count convention either
+ *     path; under the threaded path all of a stage's battles already finished
+ *     before tallying starts (one big awaited `run()` call), so progress
+ *     effectively jumps from 0 to done rather than advancing live -- a UX
+ *     tradeoff of stage-level (vs per-candidate) batching, not a correctness
+ *     concern.
  *   onLog?: (msg:string) => void,
  * }} params
  * @returns {Promise<{ rankings: object[], battleCount: number, errorCount: number, elapsedMs: number, startedAt: number, finishedAt: number }>}
  */
 async function runFunnelStage(ctx, params) {
-  const { candidates, matrix, opponents, pairingsFor, difficulty, trackLeads = false, threads, onProgress, onLog } = params;
-  const threaded = typeof threads === 'number' && threads > 0;
+  const { candidates, matrix, opponents, pairingsFor, difficulty, trackLeads = false, executor, onProgress, onLog } = params;
+  const threaded = !!executor;
 
   const startedAt = Date.now();
   const results = [];
   let battleCount = 0;
   let errorCount = 0;
 
-  for (let idx = 0; idx < candidates.length; idx++) {
-    const keys = candidates[idx];
+  // ---- Pass 1: build every candidate's members/oppPlans up front (pure,
+  // no battles yet) -- pairings are seeded off (candidateSig, opponent.id) --
+  // pure/deterministic, so computing them once here (rather than calling
+  // pairingsFor twice) is just an optimization, not a correctness dependency.
+  const prepared = candidates.map((keys) => {
     const members = keys.map((key) => {
       const b = matrix.builtMons[key];
       return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon, spec: b.spec };
     });
-    const teamA = members.map((m) => m.pokemon);
     const teamASpec = members.map((m) => m.spec);
     const candidateSig = [...keys].sort().join('|');
+    const oppPlans = opponents.map((opp) => ({ opp, pairings: pairingsFor(candidateSig, opp.id) }));
+    return { members, teamASpec, oppPlans };
+  });
+
+  // ---- Threaded path (GOALS T21): submit the WHOLE STAGE's battles (every
+  // candidate x every opponent x every pairing) as ONE executor.run() call,
+  // in the exact (candidate, opponent, pairing) order the tally loop below
+  // walks, so results line up 1:1 by position. `executor` is created with
+  // `continueOnError: true` by runTournament, so a single bad spec only
+  // fails ITS OWN result slot ({ok:false}) -- the serial path's per-battle
+  // skip-and-continue, preserved exactly, not T15c's coarser per-candidate
+  // batch-reject. A worker CRASH is still fatal to the whole run() call
+  // (src/engine/parallel.js's documented crash policy, even under
+  // continueOnError, since there's no way to know what state the crashed
+  // battle was in) -- caught here and treated as every spec in the stage
+  // failing; the executor transparently boots a fresh pool on the NEXT
+  // run() call (the next stage), so this never leaves runTournament stuck.
+  let allResults = [];
+  if (threaded) {
+    const allSpecs = [];
+    for (const { teamASpec, oppPlans } of prepared) {
+      for (const { opp, pairings } of oppPlans) {
+        const teamBSpec = opp.members.map((m) => m.spec);
+        for (const { leadA, leadB } of pairings) {
+          allSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
+        }
+      }
+    }
+    if (allSpecs.length > 0) {
+      try {
+        allResults = await executor.run(allSpecs);
+      } catch (err) {
+        onLog?.(`battle batch error (whole stage's ${allSpecs.length} battles skipped): ${err.message}`);
+        allResults = new Array(allSpecs.length).fill({ ok: false, error: { message: err.message } });
+      }
+    }
+  }
+  let cursor = 0;
+
+  // ---- Pass 2: tally every candidate's results (source depends on `threaded`). ----
+  for (let idx = 0; idx < prepared.length; idx++) {
+    const { members, oppPlans } = prepared[idx];
+    const teamA = members.map((m) => m.pokemon);
 
     let winPoints = 0;
     let hpSum = 0;
@@ -411,50 +476,6 @@ async function runFunnelStage(ctx, params) {
     const leadBattles = [0, 0, 0];
     const swapHpSum = [0, 0, 0];
     const swapHpCount = [0, 0, 0];
-
-    // Pairings are seeded off (candidateSig, opponent.id) -- pure/deterministic,
-    // so computing them once up front and reusing below (rather than calling
-    // pairingsFor twice) is just an optimization, not a correctness dependency.
-    const oppPlans = opponents.map((opp) => ({ opp, pairings: pairingsFor(candidateSig, opp.id) }));
-
-    // Threaded path: batch this candidate's entire battle set (every opponent x
-    // every pairing) into one runBattles() call, in the exact (opponent, pairing)
-    // order oppPlans/pairings iterate below, so results line up 1:1 by position.
-    // runBattles rejects the WHOLE batch on any single bad spec (src/engine/
-    // parallel.js) -- there is no partial-batch result to recover -- so a
-    // failure here is counted as an error for EVERY battle in THIS candidate's
-    // batch. That is coarser than the serial path's per-battle skip-and-continue
-    // (one bad matchup no longer costs just itself, it costs its whole
-    // candidate), but it preserves the ticket's actual invariant -- one bad
-    // candidate/matchup can never take down the whole overnight run -- and was
-    // an explicitly authorized tradeoff (GOALS T15c: "either wrap per-battle or
-    // batch per-candidate with a try/catch around each runBattles call").
-    let threadedResults = null;
-    if (threaded) {
-      const specs = [];
-      for (const { opp, pairings } of oppPlans) {
-        const teamBSpec = opp.members.map((m) => m.spec);
-        for (const { leadA, leadB } of pairings) {
-          specs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
-        }
-      }
-      if (specs.length > 0) {
-        try {
-          threadedResults = await runBattles(specs, { threads, vendorRoot: ctx.vendorRoot });
-        } catch (err) {
-          errorCount += specs.length;
-          candidateErrors += specs.length;
-          onLog?.(
-            `battle batch error (candidate's ${specs.length} battles skipped): ` +
-              `candidate=[${members.map((m) => m.name).join('/')}]: ${err.message}`
-          );
-          threadedResults = new Array(specs.length).fill(null);
-        }
-      } else {
-        threadedResults = [];
-      }
-    }
-    let planIdx = 0;
 
     for (const { opp, pairings } of oppPlans) {
       const teamB = opp.members.map((m) => m.pokemon);
@@ -469,8 +490,17 @@ async function runFunnelStage(ctx, params) {
       for (const { leadA, leadB } of pairings) {
         let r;
         if (threaded) {
-          r = threadedResults[planIdx++];
-          if (r == null) continue; // part of a failed batch; already counted above
+          const slot = allResults[cursor++];
+          if (!slot.ok) {
+            errorCount += 1;
+            candidateErrors += 1;
+            onLog?.(
+              `battle error (skipped): candidate=[${members.map((m) => m.name).join('/')}] ` +
+                `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${slot.error.message}`
+            );
+            continue;
+          }
+          r = slot.value;
         } else {
           try {
             r = battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty });
@@ -647,6 +677,13 @@ function renderTournamentReport(result) {
       '(stages 1-2 only; stage 3 always forces full curated/community-pool inclusion, see below)'
   );
   out.push(`- deadline-minutes=${config.deadlineMinutes}`);
+  // Threads is deliberately NOT part of the config fingerprint (see runTournament's
+  // JSDoc), so a resumed stage can legitimately show a different value than a
+  // freshly-run one -- reported per stage rather than once for the whole run.
+  const threadsLabel = (s) => (s.threadsUsed ? `${s.threadsUsed} (worker-pool executor)` : 'serial');
+  out.push(
+    `- threads: stage1=${threadsLabel(stage1)}, stage2=${threadsLabel(stage2)}, stage3=${threadsLabel(stage3)}`
+  );
   if (config.excludeSpecies.length) out.push(`- excluded species: ${config.excludeSpecies.join(', ')}`);
   if (config.difficulty !== null) out.push(`- AI difficulty override: ${config.difficulty}`);
   out.push('');
@@ -795,14 +832,18 @@ function renderDoneMarker(result) {
  *   s2Top?:number, s2Opponents?:number,
  *   s3Top?:number, s3Opponents?:number,
  *   deadlineMinutes?:number,
- *   threads?:number, - GOALS T15c: battles run through src/engine/parallel.js's
- *     worker-pool executor, batched per candidate (see runFunnelStage). Omitted/
- *     falsy keeps the original serial battleTeams loop. NOT part of the
- *     checkpoint config fingerprint (buildRunConfig) -- it's a pure performance
- *     knob (same requested battle set either way; only avgHpMargin can drift a
- *     little, per src/engine/README.md's "Known limitation" section, same
- *     caveat GOALS T15b already documented for evaluateTeams), so changing
- *     --threads between runs must NOT invalidate an existing checkpoint.
+ *   threads?:number, - GOALS T21 (supersedes T15c): when set, ONE persistent
+ *     src/engine/parallel.js createExecutor() pool is booted for the WHOLE
+ *     run and reused across all 3 stages (each stage submits its entire
+ *     battle set as one continueOnError run() call -- see runFunnelStage),
+ *     instead of a fresh pool per candidate. Omitted/falsy keeps the original
+ *     serial battleTeams loop. NOT part of the checkpoint config fingerprint
+ *     (buildRunConfig) -- it's a pure performance knob (same requested battle
+ *     set either way; only avgHpMargin, and rarely one knife-edge battle's
+ *     win/loss, can drift a little, per src/engine/README.md's "Known
+ *     limitation" section), so changing --threads between runs must NOT
+ *     invalidate an existing checkpoint. The executor is always closed before
+ *     runTournament returns or throws.
  *   outDir?:string, out?:string,
  *   onProgress?:(p:{stage:number, completed:number, total:number, startedAt:number})=>void,
  *   onLog?:(msg:string)=>void,
@@ -831,6 +872,20 @@ export async function runTournament(csvPath, opts = {}) {
   const pool = buildSamplingPool(deduped, config.pool, config.excludeSpecies);
   log(`tournament: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species`);
 
+  // GOALS T21: ONE persistent executor for the whole run (all 3 stages share
+  // it -- see runFunnelStage), continueOnError so a bad spec only fails its
+  // own battle rather than a whole stage. Always closed below, success or
+  // failure, so no worker_thread outlives this function.
+  const threaded = typeof threads === 'number' && threads > 0;
+  const executor = threaded ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true }) : null;
+
+  try {
+    return await runStages();
+  } finally {
+    if (executor) await executor.close();
+  }
+
+  async function runStages() {
   const adjustments = [];
 
   // ============================== Stage 1 ================================
@@ -877,13 +932,14 @@ export async function runTournament(csvPath, opts = {}) {
       opponents: s1Opponents,
       pairingsFor: (sig, oppId) => threeRandomPairings(`${config.seed}-s1`, sig, oppId),
       difficulty,
-      threads,
+      executor,
       onProgress: progressFor(1),
       onLog: log,
     });
 
     stage1 = {
       stage: 1,
+      threadsUsed: threaded ? threads : null,
       config,
       runStartedAt: new Date(runStartedAtMs).toISOString(),
       opponentCount: { requested: config.s1Opponents, effective: config.s1Opponents },
@@ -949,13 +1005,14 @@ export async function runTournament(csvPath, opts = {}) {
       opponents: s2OpponentsSampled,
       pairingsFor: (sig, oppId) => threeRandomPairings(`${config.seed}-s2`, sig, oppId),
       difficulty,
-      threads,
+      executor,
       onProgress: progressFor(2),
       onLog: log,
     });
 
     stage2 = {
       stage: 2,
+      threadsUsed: threaded ? threads : null,
       config,
       runStartedAt: new Date(runStartedAtMs).toISOString(),
       opponentCount: { requested: config.s2Opponents, effective: s2OpponentsEffective },
@@ -1038,13 +1095,14 @@ export async function runTournament(csvPath, opts = {}) {
       pairingsFor: () => ninePairings(),
       difficulty,
       trackLeads: true,
-      threads,
+      executor,
       onProgress: progressFor(3),
       onLog: log,
     });
 
     stage3 = {
       stage: 3,
+      threadsUsed: threaded ? threads : null,
       config,
       runStartedAt: new Date(runStartedAtMs).toISOString(),
       opponentCount: { requested: config.s3Opponents, effective: s3OpponentsEffective },
@@ -1097,6 +1155,7 @@ export async function runTournament(csvPath, opts = {}) {
   log(`tournament: DONE (${result.donePath})`);
 
   return result;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,8 +1181,10 @@ Options:
   --deadline-minutes D  overall wall-clock budget (self-tuning)     (default ${DEFAULTS.deadlineMinutes})
   --exclude a,b         species ids excluded from candidate teams   (default: none)
   --difficulty D        AI difficulty 0-3 override                 (default: engine default, 3)
-  --threads N           battle via the worker-pool executor, batched per
-                          candidate (src/engine/parallel.js); omit for serial (default: not set, i.e. serial)
+  --threads N           battle via ONE persistent worker-pool executor shared
+                          across all 3 stages (src/engine/parallel.js); this
+                          CLI defaults to max(1, cpus-1) -- pass --threads 1
+                          for the old serial reference mode              (default ${defaultThreadCount()} on this machine)
   --out PATH            final Markdown report path                 (default <out-dir>/my-teams-tournament.md)
   --out-dir DIR         checkpoints + DONE marker + default report  (default "${DEFAULTS.outDir}")
   --help                print this help and exit
@@ -1198,7 +1259,13 @@ async function main(argv) {
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],
     difficulty: values.difficulty !== undefined ? intFlag(values.difficulty, 'difficulty', undefined) : undefined,
-    threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : undefined,
+    // GOALS T21: this CLI's own --threads default flips to max(1, cpus-1) --
+    // tournament-scale runs are exactly the "big run" case threading pays off
+    // for; runTournament()'s own programmatic default (opts.threads omitted
+    // entirely) stays serial, since e.g. src/cli.js's small interactive runs
+    // and this file's own test suite call runTournament() directly and
+    // deliberately want the deterministic serial reference mode by default.
+    threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : defaultThreadCount(),
     s1Candidates: intFlag(values['s1-candidates'], 's1-candidates', DEFAULTS.s1Candidates),
     s1Opponents: intFlag(values['s1-opponents'], 's1-opponents', DEFAULTS.s1Opponents),
     s2Top: intFlag(values['s2-top'], 's2-top', DEFAULTS.s2Top),
