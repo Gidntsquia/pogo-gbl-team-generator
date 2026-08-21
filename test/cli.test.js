@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runPipeline } from '../src/cli.js';
-import { renderReport, renderSummary } from '../src/report/index.js';
+import { renderReport, renderReportHtml, renderSummary } from '../src/report/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
@@ -103,6 +103,62 @@ test('renderReport writes a Markdown report that names >= 1 team (sampled, defau
   writeFileSync(outPath, md, 'utf8');
   assert.ok(existsSync(outPath));
   assert.ok(readFileSync(outPath, 'utf8').length > 0);
+});
+
+test('renderReportHtml writes a self-contained HTML report naming >= 1 team (sampled, default path)', async () => {
+  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
+  const html = renderReportHtml(report);
+
+  assert.match(html, /<!doctype html>/i);
+  assert.match(html, /<title>/i);
+  assert.match(html, /Great League Team Report/);
+  assert.match(html, /mode=sampled/, 'settings line reports sampled mode');
+  assert.match(html, /seed=cli-test-seed/, 'settings line surfaces the seed for reproducibility');
+
+  const firstMember = report.rankedTeams[0].members[0].name;
+  assert.ok(html.includes(firstMember), 'report names a recommended team member');
+  assert.match(html, /Safest first switch:/, 'report surfaces the safe-swap pick per team');
+
+  // No external resources -- opens from disk via file:// with no network.
+  assert.doesNotMatch(html, /<script/i);
+  assert.doesNotMatch(html, /https?:\/\//i);
+
+  // Round-trip through a temp file (mirrors what the CLI writes to out/).
+  const dir = mkdtempSync(path.join(tmpdir(), 'gbl-cli-html-'));
+  const outPath = path.join(dir, 'report.html');
+  writeFileSync(outPath, html, 'utf8');
+  assert.ok(existsSync(outPath));
+  assert.ok(readFileSync(outPath, 'utf8').length > 0);
+});
+
+test('renderReportHtml escapes untrusted report text (collection warnings)', () => {
+  const input = {
+    collectionPath: 'x.csv',
+    monCount: 1,
+    metaTeams: [{ id: 'a', name: 'A' }],
+    warnings: ['<script>alert(1)</script> & "quoted"'],
+    settings: { topK: 5, candidateCount: 0, scoreMeta: 10 },
+    monScores: [],
+    rankedTeams: [],
+  };
+  const html = renderReportHtml(input);
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&amp;/);
+});
+
+test('renderReportHtml handles the no-candidates case without throwing', () => {
+  const input = {
+    collectionPath: 'x.csv',
+    monCount: 2,
+    metaTeams: [{ id: 'a', name: 'A' }],
+    warnings: [],
+    settings: { topK: 5, candidateCount: 0, scoreMeta: 10 },
+    monScores: [{ speciesId: 'azumarill', name: 'Azumarill', score: 611.2, leadIn: 'beats x' }],
+    rankedTeams: [],
+  };
+  const html = renderReportHtml(input);
+  assert.match(html, /No candidate teams could be formed/);
 });
 
 test('renderReport settings line uses the old topK/candidates shape for --exhaustive', async () => {

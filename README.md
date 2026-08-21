@@ -60,7 +60,9 @@ point the CLI at that file. A simple generic CSV also works — see
 This prints a terminal summary of the top recommended teams and writes a
 full Markdown report to `out/report.md` (ranked teams, win% vs each meta
 team, best lead per team, hardest opposing matchups, and a per-Pokemon 1v1
-score appendix).
+score appendix), plus a self-contained `out/report.html` with the same
+content styled for reading in a browser (no build step, no external CSS/JS —
+just open the file).
 
 ### Options
 
@@ -71,7 +73,9 @@ node src/cli.js <collection.csv> [options]
   --score-meta S     meta size used for 1v1 pruning      (default 20)
   --difficulty D     AI difficulty 0-3 (3 = strongest)   (default: engine default)
   --exclude a,b      species ids to exclude from teams   (default: none)
-  --out PATH         report output path                  (default out/report.md)
+  --out PATH         Markdown report output path         (default out/report.md)
+  --html PATH        HTML report output path              (default out/report.html)
+  --no-html          skip writing the HTML report
   --help             print this help and exit
 
 Sampling (default path):

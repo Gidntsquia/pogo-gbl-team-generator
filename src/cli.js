@@ -13,6 +13,8 @@
 //                       src/teams/sample)  or a weighted sample (default)
 //     -> evaluator     (src/teams)         real 3v3 battles, ranked teams
 //     -> report        (src/report)        terminal summary + out/report.md
+//                                            + out/report.html (self-contained,
+//                                            no build step -- ROADMAP "HTML report")
 //
 // No battle math lives here -- this file only parses args, sequences the
 // modules above, dedupes the candidate pool to one instance per species, and
@@ -26,7 +28,9 @@
 //   --score-meta S     meta size used for 1v1 pruning       (default 20)
 //   --difficulty D     AI difficulty 0-3 (3 = strongest)    (default: engine default)
 //   --exclude a,b      species ids to exclude from teams    (default: none)
-//   --out PATH         report output path                   (default out/report.md)
+//   --out PATH         Markdown report output path           (default out/report.md)
+//   --html PATH        HTML report output path                (default out/report.html)
+//   --no-html          skip writing the HTML report
 //   --help             print this help and exit
 //
 // Sampling (default path -- GOALS T9-T12, PLAN.md Rev 3):
@@ -77,7 +81,7 @@ import { loadUsageWeights } from './meta/usage.js';
 import { sampleOpponentTeams } from './meta/sampleTeams.js';
 import { sampleCandidateTeams } from './teams/sample.js';
 import { buildCandidates, evaluateTeams, dedupeBestPerSpecies } from './teams/index.js';
-import { renderReport, renderSummary } from './report/index.js';
+import { renderReport, renderReportHtml, renderSummary } from './report/index.js';
 
 const DEFAULTS = Object.freeze({
   top: 5,
@@ -92,6 +96,7 @@ const DEFAULTS = Object.freeze({
   curatedRatio: 0.4,
   scoreMeta: 20,
   out: 'out/report.md',
+  html: 'out/report.html',
 });
 
 const HELP = `pogo-gbl-team-generator -- rank your Great League teams via real 3v3 battles
@@ -104,7 +109,9 @@ Options:
   --score-meta S     meta size used for 1v1 pruning      (default ${DEFAULTS.scoreMeta})
   --difficulty D     AI difficulty 0-3 (3 = strongest)   (default: engine default)
   --exclude a,b      species ids to exclude from teams   (default: none)
-  --out PATH         report output path                  (default ${DEFAULTS.out})
+  --out PATH         Markdown report output path         (default ${DEFAULTS.out})
+  --html PATH        HTML report output path              (default ${DEFAULTS.html})
+  --no-html          skip writing the HTML report
   --help             print this help and exit
 
 Sampling (default path):
@@ -277,6 +284,8 @@ async function main(argv) {
         difficulty: { type: 'string' },
         exclude: { type: 'string' },
         out: { type: 'string' },
+        html: { type: 'string' },
+        'no-html': { type: 'boolean' },
         exhaustive: { type: 'boolean' },
         candidates: { type: 'string' },
         opponents: { type: 'string' },
@@ -315,6 +324,8 @@ async function main(argv) {
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
   };
   const outPath = values.out ?? DEFAULTS.out;
+  const htmlPath = values.html ?? DEFAULTS.html;
+  const writeHtml = !values['no-html'];
 
   // pvpoke's vendored engine prints a few debug lines (e.g. "loading
   // gamemaster") via the host console during init/scoring; silence log/info/
@@ -348,9 +359,16 @@ async function main(argv) {
   mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
   writeFileSync(outPath, markdown, 'utf8');
 
+  if (writeHtml) {
+    const html = renderReportHtml(report);
+    mkdirSync(path.dirname(path.resolve(htmlPath)), { recursive: true });
+    writeFileSync(htmlPath, html, 'utf8');
+  }
+
   say(renderSummary(report));
   say('');
   say(`Full report written to ${outPath}`);
+  if (writeHtml) say(`HTML report written to ${htmlPath}`);
 }
 
 // Only run when invoked directly (not when imported by tests).
