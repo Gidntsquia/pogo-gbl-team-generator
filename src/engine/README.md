@@ -25,9 +25,11 @@ number `simBattle` and `buildPokemon` produce comes from executing
   `initTeamBattle(ctx)` and `battleTeams(ctx, {teamA, teamB, leadA, leadB,
   difficulty, seed})`. See "3v3 team battles" below.
 - `parallel.js` / `parallelWorker.js` — cross-core parallel battle executor
-  (GOALS T15). Exports `runBattles(specs, {threads, vendorRoot})`,
-  `defaultThreadCount()`, `resolveThreadCount(explicit, env)`. See
-  "Parallel battles" below.
+  (GOALS T15, persistent pool added T19). Exports `createExecutor({threads,
+  vendorRoot, continueOnError})` (a reusable worker pool -- `{run(specs),
+  close()}`), `runBattles(specs, {threads, vendorRoot})` (a one-shot
+  create→run→close wrapper), `defaultThreadCount()`,
+  `resolveThreadCount(explicit, env)`. See "Parallel battles" below.
 
 ## 3v3 team battles (`teamBattle.js`)
 
@@ -82,22 +84,93 @@ objects it is handed); for a mirror match, build the same species twice. Every
 across sequential calls, and a **fresh `Battle`** is constructed per call
 (matching pvpoke's own `MatchHandler`).
 
-## Parallel battles (`parallel.js`, GOALS T15)
+## Parallel battles (`parallel.js`, GOALS T15, persistent pool T19)
 
 `battleTeams` calls are independent and fully self-contained (each resets its
 own `Battle`, virtual clock, and seeded RNG -- see above), so many can run at
 once across OS threads with no change to the engine or any battle math.
-`parallel.js`'s `runBattles(specs, {threads, vendorRoot})` spawns a pool of
-`node:worker_threads` workers, each of which boots its **own** headless
-pvpoke engine context exactly once (`parallelWorker.js` calls the same
-`initEngine` everything else uses) and then answers a stream of battle specs
-from the main thread. Results come back **in spec order**; `test/parallel.test.js`
-asserts they match a serial loop of `battleTeams(ctx, spec)` calls (plus edge
-cases at `threads=1` and `threads=4`) for that suite's battle plans. See
-**"Known limitation"** below, discovered during T15b: this holds for battle
-*winners* generally, but exact HP totals are not guaranteed bit-identical to a
-serial run when a Pokemon instance is reused across several battles, because
-pvpoke itself carries a subtle order-sensitivity across such reuse.
+`parallel.js` spawns a pool of `node:worker_threads` workers, each of which
+boots its **own** headless pvpoke engine context exactly once
+(`parallelWorker.js` calls the same `initEngine` everything else uses) and
+then answers a stream of battle specs from the main thread. Results come back
+**in spec order**; `test/parallel.test.js` asserts they match a serial loop of
+`battleTeams(ctx, spec)` calls (plus edge cases at `threads=1` and
+`threads=4`) for that suite's battle plans. See **"Known limitation"** below,
+discovered during T15b: this holds for battle *winners* generally, but exact
+HP totals are not guaranteed bit-identical to a serial run when a Pokemon
+instance is reused across several battles, because pvpoke itself carries a
+subtle order-sensitivity across such reuse.
+
+### `createExecutor` vs `runBattles`
+
+Two exports cover this, at different granularities:
+
+- **`createExecutor({threads, vendorRoot, continueOnError})`** (GOALS T19) is
+  the persistent form: it returns `{run(specs), close()}`. The worker pool
+  boots **once** -- lazily, on the first `run()` call that actually has work
+  -- and is **reused** across every later `run()` call, so pool+engine boot
+  cost (dominated by each worker parsing/indexing `gamemaster.json`) is paid
+  once for the executor's whole lifetime instead of once per batch. `close()`
+  terminates every worker; a `run()` issued after `close()` has been called
+  rejects immediately instead of touching a torn-down pool.
+- **`runBattles(specs, {threads, vendorRoot})`** (GOALS T15) is unchanged in
+  signature, behavior, and return shape -- it is now a thin
+  `createExecutor` → `run` → `close` wrapper: one pool, one batch, torn down
+  before the returned promise settles. Use it for a single one-off batch;
+  use `createExecutor` directly when many batches will run over the
+  executor's lifetime (e.g. a multi-stage tournament run or an evaluator
+  scoring many candidates -- see GOALS T21) and you want to amortize boot
+  cost across them.
+
+**`run()` concurrency: serialized, not interleaved.** Multiple `run()` calls
+against one executor are safe to fire without awaiting each other -- each
+still resolves with its own correct results, in its own spec order -- but
+they execute **one at a time, in call order**, against the shared pool; the
+next call's battles aren't dispatched until the previous call's entire batch
+has resolved (or rejected). This was chosen over interleaving two batches'
+specs across the same workers because it keeps each batch's bookkeeping
+(results array, dispatch cursor, idle-worker counting, fault handling)
+completely independent, with no shared mutable state between batches to get
+wrong. `close()` is likewise queued behind any already-issued `run()` calls,
+so it waits for in-flight work to finish rather than yanking workers out from
+under a running batch.
+
+**Per-spec fault isolation (`continueOnError`).** By default (`continueOnError`
+unset/false), a single bad spec rejects the **whole** `run()` call -- same
+whole-batch-reject semantics `runBattles` has always had. With
+`continueOnError: true`, each result slot is instead
+`{ok: true, value}` (`value` = exactly what `battleTeams`/`runBattles` return
+per spec today) or `{ok: false, error: {message}}`, and a bad spec never
+aborts the rest of that call's batch -- callers that want skip-and-continue
+semantics (like `scripts/tournament.mjs`'s per-battle error handling) no
+longer need to batch small to bound the blast radius of one bad spec (see
+T15c's per-candidate-batching workaround below, which `continueOnError` now
+makes unnecessary for a caller that adopts it -- GOALS T21).
+
+**Worker crash: always fatal to the in-flight `run()`, never a per-spec fault
+-- even under `continueOnError`.** `continueOnError` isolates *battle*
+exceptions caught inside a worker's own try/catch (the worker survives, only
+that one spec is bad); a worker crash or unexpected exit is an infrastructure
+fault with no reliable way to know what state the in-flight battle was in, so
+it always rejects the `run()` call it occurred in, regardless of
+`continueOnError`. When that happens the **whole pool** is torn down (every
+worker terminated, including survivors -- partial-pool "healing" mid-batch
+was judged not worth the complexity) and the executor transparently boots a
+**fresh** pool on the next `run()` call; only an explicit `close()` is
+terminal. `test/parallel.test.js` covers both halves of this: a worker crash
+rejects even with `continueOnError: true`, and the executor recovers on its
+next `run()`.
+
+**Thread count is fixed for the executor's lifetime.** `createExecutor`
+resolves `threads` once, via `resolveThreadCount(opts.threads)`, when the
+pool boots -- it is **not** re-clamped per `run()` call the way `runBattles`
+clamps to that call's own `specs.length` (see below), because a persistent
+pool must serve batches of very different sizes over its life. A `run()`
+call smaller than the pool just leaves some workers idle for that call (the
+existing per-run dispatch loop already handles a worker having nothing left
+to do); `runBattles`, being one pool per one batch, still clamps
+`threads` to `[1, specs.length]` so it never boots a worker with no work at
+all.
 
 **Why specs are plain data, and why team-building happens per worker, not on
 the main thread.** A built pvpoke `Pokemon` instance lives inside one
@@ -122,21 +195,32 @@ from `cacheA` and every `teamB` from `cacheB` guarantees that for free.
 explicit override, then the `POGO_GBL_THREADS` env var, then the default; a
 non-positive or non-numeric override/env value falls through instead of
 throwing. `runBattles` further clamps the resolved count to
-`[1, specs.length]` so it never spawns a worker with no work.
+`[1, specs.length]` so it never spawns a worker with no work; `createExecutor`
+does **not** apply that clamp (see "`createExecutor` vs `runBattles`" above)
+since its pool must serve many `run()` calls of possibly very different
+sizes over its lifetime, not just the one batch in front of it.
 
-**Failure handling.** A battle that throws inside a worker (e.g. an invalid
-spec) or a worker that crashes outright rejects the whole `runBattles()`
-promise with a clear error identifying what went wrong; every other worker
-is terminated before the promise settles, so a failure surfaces as a
+**Failure handling.** This is `runBattles`' behavior specifically (it always
+runs with `continueOnError` unset); see "`createExecutor` vs `runBattles`"
+above for the full `continueOnError`/worker-crash contract, which
+`runBattles` sits on top of unchanged. A battle that throws inside a worker
+(e.g. an invalid spec) or a worker that crashes outright rejects the whole
+`runBattles()` promise with a clear error identifying what went wrong; every
+worker is terminated before the promise settles, so a failure surfaces as a
 rejection, never a hang. `runBattles` does not retry or skip-and-continue on
-a bad spec -- callers that want skip-with-warning semantics (like
-`scripts/tournament.mjs`'s per-battle error handling) validate/catch at
-their own layer, same as they already do around a serial `battleTeams` call.
+a bad spec -- callers that want skip-with-warning semantics at the `runBattles`
+granularity (like `scripts/tournament.mjs`'s per-battle error handling, T15c)
+validate/catch at their own layer, same as they already do around a serial
+`battleTeams` call; a caller using `createExecutor` directly can instead opt
+into `continueOnError: true` and get that isolation from the executor itself.
 
-**Measured effect (sandbox, this container has 4 vCPUs).**
-`node scripts/bench.mjs --n 80 --threads N` (same 80 deterministic
+**Measured effect (sandbox, this container had 4 vCPUs when this table was
+recorded -- see the T19 baseline note below for a re-measurement on an 8-vCPU
+sandbox).** `node scripts/bench.mjs --n 80 --threads N` (same 80 deterministic
 azumarill/registeel/altaria vs stunfisk_galarian/mandibuzz/clodsire battles
-as the T14 serial bench, driven through `runBattles` instead of a loop):
+as the T14 serial bench, driven through `runBattles` instead of a loop --
+i.e. **one pool booted per `--threads` invocation**, since `bench.mjs` only
+calls `runBattles` once per process run today):
 
 | threads | ms/battle (wall) | vs. serial (~142ms/battle) |
 | --- | --- | --- |
@@ -152,6 +236,26 @@ On Jaxon's multi-core Mac (measured serial baseline ~68-73ms/battle vs this
 sandbox's ~172ms/battle for the same code -- see T14), more physical cores
 free of that contention should scale further toward linear; that number is
 not measured here and should be recorded locally when convenient.
+
+**GOALS T19 baseline note.** The table above predates T19 and measures
+`runBattles`' per-call pool boot cost, unchanged by T19. A re-run of
+`node scripts/bench.mjs --n 150` in the sandbox available for T19 (which
+happened to have **8** vCPUs, not 4 -- sandbox CPU counts vary run to run)
+recorded a serial baseline of **~78.1ms/battle** (150 battles, 11.7s total;
+one-time engine setup 22.6ms, team build 2.7ms) and, via today's
+per-call-pool `runBattles`, **~50.2ms/battle at threads=2**,
+**~36.2ms/battle at threads=4**, **~40.1ms/battle at threads=7** (7 slightly
+*worse* than 4 -- with a fixed `--n 150`, more threads means fewer battles
+per worker to amortize that worker's own boot cost against, which is exactly
+the cost `createExecutor`'s pool reuse is designed to amortize away when a
+caller issues many `run()` calls instead of one `runBattles()` call per
+batch). `createExecutor`'s own amortized-across-many-`run()`-calls numbers
+aren't in this table because `bench.mjs` doesn't yet drive repeated `run()`
+calls against one pool (it calls `runBattles`/one-shot `--threads` today) --
+that instrumentation is GOALS T22's job, which also owns re-measuring
+speedup on Jaxon's target hardware; `test/parallel.test.js`'s "pool reused
+across many run() calls" coverage confirms the reuse itself is correct, just
+not yet benchmarked end-to-end.
 
 **Integration status (GOALS T15b).** `matrix.builtMons` (`src/scoring/index.js`)
 and every meta-team member (`buildMetaMon`/`buildRecommendedMon`) now carry a

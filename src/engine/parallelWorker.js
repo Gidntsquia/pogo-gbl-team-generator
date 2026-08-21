@@ -1,11 +1,26 @@
 // JavaScript Document
 //
-// worker_threads entry point for src/engine/parallel.js's runBattles(). Each
-// worker boots its own headless pvpoke engine context ONCE (same initEngine
-// used everywhere else -- no engine/vendor changes, no battle math here) and
-// then answers a stream of battle specs from the main thread. Nothing in this
-// file does battle math: it only (1) rebuilds Pokemon from plain-data specs
-// via the existing buildPokemon, and (2) calls the existing battleTeams.
+// worker_threads entry point for src/engine/parallel.js's createExecutor()/
+// runBattles(). Each worker boots its own headless pvpoke engine context
+// ONCE (same initEngine used everywhere else -- no engine/vendor changes, no
+// battle math here) and then answers a stream of battle specs from the main
+// thread for as long as this worker lives. Nothing in this file does battle
+// math: it only (1) rebuilds Pokemon from plain-data specs via the existing
+// buildPokemon, and (2) calls the existing battleTeams.
+//
+// GOALS T19: this file's protocol was already batch-agnostic -- a worker has
+// no notion of where one `run()` call ends and the next begins, it just
+// answers `{type:'battle', id, spec}` messages with `result`/`battleError`
+// responses indefinitely -- so createExecutor's persistent pool needed ZERO
+// changes here to be reused across many run() calls. One notable side effect
+// worth knowing about: cacheA/cacheB (below) now persist for the pool's
+// entire lifetime rather than just one runBattles() call, so a long-lived
+// executor reused across many batches (e.g. a future multi-stage tournament
+// run, GOALS T21) will build any given mon at most once per worker ever,
+// not once per batch -- a nice bonus, but also means the cache can grow
+// across a very large number of DISTINCT mons over a long-lived executor's
+// life; nothing here bounds/evicts it (not needed by anything T19 requires,
+// flagged for whoever tunes a long-running pool later).
 //
 // Pokemon instances built in one thread's vm context cannot be sent to
 // another thread (postMessage's structured clone doesn't preserve class

@@ -1,32 +1,37 @@
-# Orchestrator state — pogo-gbl-team-generator
+# Orchestrator state — Sim throughput II (Session mode, started 2026-08-21 ~15:35Z)
 
-**RETIRED 2026-08-20 — project switched to Routine mode (user directive: no more session subagents).** Source of truth is now GOALS.md (queue) + PROGRESS.md (log) + ROADMAP.md (why) + PLAN.md Rev 2 (3v3 design). This file is historical; on resume, follow the /orchestrate skill's Routine-mode flow (git pull, GOALS checkboxes, RemoteTrigger list_runs) — do not dispatch session workers.
-
-Phase: 3 (execute, routine-supervised).
+**Initiative:** Jaxon: "make the GBL team builder faster so that I can run a larger simulation."
+Target: tournament-scale runs (10^5–10^6 battles) ≥4x faster on THIS Mac (8 logical cores: 4 perf + 4 eff, node v26.7.0), with determinism upgraded from "serial is the reference mode" to "bit-identical at any thread count." Design: PLAN.md Rev 4. Queue: GOALS.md T19–T22 (session-owned, fenced from routine fires).
 
 ## Packet board
 | id | status | agent | attempts | note |
 |----|--------|-------|----------|------|
-| P1 | done | — | 1 | landed c8baa6c; 20/20 tests, EXACT rankings reproduction. Sharp edges for P3/P4 in src/engine/README.md: p1/p2 must be distinct instances; reuse ctx.battle is safe; buildPokemon takes base speciesId + shadow flag |
-| P3 | running | sonnet worker (bg) | 1 | scoring matrix vs groups/great.json; meta movesets applied via live pvpoke Pokemon methods on harness-built mons |
-| P2 | running | sonnet worker (bg, relaunch) | 1 | importer — first run killed by session limit @94%; partial src/importer/{csv,gamemaster,util}.js kept for relaunched worker to review+finish (limit deaths don't count as attempts) |
-| P4 | ready (blocked by P3 shape; fixture ok) | — | 0 | team search |
-| P5 | ready (blocked by P2,P3,P4) | — | 0 | CLI + report |
-| P6 | ready (blocked by all) | — | 0 | e2e + README |
+| T19 executor rework (persistent pool + per-spec errors) | done (integrated 16:00Z, npm test 186/186) | t19-executor | 1 | baseline this Mac: serial 78.11ms/battle; per-call-boot threading 36.24 best @ t4, degrades @ t7 |
+| T20a determinism investigation (read-only) | running | t20a-determinism | 1 | no repo writes; findings report feeds T20 spec |
+| T20 order-independence fix | ready (after T19+T20a) | ROUTINE (handoff) | 0 | write T20a findings INTO GOALS T20 text at handoff; owns src/engine/teamBattle.js + touched tests |
+| T21 tournament/evaluator adopt pool + threaded default | ready (after T20) | ROUTINE | 0 | owns scripts/tournament.mjs, src/teams/index.js, test/tournament.test.js, test/teams.test.js |
+| T22 code (bench --threads + docs) | ready (after T21) | ROUTINE | 0 | owns scripts/bench.mjs, test/bench.test.js, README.md, ROADMAP.md |
+| T22 measurement (local A/B on this Mac) | ready (after T22 code) | ORCHESTRATOR via Bash | 0 | no agent — run bench + tournament A/B directly, record in PROGRESS.md |
+| T23 GA core module (evolve.js) | ready (parallel-safe with T20–T22) | ROUTINE | 0 | pure seeded selection/mutation logic, fake-fitness unit tests |
+| T24 evolution driver (evolve.mjs) | ready (after T21+T23) | ROUTINE | 0 | battles via persistent executor; checkpoints; per-gen analytics |
+| T25 evolution report + README | ready (after T24) | ROUTINE | 0 | trajectory tables, cores, acceptance run |
 
 ## Decisions log
-- "Great Ball League" read as GO Battle League **Great League, CP ≤ 1500** (dir name `pogo-gbl-team-generator`; 1500 is the standard cap; cap kept tunable). 
-- Use pvpoke **recommended movesets** (assumes TMs); current-moves mode is stretch. Why: matches pvpoke ranking defaults; move columns in exports are unreliable.
-- Support **both** Poke Genie CSV and a generic CSV, auto-detected — cheaper to build both than to ask; user drops their export in at delivery.
-- Vendor pvpoke as pinned sparse shallow clone `ea601f0a61c548f9140e4605b94a31fa97fe6aba` (only src/js, src/data; 149MB), gitignored, `scripts/setup.sh` restores. Why: not our code, too big to commit.
-- Scoring weights 0.25/0.50/0.25 over 0v0/1v1/2v2 shields; coverage threshold rating ≥ 500 at 1v1. Documented in PLAN.md, tunable.
-- Zero kickoff questions: location/stack/scope all inferable.
+- **Session mode, not Routine** — every acceptance bar is a perf number on Jaxon's Mac; sandbox is ~2.4x slower (T14: 172 vs 73 ms/battle) with few vCPUs, so cloud fires structurally cannot verify this initiative.
+- **Paused the hourly cloud routine** (`trig_01JfxVRAW8FQYvnGSpEdkFoG`, was `43 * * * *`, enabled→false 15:35Z) for the duration: queue had zero routine-eligible work, and an idle fire's only ROADMAP pull was the vendor pin bump — which would shift battle results under our perf baselines. **Re-enable at delivery** (or leave off if Jaxon prefers; say so in final report).
+- **Success criterion (assumed, not asked):** ≥4x tournament throughput serial→threaded on this Mac, same-seed A/B with identical rankings; post-T20 bar is bit-identical results (winners AND survivorsHp) at any thread count. Rationale: 4P+4E cores realistically give 4–6x; 1M battles ≈ overnight at ~15ms/battle.
+- **Knife-edge caveat accepted:** T20 canonicalization may flip a handful of knife-edge battles ONCE relative to today's serial history (0.28% flip rate class, see variance study) — acceptable and documented; the invariant becomes "result is a pure function of (spec, seed)".
+- **CLI default stays serial** (default runs are ~27s, not the target); `scripts/tournament.mjs` flips to threaded-by-default post-T20 (it is the big-sim vehicle).
+- T19 explicitly does NOT touch scripts/bench.mjs (T22 owns it) to keep packet file ownership disjoint.
+
+- **Jaxon directive (2026-08-21, after /usage showed session 44% / week 56%): no new in-session background subagents — routines instead.** Applied: T19 + T20a workers run to COMPLETION (sunk cost; outputs enable handoff) but nothing new gets dispatched. T20/T21 + T22's code half hand off to the cloud routine once T19 is verified, committed, pushed, GOALS T20's ticket text carries T20a's findings (zero-memory fires can't read this session), and the T19–T22 fence note is rewritten to un-fence T20+. Then re-enable trig_01JfxVRAW8FQYvnGSpEdkFoG. T22's measurement half (perf A/B) is cloud-impossible → orchestrator runs it directly via Bash, no agent. Skill file + project memory updated with the standing rule.
+
+- **Jaxon directive #2 (2026-08-21): "survival of the fittest" evolutionary team search** — designed as PLAN.md Rev 5 + GOALS T23–T25 (routine tickets, per routines-first rule). Design calls made without asking (all tunable flags): fresh opponent draw per generation with elites re-evaluated (no overfitting/stale fitness; `--fixed-opponents` opts out); ~10% immigrants to prevent inbreeding (Jaxon didn't ask for these — documented as GA-standard diversity, can be set to 0); top-50% survive / bottom-50% die / top-quartile mutate; convergence = top-10 set stable 3 gens. Analytics confirmed cheap (pure counting, no battles) → in by default incl. 2-species core tracking. T23 marked parallel-safe; T24 gated on T21 so it's built on the persistent executor from day one.
+
+- **Jaxon GA-selection revision (2026-08-21, mid-turn):** bottom-50% death too harsh → `deathRate` default 0.25; mutation is a seeded RANDOM roll per survivor with probability scaling by fitness percentile (linear 0.05→0.40 default), not a deterministic top-quartile entitlement. PLAN Rev 5 + GOALS T23 updated before anything committed.
 
 ## Watchdog
-One background `sleep 1800 && echo WATCHDOG_TICK` armed after each dispatch wave (see /orchestrate skill playbook). On tick: ListAgents + git status reconcile; all healthy → re-arm + noop board; dead worker → resume protocol (probe with ONE re-dispatch; on limit error arm RESUME_PRIMARY/BACKUP timers past the stated reset time). Duplicate ticks are harmless noops.
+Armed ~15:40Z until ~16:10Z (sleep 1800, WATCHDOG_TICK).
 
-## Event log
-- 2026-08-20: scaffold created (PLAN, CLAUDE, state, package.json, .gitignore), pvpoke vendored @ ea601f0, initial commit. P1+P2 dispatched (sonnet, background).
-- 2026-08-20 ~12:30pm ET: session usage limit hit (94%→cap). P2 worker killed mid-run (partial importer left on disk); P1 worker SURVIVED and kept running. Limit reset 12:30pm; next window resets 5:30pm ET.
-- 2026-08-20 post-reset: user directive — self-resume without manual /orchestrate. Skill playbook rewritten: standing watchdog + reset-timed resume timer pairs. P2 relaunched (review+finish partial work). Watchdog armed.
-- 2026-08-20: P1 landed + committed (c8baa6c) after orchestrator re-ran tests (20/20, 124ms). P3 dispatched — concurrency back to 2 (P2+P3): fresh usage window (0% at 12:30 reset), judged safe despite post-limit caution rule.
+## Resume (cold read)
+If workers dead with no results: reset T19 to ready and hand it to the ROUTINE too (per Jaxon's no-new-subagents directive — T19's correctness is test-verifiable in sandbox; the orchestrator runs its local baseline numbers itself via Bash). T20a findings optional (a T20 fire can re-derive from engine README "Known limitation" + variance-study.mjs). Routine re-enable: RemoteTrigger update trig_01JfxVRAW8FQYvnGSpEdkFoG {"enabled": true} when initiative lands.
