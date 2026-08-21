@@ -21,6 +21,10 @@ produce comes from executing `vendor/pvpoke`'s unmodified JS.
   Training-mode ("emulate") engine and `TrainingAI`. Exports
   `initTeamBattle(ctx)` and `battleTeams(ctx, {teamA, teamB, leadA, leadB,
   difficulty, seed})`. See "3v3 team battles" below.
+- `parallel.js` / `parallelWorker.js` — cross-core parallel battle executor
+  (GOALS T15). Exports `runBattles(specs, {threads, vendorRoot})`,
+  `defaultThreadCount()`, `resolveThreadCount(explicit, env)`. See
+  "Parallel battles" below.
 
 ## 3v3 team battles (`teamBattle.js`)
 
@@ -74,6 +78,88 @@ objects it is handed); for a mirror match, build the same species twice. Every
 `battleTeams` call resets the Pokemon it is given, so instances may be reused
 across sequential calls, and a **fresh `Battle`** is constructed per call
 (matching pvpoke's own `MatchHandler`).
+
+## Parallel battles (`parallel.js`, GOALS T15)
+
+`battleTeams` calls are independent and fully self-contained (each resets its
+own `Battle`, virtual clock, and seeded RNG -- see above), so many can run at
+once across OS threads with no change to the engine or any battle math.
+`parallel.js`'s `runBattles(specs, {threads, vendorRoot})` spawns a pool of
+`node:worker_threads` workers, each of which boots its **own** headless
+pvpoke engine context exactly once (`parallelWorker.js` calls the same
+`initEngine` everything else uses) and then answers a stream of battle specs
+from the main thread. Results come back **in spec order**, bit-identical to
+what a serial loop of `battleTeams(ctx, spec)` calls on one context would
+produce -- `test/parallel.test.js` asserts this directly, plus edge cases at
+`threads=1` and `threads=4`.
+
+**Why specs are plain data, and why team-building happens per worker, not on
+the main thread.** A built pvpoke `Pokemon` instance lives inside one
+specific `vm` context tied to one V8 isolate; it cannot be handed to a
+worker_thread (`postMessage`'s structured clone doesn't preserve class
+instances/methods, and even a deep-cloned plain object would be disconnected
+from that worker's own `Battle`/`GameMaster` singletons). Team-building must
+therefore happen per worker, not on the main thread. So a `BattleSpec`'s
+`teamA`/`teamB` are plain-data `MonSpec` arrays --
+`{speciesId, ivs, shadow, bestBuddy}` -- and each worker rebuilds real
+Pokemon via the existing `buildPokemon`, caching by a stable key so a mon
+that recurs across many specs on the same worker (very common: an evaluator
+plays one candidate as team A against many opponents, or one meta team as
+team B against many candidates) is only built once. The cache is split into
+`cacheA`/`cacheB` (one per side) rather than a single shared cache, because
+`battleTeams` requires `teamA`/`teamB` to be **distinct instances even in a
+mirror match** (same species+IVs on both sides) -- building every `teamA`
+from `cacheA` and every `teamB` from `cacheB` guarantees that for free.
+
+**Thread count.** `defaultThreadCount()` is `max(1, os.cpus().length - 1)`
+(leave one core free). `resolveThreadCount(explicit, env)` prefers an
+explicit override, then the `POGO_GBL_THREADS` env var, then the default; a
+non-positive or non-numeric override/env value falls through instead of
+throwing. `runBattles` further clamps the resolved count to
+`[1, specs.length]` so it never spawns a worker with no work.
+
+**Failure handling.** A battle that throws inside a worker (e.g. an invalid
+spec) or a worker that crashes outright rejects the whole `runBattles()`
+promise with a clear error identifying what went wrong; every other worker
+is terminated before the promise settles, so a failure surfaces as a
+rejection, never a hang. `runBattles` does not retry or skip-and-continue on
+a bad spec -- callers that want skip-with-warning semantics (like
+`scripts/tournament.mjs`'s per-battle error handling) validate/catch at
+their own layer, same as they already do around a serial `battleTeams` call.
+
+**Measured effect (sandbox, this container has 4 vCPUs).**
+`node scripts/bench.mjs --n 80 --threads N` (same 80 deterministic
+azumarill/registeel/altaria vs stunfisk_galarian/mandibuzz/clodsire battles
+as the T14 serial bench, driven through `runBattles` instead of a loop):
+
+| threads | ms/battle (wall) | vs. serial (~142ms/battle) |
+| --- | --- | --- |
+| 1 (serial baseline) | ~141.6ms | 1.0x |
+| 1 (via runBattles)  | ~143.8ms | ~1.0x (thread/message overhead is noise) |
+| 2                    | ~81.0ms  | ~1.75x |
+| 4                    | ~64.1ms  | ~2.21x |
+
+Sub-linear scaling at `threads=4` on a 4-vCPU box is expected -- the main
+thread plus OS/runtime overhead compete for the same cores the worker pool
+is using. `defaultThreadCount()` already reflects that by reserving one core.
+On Jaxon's multi-core Mac (measured serial baseline ~68-73ms/battle vs this
+sandbox's ~172ms/battle for the same code -- see T14), more physical cores
+free of that contention should scale further toward linear; that number is
+not measured here and should be recorded locally when convenient.
+
+**Integration status.** `evaluateTeams` (`src/teams/index.js`) and
+`scripts/tournament.mjs` still drive `battleTeams` directly (serially) --
+`runBattles` exists and is fully tested as a standalone executor, but wiring
+an opt-in `opts.threads`/`--threads` through those callers needs one small
+prerequisite first: neither `matrix.builtMons` (built by
+`src/scoring/index.js`) nor meta-team members currently retain the raw
+`{ivs, shadow, bestBuddy}` a `MonSpec` needs -- only `{speciesId, name,
+pokemon}` survives past `buildPokemon`. Extracting that data back out of an
+already-built `Pokemon` instance is not reliable (`bestBuddy` in particular
+is never stored on the instance, only consumed at build time for the
+level-51 cap), so the correct fix is carrying the raw params alongside
+`pokemon` in those shapes, not reconstructing them after the fact. See
+PROGRESS.md's T15 entry and GOALS.md's follow-up ticket.
 
 ## Why a `vm` sandbox instead of a browser
 

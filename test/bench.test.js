@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runBench } from '../scripts/bench.mjs';
+import { runBench, runBenchThreaded } from '../scripts/bench.mjs';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 
@@ -60,4 +60,12 @@ test('battleTeams itself is bit-identical for a fixed battle set (guards single-
   const first = run();
   const second = run();
   assert.deepEqual(second, first, 'same teams/leads/seeds must reproduce identical results');
+});
+
+test('runBenchThreaded (GOALS T15) reproduces the same turn counts as the serial runBench, at threads=1 and threads=4', async () => {
+  const serial = await runBench({ n: 6, difficulty: 3 });
+  const single = await runBenchThreaded({ n: 6, difficulty: 3, threads: 1 });
+  const quad = await runBenchThreaded({ n: 6, difficulty: 3, threads: 4 });
+  assert.deepEqual(single.turns, serial.turns, 'threads=1 must match the serial loop exactly');
+  assert.deepEqual(quad.turns, serial.turns, 'threads=4 must match the serial loop exactly');
 });

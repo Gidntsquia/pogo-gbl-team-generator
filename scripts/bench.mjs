@@ -20,10 +20,15 @@
 // vendor/pvpoke/src/js/ are the engine itself -- see PROGRESS.md for the T14
 // findings from one such run.)
 //
-// Usage: node scripts/bench.mjs [--n 200] [--difficulty 3] [--json]
+// Usage: node scripts/bench.mjs [--n 200] [--difficulty 3] [--threads N] [--json]
+//
+// GOALS T15: --threads N runs the same N deterministic battles through
+// src/engine/parallel.js's runBattles() instead of a serial loop, so the two
+// modes are directly comparable (same teams, same lead cycling, same seeds).
 
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
+import { runBattles, defaultThreadCount } from '../src/engine/parallel.js';
 
 const IVS = { atk: 0, def: 15, hp: 15 };
 // Two competitively-matched Great League staple trios (not a blowout like
@@ -35,11 +40,12 @@ const TEAM_B_IDS = ['stunfisk_galarian', 'mandibuzz', 'clodsire'];
 const LEADS = [0, 1, 2];
 
 function parseArgs(argv) {
-  const opts = { n: 200, difficulty: 3, json: false };
+  const opts = { n: 200, difficulty: 3, json: false, threads: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--n') opts.n = Number(argv[++i]);
     else if (a === '--difficulty') opts.difficulty = Number(argv[++i]);
+    else if (a === '--threads') opts.threads = Number(argv[++i]);
     else if (a === '--json') opts.json = true;
   }
   return opts;
@@ -47,6 +53,10 @@ function parseArgs(argv) {
 
 function team(ctx, ids) {
   return ids.map((speciesId) => buildPokemon(ctx, { speciesId, ivs: IVS }));
+}
+
+function monSpecs(ids) {
+  return ids.map((speciesId) => ({ speciesId, ivs: IVS }));
 }
 
 function nowMs() {
@@ -95,8 +105,61 @@ export async function runBench(opts = {}) {
   };
 }
 
+/**
+ * Same N deterministic battles as runBench, but driven through runBattles()
+ * across `threads` worker threads instead of a serial loop -- each worker
+ * boots its own engine context (that one-time cost is NOT split out here the
+ * way runBench splits setup/build/battle, since it happens inside the
+ * workers; battleMs is the whole runBattles() wall-clock instead).
+ *
+ * @param {{ n?: number, difficulty?: number, threads?: number }} [opts]
+ * @returns {Promise<{ threads: number, battleMs: number, n: number, msPerBattle: number, turns: number[] }>}
+ */
+export async function runBenchThreaded(opts = {}) {
+  const { n = 200, difficulty = 3, threads } = opts;
+
+  const specs = [];
+  for (let i = 0; i < n; i++) {
+    specs.push({
+      teamA: monSpecs(TEAM_A_IDS),
+      teamB: monSpecs(TEAM_B_IDS),
+      leadA: LEADS[i % 3],
+      leadB: LEADS[Math.floor(i / 3) % 3],
+      difficulty,
+      seed: 1000 + i,
+    });
+  }
+
+  const t0 = nowMs();
+  const results = await runBattles(specs, { threads });
+  const t1 = nowMs();
+
+  return {
+    threads: threads ?? defaultThreadCount(),
+    battleMs: t1 - t0,
+    n,
+    msPerBattle: (t1 - t0) / n,
+    turns: results.map((r) => r.summary.turns),
+  };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+
+  if (opts.threads !== undefined) {
+    const result = await runBenchThreaded(opts);
+    const avgTurns = result.turns.reduce((s, t) => s + t, 0) / result.turns.length;
+    if (opts.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
+    console.log(`bench (threaded): ${result.n} battles, difficulty=${opts.difficulty}, threads=${result.threads}`);
+    console.log(`  wall-clock total:      ${result.battleMs.toFixed(1)}ms`);
+    console.log(`  ms/battle (wall):      ${result.msPerBattle.toFixed(2)}ms`);
+    console.log(`  avg turns/battle:      ${avgTurns.toFixed(1)}`);
+    return;
+  }
+
   const result = await runBench(opts);
   const avgTurns = result.turns.reduce((s, t) => s + t, 0) / result.turns.length;
 
