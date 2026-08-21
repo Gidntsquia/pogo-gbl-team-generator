@@ -89,13 +89,13 @@ test('limit caps how many teams are built', () => {
 
 // GOALS T10b: community-curated opponent teams (data/meta-teams-community.json).
 
-test('community file loads and its teams resolve fully battle-ready (>=26 of 33)', () => {
-  assert.equal(communityRaw.teams.length, 33, 'source file has 33 entries under the pinned data');
+test('community file loads and its teams resolve fully battle-ready (>=39 of 46)', () => {
+  assert.equal(communityRaw.teams.length, 46, 'source file has 46 entries under the pinned data (33 + GOALS T26\'s 13 Yasser Aleed teams)');
 
   const teams = loadCommunityTeams(ctx);
   assert.ok(
-    teams.length >= 26,
-    `expected >=26/33 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
+    teams.length >= 39,
+    `expected >=39/46 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
   );
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
