@@ -162,6 +162,38 @@ export function buildMetaMon(ctx, entry) {
 }
 
 /**
+ * Build ONE Pokemon from a bare speciesId (no explicit moveset), for opponent
+ * sources that name only team membership rather than a full preset (e.g.
+ * GOALS T10b's community-curated team file) -- unlike buildMetaMon, this
+ * doesn't call applyGroupMoveset; buildPokemon already applies pvpoke's own
+ * recommended moveset internally (Pokemon#selectRecommendedMoveset), so no
+ * moveset logic is duplicated here either.
+ *
+ * @param {object} ctx - from initEngine (src/engine/harness.js)
+ * @param {string} speciesId - may carry the "_shadow" suffix.
+ * @returns {MetaMon | null} null if speciesId doesn't resolve against the
+ *   pinned gamemaster (caller decides whether that's fatal for its team).
+ */
+export function buildRecommendedMon(ctx, speciesId) {
+  const shadow = speciesId.endsWith(SHADOW_SUFFIX);
+  const baseSpeciesId = shadow ? speciesId.slice(0, -SHADOW_SUFFIX.length) : speciesId;
+  const lookupId = resolveLookupId(ctx.gm, baseSpeciesId, shadow);
+  if (!ctx.gm.getPokemonById(lookupId)) return null;
+
+  const ivs = defaultCp1500Ivs(ctx, lookupId);
+  const pokemon = buildPokemon(ctx, { speciesId: baseSpeciesId, ivs, shadow });
+
+  return {
+    speciesId,
+    baseSpeciesId,
+    shadow,
+    fastMove: pokemon.fastMove.moveId,
+    chargedMoves: Array.from(pokemon.chargedMoves).map((m) => m.moveId),
+    pokemon,
+  };
+}
+
+/**
  * Load the current Great League meta and build each entry exactly once,
  * using pvpoke's own default CP-1500 IV spread and the group's specified
  * moveset (not pvpoke's recommended-moveset heuristic).

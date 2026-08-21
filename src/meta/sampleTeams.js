@@ -16,7 +16,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildMetaMon } from '../scoring/index.js';
-import { loadMetaTeams } from './teams.js';
+import { loadMetaTeams, OFF_META_CURATED_WEIGHT } from './teams.js';
 import { pickWeighted, rngFromSeed } from '../util/rng.js';
 
 const DEFAULT_RANKINGS_FILE = 'src/data/rankings/all/overall/rankings-1500.json';
@@ -152,7 +152,12 @@ export function sampleOpponentTeams(ctx, params) {
 
   const curatedPool = curated ?? loadMetaTeams(ctx);
   const curatedCount = Math.min(Math.round(count * curatedRatio), curatedPool.length, count);
-  const chosenCurated = pickWeighted(rng, curatedPool, () => 1, curatedCount).map((team) => ({
+  // GOALS T10b: a curated team tagged tier:"off-meta" draws at a reduced
+  // relative weight vs untagged (meta) teams -- see teams.js's
+  // OFF_META_CURATED_WEIGHT for the documented ratio. A team without a `tier`
+  // field (e.g. a caller-supplied test fixture) counts as full weight.
+  const curatedWeightOf = (team) => (team.tier === 'off-meta' ? OFF_META_CURATED_WEIGHT : 1);
+  const chosenCurated = pickWeighted(rng, curatedPool, curatedWeightOf, curatedCount).map((team) => ({
     ...team,
     label: 'curated',
   }));
