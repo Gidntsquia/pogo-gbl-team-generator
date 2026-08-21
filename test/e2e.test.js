@@ -71,6 +71,33 @@ test('e2e: fixture collection -> CLI pipeline (sampled, default) -> report.md on
   );
 });
 
+// GOALS T18c: the same end-to-end path at the Ultra League cap. Knobs are
+// even smaller than SAMPLED_TINY -- this checks the league plumbing reaches
+// the report, not the ranking quality (covered at cp 1500 above).
+test('e2e: fixture collection -> CLI pipeline (--cp 2500) -> Ultra League report.md on disk', async () => {
+  const report = await runPipeline(FIXTURE, {
+    candidates: 3,
+    opponents: 1,
+    pool: 5,
+    scoreMeta: 3,
+    top: 2,
+    seed: 'e2e-ultra-seed',
+    cp: 2500,
+  });
+
+  assert.ok(report.rankedTeams.length >= 1, 'ranked at least one team');
+  assert.equal(report.settings.cp, 2500, 'cp carried into settings');
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'gbl-e2e-ultra-'));
+  const outPath = path.join(dir, 'report.md');
+  writeFileSync(outPath, renderReport(report), 'utf8');
+
+  const onDisk = readFileSync(outPath, 'utf8');
+  assert.match(onDisk, /# Ultra League Team Report/);
+  assert.match(onDisk, /cp=2500/);
+  assert.ok(onDisk.includes(report.rankedTeams[0].members[0].name), 'report names the top team');
+});
+
 test('e2e: fixture collection -> CLI pipeline (--exhaustive) -> report.md on disk', async () => {
   const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
 

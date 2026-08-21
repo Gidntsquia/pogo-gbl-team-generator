@@ -33,6 +33,14 @@ function defaultTeamsFile(ctx) {
 // the CLI/tests run from repo root).
 const DEFAULT_COMMUNITY_FILE = 'data/meta-teams-community.json';
 
+// GOALS T18c decision: that file is Great-League-only by construction (every
+// team in it was recommended for GBL Season 27 Great League play), so it is
+// NOT part of the curated pool at any other CP cap -- an Ultra League run
+// would otherwise face GL archetypes re-built at 2500 CP, which is not a
+// meaningful UL meta. A caller can still force it in with
+// `includeCommunity: true`.
+const COMMUNITY_FILE_CP = 1500;
+
 // Community teams tagged tier:"off-meta" get a reduced relative weight when
 // sampleOpponentTeams draws from the curated pool (documented per GOALS T10b:
 // "reduced, documented sampling weight (e.g. half) relative to untagged
@@ -224,15 +232,18 @@ export function loadCommunityTeams(ctx, opts = {}) {
  *   `teamsFile` overrides which pvpoke training-teams file is read (default:
  *   the GO Battle League presets for ctx.cp -- GOALS T18b); path is relative
  *   to ctx.vendorRoot. `communityFile`/`communityEntries` are forwarded to
- *   loadCommunityTeams. `includeCommunity: false` restores the pre-T10b
- *   vendor-only pool (testability / an explicit opt-out).
+ *   loadCommunityTeams. `includeCommunity` defaults to true only at the
+ *   Great League cap the community file was curated for (GOALS T18c): `false`
+ *   restores the pre-T10b vendor-only pool, `true` forces the GL community
+ *   teams into a non-1500 run.
  * @returns {MetaTeam[]}
  */
 export function loadMetaTeams(ctx, opts = {}) {
   const teamsFile = opts.teamsFile ?? defaultTeamsFile(ctx);
   const vendorTeams = buildVendorTeams(ctx, teamsFile);
 
-  const community = opts.includeCommunity === false ? [] : loadCommunityTeams(ctx, opts);
+  const includeCommunity = opts.includeCommunity ?? ctx.cp === COMMUNITY_FILE_CP;
+  const community = includeCommunity ? loadCommunityTeams(ctx, opts) : [];
   const communityMeta = community.filter((t) => t.tier !== 'off-meta');
   const communityOffMeta = community.filter((t) => t.tier === 'off-meta');
 

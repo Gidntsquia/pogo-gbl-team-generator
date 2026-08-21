@@ -1,7 +1,8 @@
 // JavaScript Document
 //
-// Meta scoring matrix: battles a Pokemon collection against the current
-// Great League meta (vendor/pvpoke/src/data/groups/great.json) across three
+// Meta scoring matrix: battles a Pokemon collection against the current meta
+// for ctx's CP cap (vendor/pvpoke/src/data/groups/<league>.json -- great.json
+// at the default CP 1500, ultra.json at 2500; see src/util/leagues.js) across three
 // shield scenarios (0/0, 1/1, 2/2) using src/engine/harness.js's headless
 // pvpoke simulator. No battle math or move-selection logic is reimplemented
 // here -- every rating comes from harness.js's simBattle (itself pvpoke's own
@@ -17,8 +18,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildPokemon, simBattle } from '../engine/harness.js';
+import { leagueForCp } from '../util/leagues.js';
 
-const DEFAULT_GROUP_FILE = 'great';
 const SHADOW_SUFFIX = '_shadow';
 
 // [ratingsKey, shields1, shields2] -- shields are symmetric (user mon is
@@ -82,7 +83,12 @@ const SCORE_WEIGHTS = Object.freeze({ s00: 0.25, s11: 0.5, s22: 0.25 });
  *   Meta mons are never Best Buddy, so this is always `bestBuddy: false` here.
  */
 
-/** Read one vendor/pvpoke meta group file (default: Great League's great.json) as raw entries. */
+/** The meta group file for ctx's CP cap (GOALS T18c): "great" at 1500, "ultra" at 2500, etc. */
+function defaultGroupFile(ctx) {
+  return leagueForCp(ctx.cp).group;
+}
+
+/** Read one vendor/pvpoke meta group file (default: the group for ctx.cp) as raw entries. */
 function readGroupEntries(ctx, groupFile) {
   const groupPath = path.join(ctx.vendorRoot, 'src/data/groups', `${groupFile}.json`);
   return JSON.parse(readFileSync(groupPath, 'utf8'));
@@ -219,22 +225,23 @@ export function buildRecommendedMon(ctx, speciesId) {
 }
 
 /**
- * Load the current Great League meta and build each entry exactly once,
- * using pvpoke's own default CP-1500 IV spread and the group's specified
+ * Load the current meta for ctx's CP cap and build each entry exactly once,
+ * using pvpoke's own default IV spread for that cap and the group's specified
  * moveset (not pvpoke's recommended-moveset heuristic).
  *
  * @param {object} ctx - from initEngine (src/engine/harness.js)
  * @param {{ metaLimit?: number, groupEntries?: GroupEntry[], groupFile?: string }} [opts]
  *   `metaLimit` caps how many group entries are built (default: all).
  *   `groupEntries` overrides reading a vendor group file entirely -- lets
- *   callers (tests, or a future --cp/cup flag) inject an arbitrary small
- *   group without touching vendor data or relying on great.json's on-disk
- *   ordering. `groupFile` picks a different vendor/pvpoke/src/data/groups/*.json
- *   (default `"great"`); unused by the MVP CLI but free to expose.
+ *   callers (tests, or a different cup) inject an arbitrary small group
+ *   without touching vendor data or relying on great.json's on-disk ordering.
+ *   `groupFile` picks a different vendor/pvpoke/src/data/groups/*.json
+ *   (default: the group for ctx.cp -- "great" at 1500, "ultra" at 2500; see
+ *   src/util/leagues.js).
  * @returns {MetaMon[]}
  */
 export function loadMeta(ctx, opts = {}) {
-  const rawEntries = opts.groupEntries ?? readGroupEntries(ctx, opts.groupFile ?? DEFAULT_GROUP_FILE);
+  const rawEntries = opts.groupEntries ?? readGroupEntries(ctx, opts.groupFile ?? defaultGroupFile(ctx));
   const entries = typeof opts.metaLimit === 'number' ? rawEntries.slice(0, opts.metaLimit) : rawEntries;
 
   return entries.map((entry) => buildMetaMon(ctx, entry));

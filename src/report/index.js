@@ -1,6 +1,6 @@
 // JavaScript Document
 //
-// Report rendering for the Great League team generator (GOALS T5). Pure
+// Report rendering for the team generator (GOALS T5). Pure
 // formatting: takes the already-computed pipeline outputs (ranked teams from
 // src/teams/evaluateTeams, the 1v1 score matrix from src/scoring, and the
 // collection warnings) and turns them into (a) a short terminal summary and
@@ -50,7 +50,9 @@ function escapeHtml(s) {
  * @property {object} settings - the run knobs. `settings.mode` is `'sampled'`
  *   (GOALS T12 default: candidateTarget/poolSize/seed/curatedRatio) or
  *   `'exhaustive'`/absent (topK/candidateCount), plus scoreMeta/difficulty/
- *   excludeSpecies common to both.
+ *   excludeSpecies common to both. `settings.cp`/`settings.league` (GOALS
+ *   T18c) name the league; absent = Great League, and a cp of 1500 is left
+ *   off the settings line as the default.
  * @property {string} [generatedAt] - optional ISO timestamp; omitted -> no date line.
  */
 
@@ -118,6 +120,29 @@ function renderTeamSection(team, rank) {
 }
 
 /**
+ * League label for the report headings (GOALS T18c): `settings.league` when
+ * the pipeline supplied one, else Great League -- the only league that
+ * existed before --cp, so an older settings object still renders as it did.
+ *
+ * @param {object} settings
+ * @returns {string}
+ */
+function leagueLabel(settings) {
+  return settings?.league ?? 'Great League';
+}
+
+/**
+ * `cp=<n>` for the settings line, but only when it differs from the Great
+ * League default -- a default run's report stays byte-identical to pre-T18c.
+ *
+ * @param {object} settings
+ * @returns {string | null}
+ */
+function cpSetting(settings) {
+  return settings?.cp && settings.cp !== 1500 ? `cp=${settings.cp}` : null;
+}
+
+/**
  * Render the full Markdown report.
  *
  * Sections: header + settings, ranked team recommendations (each with a win%
@@ -133,7 +158,7 @@ export function renderReport(input) {
   const { rankedTeams, monScores, metaTeams, warnings, settings } = input;
   const out = [];
 
-  out.push('# Great League Team Report');
+  out.push(`# ${leagueLabel(settings)} Team Report`);
   out.push('');
   out.push(`Collection: \`${input.collectionPath}\``);
   if (input.generatedAt) out.push(`Generated: ${input.generatedAt}`);
@@ -174,6 +199,7 @@ export function renderReport(input) {
       : [`topK=${s.topK}`, `candidates=${s.candidateCount}`, `metaTeams=${metaTeams.length}`];
   out.push('**Settings:** ' +
     [
+      cpSetting(s),
       ...modeParts,
       `scoreMeta=${s.scoreMeta}`,
       s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
@@ -198,7 +224,7 @@ export function renderReport(input) {
 
   out.push('## Opponent meta teams');
   out.push('');
-  out.push('The candidate teams above were battled against these Great League teams ' +
+  out.push(`The candidate teams above were battled against these ${leagueLabel(settings)} teams ` +
     '(curated presets and community-submitted teams; in sampled mode also ' +
     'weighted-random compositions from the current meta -- see Settings above ' +
     'for the seed used):');
@@ -301,6 +327,7 @@ export function renderReportHtml(input) {
         ]
       : [`topK=${s.topK}`, `candidates=${s.candidateCount}`, `metaTeams=${metaTeams.length}`];
   const settingsLine = [
+    cpSetting(s),
     ...modeParts,
     `scoreMeta=${s.scoreMeta}`,
     s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
@@ -317,7 +344,7 @@ export function renderReportHtml(input) {
   out.push('<head>');
   out.push('<meta charset="utf-8">');
   out.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
-  out.push(`<title>Great League Team Report${input.collectionPath ? ` -- ${escapeHtml(input.collectionPath)}` : ''}</title>`);
+  out.push(`<title>${leagueLabel(settings)} Team Report${input.collectionPath ? ` -- ${escapeHtml(input.collectionPath)}` : ''}</title>`);
   out.push(`<style>
   :root { color-scheme: light dark; }
   body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -338,7 +365,7 @@ export function renderReportHtml(input) {
   out.push('</head>');
   out.push('<body>');
 
-  out.push('<h1>Great League Team Report</h1>');
+  out.push(`<h1>${leagueLabel(settings)} Team Report</h1>`);
   out.push(`<p>Collection: <code>${escapeHtml(input.collectionPath)}</code>` +
     (input.generatedAt ? `<br>Generated: ${escapeHtml(input.generatedAt)}` : '') + '</p>');
   out.push(
@@ -364,7 +391,7 @@ export function renderReportHtml(input) {
 
   out.push('<h2>Opponent meta teams</h2>');
   out.push(
-    '<p>The candidate teams above were battled against these Great League teams ' +
+    `<p>The candidate teams above were battled against these ${leagueLabel(settings)} teams ` +
       '(curated presets and community-submitted teams; in sampled mode also ' +
       'weighted-random compositions from the current meta -- see Settings above ' +
       'for the seed used):</p>'

@@ -24,6 +24,8 @@
 //   node src/cli.js <collection.csv> [options]
 //
 // Options:
+//   --cp N             CP cap / league: 1500 = Great League (default),
+//                       2500 = Ultra League                  (default 1500)
 //   --top N            teams to show in the report        (default 5)
 //   --score-meta S     meta size used for 1v1 pruning       (default 20)
 //   --difficulty D     AI difficulty 0-3 (3 = strongest)    (default: engine default)
@@ -83,6 +85,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { importCollection } from './importer/index.js';
+import { leagueForCp, DEFAULT_CP, SUPPORTED_CPS } from './util/leagues.js';
 import { initEngine } from './engine/harness.js';
 import { scoreCollection, computeWeightedScore } from './scoring/index.js';
 import { loadMetaTeams } from './meta/teams.js';
@@ -93,6 +96,7 @@ import { buildCandidates, evaluateTeams, dedupeBestPerSpecies } from './teams/in
 import { renderReport, renderReportHtml, renderSummary } from './report/index.js';
 
 const DEFAULTS = Object.freeze({
+  cp: DEFAULT_CP,
   top: 5,
   // Exhaustive-path-only knobs (see --exhaustive).
   topK: 5,
@@ -108,12 +112,13 @@ const DEFAULTS = Object.freeze({
   html: 'out/report.html',
 });
 
-const HELP = `pogo-gbl-team-generator -- rank your Great League teams via real 3v3 battles
+const HELP = `pogo-gbl-team-generator -- rank your teams via real 3v3 battles (Great League by default; --cp 2500 for Ultra)
 
 Usage:
   node src/cli.js <collection.csv> [options]
 
 Options:
+  --cp N             CP cap / league, ${SUPPORTED_CPS.join('/')}       (default ${DEFAULTS.cp})
   --top N            teams to show in the report        (default ${DEFAULTS.top})
   --score-meta S     meta size used for 1v1 pruning      (default ${DEFAULTS.scoreMeta})
   --difficulty D     AI difficulty 0-3 (3 = strongest)   (default: engine default)
@@ -194,13 +199,19 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  * (src/teams/index.js) is identical either way -- see PLAN.md Rev 3.
  *
  * @param {string} csvPath
- * @param {{ top?:number, scoreMeta?:number, difficulty?:number,
+ * @param {{ cp?:number, top?:number, scoreMeta?:number, difficulty?:number,
  *           excludeSpecies?:string[], exhaustive?:boolean,
  *           topK?:number, meta?:number,
  *           candidates?:number, opponents?:number, pool?:number,
  *           seed?:number|string, curatedRatio?:number, threads?:number,
  *           currentMoves?:boolean,
  *           onProgress?:(p:{completed:number,total:number})=>void }} [opts]
+ *   `cp` (GOALS T18c) picks the league: 1500 = Great League (default), 2500 =
+ *   Ultra League. It reaches every layer through initEngine's ctx.cp -- meta
+ *   group, rankings, curated team presets, default IV spreads and the battle's
+ *   own CP cap all follow it. The Great-League-curated community teams
+ *   (data/meta-teams-community.json) are only part of the opponent pool at
+ *   cp 1500 (see src/meta/teams.js).
  *   `currentMoves` (GOALS T17) is forwarded verbatim to scoreCollection's
  *   opts.currentMoves -- omitted/falsy keeps today's behavior (every mon
  *   scored/battled with pvpoke's recommended moveset).
@@ -218,10 +229,12 @@ export async function runPipeline(csvPath, opts = {}) {
   const scoreMeta = opts.scoreMeta ?? DEFAULTS.scoreMeta;
   const excludeSpecies = opts.excludeSpecies ?? [];
   const exhaustive = opts.exhaustive ?? false;
+  // Throws on an unsupported cap before any work happens (GOALS T18c).
+  const league = leagueForCp(opts.cp ?? DEFAULTS.cp);
 
   const { mons, warnings: importWarnings } = importCollection(csvPath);
 
-  const ctx = await initEngine();
+  const ctx = await initEngine({ cp: league.cp });
   const matrix = scoreCollection(ctx, mons, { metaLimit: scoreMeta, currentMoves: opts.currentMoves });
   const deduped = dedupeBestPerSpecies(matrix);
 
@@ -236,6 +249,8 @@ export async function runPipeline(csvPath, opts = {}) {
     candidates = buildCandidates(deduped, { topK, excludeSpecies });
     settings = {
       mode: 'exhaustive',
+      cp: league.cp,
+      league: league.name,
       topK,
       scoreMeta,
       difficulty: opts.difficulty,
@@ -265,6 +280,8 @@ export async function runPipeline(csvPath, opts = {}) {
 
     settings = {
       mode: 'sampled',
+      cp: league.cp,
+      league: league.name,
       candidateTarget,
       poolSize,
       seed,
@@ -310,6 +327,7 @@ async function main(argv) {
       args: argv,
       allowPositionals: true,
       options: {
+        cp: { type: 'string' },
         top: { type: 'string' },
         topK: { type: 'string' },
         meta: { type: 'string' },
@@ -345,6 +363,7 @@ async function main(argv) {
 
   const csvPath = positionals[0];
   const opts = {
+    cp: intFlag(values.cp, 'cp', DEFAULTS.cp),
     top: intFlag(values.top, 'top', DEFAULTS.top),
     topK: intFlag(values.topK, 'topK', DEFAULTS.topK),
     meta: intFlag(values.meta, 'meta', DEFAULTS.meta),

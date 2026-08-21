@@ -2,7 +2,7 @@
 //
 // Weighted opponent-team sampler (GOALS T10, PLAN.md Rev 3). Builds the
 // opponent side of the sampling initiative: a mixture of pvpoke's own curated
-// Great League teams (src/meta/teams.js) plus randomly-composed 3-mon teams
+// teams for the run's CP cap (src/meta/teams.js) plus randomly-composed 3-mon teams
 // drawn from a WIDE species pool, weighted toward the current meta via
 // src/meta/usage.js's per-species weights.
 //
@@ -19,7 +19,6 @@ import { buildMetaMon } from '../scoring/index.js';
 import { loadMetaTeams, OFF_META_CURATED_WEIGHT } from './teams.js';
 import { pickWeighted, rngFromSeed } from '../util/rng.js';
 
-const DEFAULT_RANKINGS_FILE = 'src/data/rankings/all/overall/rankings-1500.json';
 const DEFAULT_CURATED_RATIO = 0.4;
 const TEAM_SIZE = 3;
 const SHADOW_SUFFIX = '_shadow';
@@ -44,7 +43,7 @@ function displayName(ctx, metaMon) {
 
 /**
  * The wide moveset-having species pool a sampled opponent team is composed
- * from: every entry in pvpoke's own vendored Great League rankings file,
+ * from: every entry in pvpoke's own vendored rankings file for ctx.cp,
  * mapped to a buildMetaMon-ready `{speciesId, fastMove, chargedMoves}` using
  * that entry's own `moveset` field (pvpoke's own top recommended moveset --
  * the same field pvpoke's rankings UI shows, not a heuristic reimplemented
@@ -58,9 +57,11 @@ function displayName(ctx, metaMon) {
  * @returns {Array<{speciesId: string, fastMove: string, chargedMoves: string[]}>}
  */
 function loadMovesetPool(ctx, opts = {}) {
+  // Rankings file follows ctx.cp (GOALS T18c) so a `--cp 2500` run composes
+  // opponents from Ultra League movesets, not Great League ones.
+  const rankingsFile = opts.rankingsFile ?? `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
   const raw =
-    opts.rankingsEntries ??
-    JSON.parse(readFileSync(path.join(ctx.vendorRoot, opts.rankingsFile ?? DEFAULT_RANKINGS_FILE), 'utf8'));
+    opts.rankingsEntries ?? JSON.parse(readFileSync(path.join(ctx.vendorRoot, rankingsFile), 'utf8'));
   const pool = [];
   for (const entry of raw) {
     const moveset = entry.moveset;
@@ -119,8 +120,8 @@ function composeSampledTeam(ctx, rng, pool, weights) {
  */
 
 /**
- * Sample the opponent-team pool: a mixture of pvpoke's curated Great League
- * teams and randomly-composed teams weighted toward the current meta.
+ * Sample the opponent-team pool: a mixture of pvpoke's curated
+ * teams for the run's league and randomly-composed teams weighted toward the current meta.
  * Deterministic under a fixed `seed` -- same inputs always produce the same
  * teams, in the same order.
  *

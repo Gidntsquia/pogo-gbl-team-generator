@@ -10,17 +10,14 @@
 // scripts/refresh-usage.mjs). No battle math here -- this is pure arithmetic
 // over pvpoke's own published ranking scores.
 //
-// Note (GOALS T18b): the Great League meta GROUP file
-// (src/data/groups/great.json, DEFAULT_GROUP_FILE below) is NOT threaded by
-// ctx.cp here -- which meta-group pool represents "the current meta" for a
-// non-Great-League cp (e.g. groups/ultra.json for cp 2500) is a design
-// decision left to GOALS T18c alongside its community-teams-file interaction
-// question, not a mechanical path substitution like the two files below.
+// GOALS T18c settled the meta GROUP file question T18b deferred: the group
+// pool follows ctx.cp via src/util/leagues.js (groups/great.json at 1500,
+// groups/ultra.json at 2500), same as the rankings/training files below.
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_GROUP_FILE = 'src/data/groups/great.json';
+import { DEFAULT_CP, leagueForCp } from '../util/leagues.js';
 
 // Default snapshot path, relative to the process cwd -- mirrors src/cli.js's
 // "out/report.md" convention (both assume the CLI/tests run from repo root).
@@ -50,6 +47,11 @@ function defaultRankingsFile(ctx) {
   return `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
 }
 
+/** Default meta group file for ctx's CP cap (GOALS T18c). */
+function defaultGroupFile(ctx) {
+  return `src/data/groups/${leagueForCp(ctx.cp).group}.json`;
+}
+
 function readTrainingSpeciesIds(raw) {
   const presets = Array.isArray(raw) ? raw : raw.presets;
   const ids = new Set();
@@ -63,7 +65,7 @@ function readTrainingSpeciesIds(raw) {
  * The species universe a usage weight is computed for: every species with a
  * resolvable score (the whole rankings/snapshot field -- 1000+ species under
  * the pinned vendor commit, most of them fringe picks) UNION every entry in
- * the Great League meta group and the curated training teams, so those two
+ * the meta group for ctx.cp and the curated training teams, so those two
  * pools are always covered even if a caller-supplied score source happens to
  * be narrower than the full field (e.g. `opts.rankingsEntries` in a test).
  *
@@ -79,7 +81,7 @@ function readTrainingSpeciesIds(raw) {
  */
 function collectSpeciesUniverse(ctx, opts, scoreBySpecies) {
   const groupEntries =
-    opts.groupEntries ?? readJson(path.join(ctx.vendorRoot, opts.groupFile ?? DEFAULT_GROUP_FILE));
+    opts.groupEntries ?? readJson(path.join(ctx.vendorRoot, opts.groupFile ?? defaultGroupFile(ctx)));
   const trainingIds =
     opts.trainingSpeciesIds ??
     readTrainingSpeciesIds(readJson(path.join(ctx.vendorRoot, opts.trainingFile ?? defaultTrainingFile(ctx))));
@@ -130,7 +132,19 @@ function loadScoreBySpecies(ctx, opts) {
     ? { entries: opts.snapshotEntries }
     : loadSnapshot(snapshotPath);
   if (snapshot) {
-    return new Map(snapshot.entries.map((e) => [e.speciesId, e.score]));
+    // GOALS T18c: scripts/refresh-usage.mjs only ever fetches Great League
+    // scores, so a snapshot is only valid for the cap it was fetched for (a
+    // snapshot written before this field existed is Great League by
+    // definition). At any other cap it would silently substitute GL scores
+    // for the league actually being run -- fall back to the vendored
+    // rankings for that cap instead.
+    const snapshotCp = snapshot.cp ?? DEFAULT_CP;
+    if (opts.snapshotEntries || snapshotCp === ctx.cp) {
+      return new Map(snapshot.entries.map((e) => [e.speciesId, e.score]));
+    }
+    process.stderr.write(
+      `loadUsageWeights: ignoring ${snapshotPath} (cp ${snapshotCp}) for a cp-${ctx.cp} run -- using vendored rankings\n`
+    );
   }
 
   const rankings =
@@ -141,12 +155,12 @@ function loadScoreBySpecies(ctx, opts) {
 /**
  * Compute a normalized, positive per-species usage weight for the full
  * scored field (every species in the rankings/snapshot source), guaranteed
- * to also cover every species in the Great League meta group and the
+ * to also cover every species in the meta group for ctx.cp and the
  * curated training teams (see collectSpeciesUniverse for why the universe
  * isn't restricted to just those two, narrower, pools).
  *
  * weight(species) ∝ (score/100)^gamma, where score is pvpoke's own 0-100
- * Great League ranking score. Weights are normalized to sum to 1 (a
+ * ranking score for ctx's CP cap. Weights are normalized to sum to 1 (a
  * probability distribution the T10/T11 samplers can draw from directly).
  * A species with no resolvable score (absent from both the snapshot/vendored
  * rankings) is left out of the returned map entirely rather than assigned a

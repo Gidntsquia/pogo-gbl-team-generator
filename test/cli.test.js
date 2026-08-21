@@ -82,6 +82,37 @@ test('runPipeline (currentMoves: GOALS T17) forwards the opt-in flag and surface
   assert.match(html, /currentMoves=on/);
 });
 
+test('runPipeline (--cp 2500: GOALS T18c) runs Ultra League end to end and labels the report', async () => {
+  const great = await runPipeline(FIXTURE, SAMPLED_TINY);
+  assert.equal(great.settings.cp, 1500, 'default run is Great League');
+  assert.equal(great.settings.league, 'Great League');
+  const greatMd = renderReport(great);
+  assert.match(greatMd, /# Great League Team Report/);
+  assert.doesNotMatch(greatMd, /cp=/, 'the default cap is not spelled out in the settings line');
+
+  const ultra = await runPipeline(FIXTURE, { ...SAMPLED_TINY, cp: 2500 });
+  assertWellFormedReport(ultra, SAMPLED_TINY.opponents, SAMPLED_TINY.top);
+  assert.equal(ultra.settings.cp, 2500);
+  assert.equal(ultra.settings.league, 'Ultra League');
+
+  // The community teams file is Great-League-only, so it is out of the
+  // opponent pool at 2500 (src/meta/teams.js's documented T18c decision).
+  for (const m of ultra.metaTeams) {
+    assert.doesNotMatch(m.id, /^community:/, 'GL community teams excluded at cp 2500');
+  }
+
+  const md = renderReport(ultra);
+  assert.match(md, /# Ultra League Team Report/);
+  assert.match(md, /cp=2500/);
+  const html = renderReportHtml(ultra);
+  assert.match(html, /<h1>Ultra League Team Report<\/h1>/);
+  assert.match(html, /cp=2500/);
+});
+
+test('runPipeline rejects an unsupported --cp before doing any work', async () => {
+  await assert.rejects(() => runPipeline(FIXTURE, { ...SAMPLED_TINY, cp: 1234 }), /unsupported cp 1234/);
+});
+
 test('runPipeline (--exhaustive) still produces the old C(topK,3) + curated-only behavior', async () => {
   const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
   assertWellFormedReport(report, EXHAUSTIVE_TINY.meta, EXHAUSTIVE_TINY.top);

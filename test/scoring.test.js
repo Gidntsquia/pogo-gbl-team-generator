@@ -11,6 +11,8 @@
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
 import {
   loadMeta,
@@ -79,6 +81,31 @@ describe('loadMeta', () => {
     assert.deepEqual(
       meta.map((m) => m.speciesId),
       ['registeel', 'medicham']
+    );
+  });
+
+  // GOALS T18c: which meta GROUP file represents "the meta" follows ctx.cp
+  // (great.json at 1500, ultra.json at 2500) -- the decision T18b deferred.
+  test('the default group file follows ctx.cp (great at 1500, ultra at 2500)', async () => {
+    const groupIds = (cpCtx, group) =>
+      JSON.parse(
+        readFileSync(path.join(cpCtx.vendorRoot, 'src/data/groups', `${group}.json`), 'utf8')
+      ).map((e) => e.speciesId);
+
+    const great = loadMeta(ctx, { metaLimit: 3 });
+    assert.deepEqual(great.map((m) => m.speciesId), groupIds(ctx, 'great').slice(0, 3));
+
+    const ultraCtx = await initEngine({ cp: 2500 });
+    const ultra = loadMeta(ultraCtx, { metaLimit: 3 });
+    assert.deepEqual(ultra.map((m) => m.speciesId), groupIds(ultraCtx, 'ultra').slice(0, 3));
+
+    // Built at the Ultra cap, not silently still Great League.
+    for (const m of ultra) {
+      assert.ok(m.pokemon.cp <= 2500, `${m.speciesId} over the 2500 cap`);
+    }
+    assert.ok(
+      ultra.some((m) => m.pokemon.cp > 1500),
+      'expected Ultra League mons above the Great League cap'
     );
   });
 });

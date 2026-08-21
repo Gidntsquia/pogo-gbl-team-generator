@@ -225,6 +225,11 @@ export function battleTeams(ctx, params) {
   // A fresh Battle per match (pvpoke's own MatchHandler/BattleInterface do the
   // same). Defaults are Great League: cp 1500, levelCap 50, cup "all".
   const battle = new Battle();
+  // GOALS T18c: match the harness's CP cap (initEngine's opts.cp) so the
+  // battle reports the league it's actually running. Safe here for the same
+  // reason it is in initEngine -- setCP re-initializes any Pokemon already on
+  // the Battle, and this one has none yet.
+  if (ctx.cp) battle.setCP(ctx.cp);
 
   const orderedA = orderWithLead(teamA, leadA);
   const orderedB = orderWithLead(teamB, leadB);

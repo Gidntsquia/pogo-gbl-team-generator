@@ -69,6 +69,7 @@ just open the file).
 ```
 node src/cli.js <collection.csv> [options]
 
+  --cp N             CP cap / league: 1500 (Great, default) or 2500 (Ultra)
   --top N            teams to show in the report        (default 5)
   --score-meta S     meta size used for 1v1 pruning      (default 20)
   --difficulty D     AI difficulty 0-3 (3 = strongest)   (default: engine default)
@@ -97,6 +98,38 @@ Try it on the bundled fixture:
 ```bash
 node src/cli.js fixtures/sample-pokegenie.csv
 ```
+
+### Leagues (`--cp`)
+
+Great League (CP ≤ 1500) is the default. Pass `--cp 2500` for **Ultra
+League**:
+
+```bash
+node src/cli.js fixtures/sample-pokegenie.csv --cp 2500
+```
+
+The cap reaches every layer of the pipeline: your mons are built at the
+highest level that stays under it, the 1v1 pruning meta comes from pvpoke's
+matching meta group (`groups/great.json` at 1500, `groups/ultra.json` at
+2500), usage weights and sampled-opponent movesets come from that cap's
+rankings file, curated opponent teams come from pvpoke's GO Battle League
+presets for that cap, and the 3v3 battles themselves run at it. The report
+is labelled with the league and its Settings line carries `cp=2500`.
+
+Two league-specific notes:
+
+- **Community teams are Great League only.** `data/meta-teams-community.json`
+  is a set of teams top players recommended for Great League play, so it is
+  left out of the opponent pool at any other cap — an Ultra League run faces
+  pvpoke's Ultra presets plus weighted-random Ultra compositions instead.
+- **A refreshed usage snapshot is Great League only.**
+  `scripts/refresh-usage.mjs` fetches pvpoke's live *Great League* rankings,
+  and the snapshot it writes records `cp: 1500`. A `--cp 2500` run ignores
+  it (with a one-line note on stderr) and uses the vendored Ultra rankings.
+
+pvpoke also ships data for CP 500 (Little Cup) and 10000 (Master League), so
+`--cp 500` and `--cp 10000` run too — they are simply less exercised than the
+two above.
 
 ### Best Buddy (level 51) mons
 
@@ -253,4 +286,6 @@ See `ROADMAP.md` for the full backlog. Notably:
   moveset by default — pass `--current-moves` to use each mon's actual
   currently-learned moves instead (see "Current-moves mode" above); moves
   that don't resolve fall back to recommended with a warning.
-- Only Great League (CP ≤ 1500) is supported end-to-end today.
+- Great League (default) and Ultra League (`--cp 2500`) are both supported
+  end-to-end; the community-curated opponent teams and the optional live
+  usage snapshot are Great League only (see "Leagues (`--cp`)" above).

@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 
 // Same shape as vendor/pvpoke/src/data/rankings/all/overall/rankings-1500.json
 // (pvpoke's own live GL rankings JSON; usage traces to gobattlelog.com).
-const SOURCE_URL = 'https://pvpoke.com/data/rankings/all/overall/rankings-1500.json';
+const SOURCE_CP = 1500;
+const SOURCE_URL = `https://pvpoke.com/data/rankings/all/overall/rankings-${SOURCE_CP}.json`;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_PATH = path.join(REPO_ROOT, 'data', 'meta-usage.json');
@@ -38,7 +39,10 @@ async function main() {
     return;
   }
 
-  const snapshot = { fetchedAt: new Date().toISOString(), source: SOURCE_URL, entries };
+  // `cp` records which CP cap these scores are for: loadUsageWeights ignores
+  // a snapshot whose cap doesn't match the run's (GOALS T18c), so a `--cp
+  // 2500` run never silently gets Great League usage weights.
+  const snapshot = { fetchedAt: new Date().toISOString(), source: SOURCE_URL, cp: SOURCE_CP, entries };
   mkdirSync(path.dirname(OUT_PATH), { recursive: true });
   writeFileSync(OUT_PATH, JSON.stringify(snapshot, null, 2) + '\n');
   console.log(`refresh-usage: wrote ${entries.length} entries to ${path.relative(REPO_ROOT, OUT_PATH)}`);
