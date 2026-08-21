@@ -19,6 +19,7 @@ import {
   createExecutor,
   defaultThreadCount,
   resolveThreadCount,
+  partitionContiguous,
   THREADS_ENV_VAR,
 } from '../src/engine/parallel.js';
 
@@ -165,6 +166,78 @@ describe('thread-count resolution', () => {
   test('a non-positive explicit value falls through instead of being used', () => {
     assert.equal(resolveThreadCount(0, { [THREADS_ENV_VAR]: '5' }), 5);
     assert.equal(resolveThreadCount(-2, {}), defaultThreadCount());
+  });
+});
+
+// --- GOALS T21: deterministic spec -> worker partitioning ------------------
+//
+// createExecutor now assigns specs to workers via CONTIGUOUS, deterministic
+// chunks (partitionContiguous) rather than availability-based dispatch, so a
+// given (specs, threads) always produces the same worker-assignment and is
+// therefore reproducible bit-for-bit run to run -- see src/engine/parallel.js's
+// module header for the full rationale.
+
+describe('partitionContiguous: pure chunking function', () => {
+  test('ranges are contiguous, cover [0, n) exactly, in worker-index order', () => {
+    for (const [n, workers] of [
+      [10, 3],
+      [9, 3],
+      [1, 4],
+      [0, 4],
+      [100, 7],
+    ]) {
+      const parts = partitionContiguous(n, workers);
+      assert.equal(parts.length, workers);
+      assert.equal(parts[0].start, 0);
+      for (let i = 0; i < parts.length; i++) {
+        if (i > 0) assert.equal(parts[i].start, parts[i - 1].end);
+      }
+      assert.equal(parts[parts.length - 1].end, n);
+    }
+  });
+
+  test('chunk sizes never differ by more than 1 (as-even-as-possible split)', () => {
+    const parts = partitionContiguous(11, 4); // 11/4 = 2 remainder 3
+    const sizes = parts.map((p) => p.end - p.start);
+    assert.deepEqual(sizes, [3, 3, 3, 2]);
+  });
+
+  test('is a pure function: same (n, workers) always yields the same ranges', () => {
+    assert.deepEqual(partitionContiguous(17, 5), partitionContiguous(17, 5));
+  });
+
+  test('workers is floored to at least 1', () => {
+    assert.deepEqual(partitionContiguous(5, 0), [{ start: 0, end: 5 }]);
+  });
+});
+
+describe('GOALS T21: same (specs, threads) run reproduces bit-identically', () => {
+  // A plan long enough (several repeats of the same species pairs, mixed
+  // seeds) that a worker's per-spec build cache genuinely reuses Pokemon
+  // instances across more than one battle -- exactly the condition under
+  // which pvpoke's own resetMoves() order-sensitivity (src/engine/README.md's
+  // "Known limitation") could make worker-assignment-timing observable if
+  // partitioning were NOT deterministic.
+  const REPEAT_PLAN = Array.from({ length: 4 }, () => BATTLE_PLAN).flat();
+
+  test('two independent runBattles() calls on the same plan at threads=3 match exactly', async () => {
+    const specs = toSpecs(REPEAT_PLAN);
+    const runA = await runBattles(specs, { threads: 3 });
+    const runB = await runBattles(specs, { threads: 3 });
+    assert.deepEqual(runB, runA);
+  });
+
+  test('two independent createExecutor pools produce identical results for the same plan', async () => {
+    const specs = toSpecs(REPEAT_PLAN);
+    const execA = createExecutor({ threads: 3 });
+    const execB = createExecutor({ threads: 3 });
+    try {
+      const [resultA, resultB] = await Promise.all([execA.run(specs), execB.run(specs)]);
+      assert.deepEqual(resultB, resultA);
+    } finally {
+      await execA.close();
+      await execB.close();
+    }
   });
 });
 

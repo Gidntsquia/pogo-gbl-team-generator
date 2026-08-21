@@ -66,7 +66,8 @@
 // pool -- the second call's battles are not dispatched until the first call's
 // entire batch has resolved. This was chosen over interleaving two batches'
 // specs across the same workers because it keeps the per-run bookkeeping
-// (results array, nextIndex cursor, idle-worker counting, fault handling)
+// (results array, per-worker partition cursors, idle-worker counting, fault
+// handling)
 // completely independent between batches with no shared mutable state to get
 // wrong -- a batch either fully owns the pool or isn't running yet. The cost
 // is that concurrent callers don't get extra parallelism from overlapping
@@ -85,6 +86,47 @@
 // and the executor transparently boots a FRESH pool on the next `run()` call
 // (the executor is not permanently broken by a crash -- only `close()` is
 // terminal). See "createExecutor" below for the full contract.
+//
+// --- GOALS T21: deterministic spec -> worker partitioning ------------------
+//
+// Before T21, a worker asked for its NEXT spec the instant it finished its
+// previous one (`assignNext` handed out `active.nextIndex++` on demand) --
+// correct (results are always placed back in spec order), but WHICH worker
+// processed WHICH spec depended on real wall-clock timing: a worker that
+// happens to finish a fast battle first "steals" the next spec in line. Since
+// each worker keeps its own per-spec build cache and reuses Pokemon instances
+// across the specs it personally handles (see parallelWorker.js), and reusing
+// an instance across sequential battles has pvpoke's own known order-
+// sensitivity (src/engine/README.md's "Known limitation", GOALS T20/T20b),
+// two runs of the SAME (specs, threads) could produce a worker-assignment
+// that differs run to run -- so even though every individual battle's winner
+// is still deterministic given its own spec, the exact sequence of battles
+// any one worker's Pokemon instances see was not reproducible.
+//
+// `createExecutor` now partitions specs into CONTIGUOUS chunks, one per
+// worker, computed once per `run()` call from nothing but `specs.length` and
+// the pool's (fixed-at-boot) worker count -- see `partitionContiguous` below.
+// A worker only ever asks for the next spec inside ITS OWN chunk, so the
+// exact sequence of specs (and therefore the exact sequence of reused-Pokemon-
+// instance battles) any given worker index processes is now a pure function
+// of (specs, threads), independent of real execution timing. Two runs of the
+// same (specs, threads) are therefore bit-for-bit reproducible.
+//
+// Contiguous chunks (worker 0 gets specs [0, n/threads), worker 1 the next
+// slice, etc.) were chosen over striping (worker i gets every i-th spec)
+// because callers (evaluateTeams, tournament.mjs) build their flat spec lists
+// in an order that already groups a given team's/candidate's battles
+// together (all 9 lead pairings against one meta team are adjacent, etc.) --
+// contiguous chunks keep that locality inside one worker's build cache, while
+// striping would spread every team's battles evenly across every worker,
+// diluting cache hits for no benefit (throughput is unaffected either way;
+// only which specs share a worker's instance-reuse history changes). This
+// replaces the old availability-based dispatch outright rather than being an
+// opt-in mode -- reproducibility is a strict improvement with no observable
+// downside for the roughly-uniform-cost battle workloads this executor
+// serves (a pathologically uneven batch could in principle leave one worker's
+// chunk running long after the others finish theirs; not a concern at
+// tournament/evolve scale where per-battle cost is fairly stable).
 
 import { Worker } from 'node:worker_threads';
 import os from 'node:os';
@@ -150,6 +192,35 @@ export function resolveThreadCount(explicit, env = process.env) {
   const fromEnv = Number(env?.[THREADS_ENV_VAR]);
   if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
   return defaultThreadCount();
+}
+
+/**
+ * Split `n` spec indices into `workers` contiguous, deterministic chunks --
+ * as even as possible, with any remainder (`n % workers`) going one-each to
+ * the FIRST chunks so sizes never differ by more than 1. Pure function of its
+ * two arguments; used by `createExecutor` (GOALS T21) to decide which worker
+ * processes which spec index BEFORE any battle runs, so that assignment is a
+ * function of (specs.length, threads) rather than of real-time worker
+ * availability. `workers` is floored to at least 1.
+ * @param {number} n - total number of specs.
+ * @param {number} workers - pool size.
+ * @returns {Array<{start:number, end:number}>} one range per worker, in
+ *   worker-index order; `end` is exclusive. Ranges partition `[0, n)` exactly
+ *   (they are contiguous and their sizes sum to `n`); a worker whose range is
+ *   empty (`start === end`) simply has no work this run.
+ */
+export function partitionContiguous(n, workers) {
+  const w = Math.max(1, Math.floor(workers) || 1);
+  const base = Math.floor(n / w);
+  const remainder = n % w;
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < w; i++) {
+    const size = base + (i < remainder ? 1 : 0);
+    parts.push({ start, end: start + size });
+    start += size;
+  }
+  return parts;
 }
 
 /**
@@ -299,33 +370,39 @@ export function createExecutor(opts = {}) {
     failActive(err);
   }
 
-  function assignNext(worker) {
+  /** Hand `worker` (at `workerIndex` in the pool) the next spec inside ITS OWN
+   * deterministic partition range (GOALS T21 -- see module header), or count
+   * it idle-at-end if that range is exhausted. */
+  function assignNext(worker, workerIndex) {
     if (!active) return;
-    if (active.nextIndex >= active.specs.length) {
+    const range = active.partition[workerIndex];
+    if (active.cursor[workerIndex] >= range.end) {
       active.idleAtEnd += 1;
       if (pool && active.idleAtEnd === pool.workers.length) {
         settle(active.resolve, active.results);
       }
       return;
     }
-    const id = active.nextIndex++;
+    const id = active.cursor[workerIndex]++;
     worker.postMessage({ type: 'battle', id, spec: active.specs[id] });
   }
 
   /** Attached once per worker, right after it boots, and used across every
    * `run()` call for the rest of that worker's life (steady state -- boot's
    * own `ready`/`initError` messages are already consumed by `bootWorker`'s
-   * one-shot listener by the time this is attached). */
-  function attachSteadyStateHandlers(worker) {
+   * one-shot listener by the time this is attached). `workerIndex` is this
+   * worker's fixed position in `pool.workers`, used to look up its
+   * deterministic partition range each `run()` call. */
+  function attachSteadyStateHandlers(worker, workerIndex) {
     worker.on('message', (msg) => {
       if (!active) return; // stray message with no run in flight; ignore
       if (msg.type === 'result') {
         active.results[msg.id] = continueOnError ? { ok: true, value: msg.result } : msg.result;
-        assignNext(worker);
+        assignNext(worker, workerIndex);
       } else if (msg.type === 'battleError') {
         if (continueOnError) {
           active.results[msg.id] = { ok: false, error: { message: msg.message } };
-          assignNext(worker);
+          assignNext(worker, workerIndex);
         } else {
           failActive(new Error(`createExecutor.run: battle ${msg.id} failed: ${msg.message}`));
         }
@@ -355,7 +432,7 @@ export function createExecutor(opts = {}) {
 
     bootPromise = Promise.all(Array.from({ length: threadCount }, bootOne))
       .then((workers) => {
-        for (const w of workers) attachSteadyStateHandlers(w);
+        workers.forEach((w, i) => attachSteadyStateHandlers(w, i));
         pool = { workers };
         bootPromise = null;
         return pool;
@@ -372,16 +449,18 @@ export function createExecutor(opts = {}) {
     if (specs.length === 0) return [];
     await ensurePool();
     return new Promise((resolve, reject) => {
+      const partition = partitionContiguous(specs.length, pool.workers.length);
       active = {
         specs,
         results: new Array(specs.length),
-        nextIndex: 0,
+        partition,
+        cursor: partition.map((r) => r.start),
         idleAtEnd: 0,
         settled: false,
         resolve,
         reject,
       };
-      for (const w of pool.workers) assignNext(w);
+      pool.workers.forEach((w, i) => assignNext(w, i));
     });
   }
 

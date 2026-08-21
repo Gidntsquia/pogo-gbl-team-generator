@@ -172,6 +172,32 @@ to do); `runBattles`, being one pool per one batch, still clamps
 `threads` to `[1, specs.length]` so it never boots a worker with no work at
 all.
 
+**Deterministic spec → worker partitioning (GOALS T21).** Each `run()` call
+splits its specs into **contiguous, deterministic chunks** -- one per worker
+-- via `partitionContiguous(specs.length, threads)`, computed purely from the
+batch size and the (fixed-at-boot) thread count. A worker only ever pulls its
+next spec from inside its own chunk. This replaced availability-based
+dispatch (whichever worker finished first grabbed the next spec off a shared
+cursor), under which two runs of the *same* `(specs, threads)` could assign
+specs to workers differently depending on real execution timing. Since each
+worker keeps its own per-spec build cache and reuses Pokemon instances across
+the specs it personally handles, and reusing an instance across sequential
+battles has pvpoke's own order-sensitivity (see "Known limitation" below),
+availability-based dispatch meant the exact sequence of battles a given
+worker's instances saw wasn't reproducible run to run -- only each
+individual battle's winner was (each spec is self-contained: teams + seed).
+Deterministic partitioning makes worker assignment itself a pure function of
+`(specs.length, threads)`, so a threaded run at a fixed `(seed, threads)` is
+now bit-for-bit reproducible (`test/parallel.test.js`'s "GOALS T21" describe
+block proves this on a plan long enough to exercise instance reuse: two
+independent `runBattles()`/`createExecutor` calls on the same plan match
+exactly). Contiguous chunks (not striped/round-robin) were chosen because
+callers build their flat spec lists with locality already in them (all 9
+lead pairings of one candidate-vs-meta-team matchup are adjacent, etc.) --
+contiguous chunks keep that locality inside one worker's build cache rather
+than spreading every matchup evenly across every worker for no throughput
+benefit.
+
 **Why specs are plain data, and why team-building happens per worker, not on
 the main thread.** A built pvpoke `Pokemon` instance lives inside one
 specific `vm` context tied to one V8 isolate; it cannot be handed to a
