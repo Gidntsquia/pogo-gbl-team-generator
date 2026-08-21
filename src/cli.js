@@ -36,9 +36,9 @@ import { parseArgs } from 'node:util';
 
 import { importCollection } from './importer/index.js';
 import { initEngine } from './engine/harness.js';
-import { scoreCollection, computeWeightedScore } from './scoring/index.js';
+import { scoreCollection } from './scoring/index.js';
 import { loadMetaTeams } from './meta/teams.js';
-import { buildCandidates, evaluateTeams } from './teams/index.js';
+import { buildCandidates, evaluateTeams, dedupeBestPerSpecies } from './teams/index.js';
 import { renderReport, renderSummary } from './report/index.js';
 
 const DEFAULTS = Object.freeze({
@@ -78,30 +78,6 @@ function intFlag(value, name, fallback) {
     throw new Error(`--${name} must be a non-negative integer, got "${value}"`);
   }
   return n;
-}
-
-/**
- * Keep only the best-scoring built instance per species, so two copies of the
- * same Pokemon (e.g. two Azumarill with different IVs) don't fill several
- * near-identical "different" candidate teams. Returns a shallow matrix copy
- * with pruned `ratings`/`builtMons`; other fields are shared unchanged.
- */
-function dedupeBestPerSpecies(matrix) {
-  const bestBySpecies = new Map();
-  for (const key of Object.keys(matrix.ratings)) {
-    const speciesId = matrix.builtMons[key].speciesId;
-    const score = computeWeightedScore(matrix.ratings[key]);
-    const cur = bestBySpecies.get(speciesId);
-    if (!cur || score > cur.score) bestBySpecies.set(speciesId, { key, score });
-  }
-  const keep = new Set([...bestBySpecies.values()].map((v) => v.key));
-  const ratings = {};
-  const builtMons = {};
-  for (const key of keep) {
-    ratings[key] = matrix.ratings[key];
-    builtMons[key] = matrix.builtMons[key];
-  }
-  return { ...matrix, ratings, builtMons };
 }
 
 /**

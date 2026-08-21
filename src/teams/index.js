@@ -70,6 +70,37 @@ function speciesOf(matrix, key) {
 }
 
 /**
+ * Keep only the best-scoring built instance per species, so two copies of the
+ * same Pokemon (e.g. two Azumarill with different IVs) don't fill several
+ * near-identical "different" candidate teams. Returns a shallow matrix copy
+ * with pruned `ratings`/`builtMons`; other fields are shared unchanged.
+ *
+ * Originally lived in src/cli.js (T5); moved here (GOALS T11) so the weighted
+ * candidate sampler (src/teams/sample.js) and the exhaustive CLI path share
+ * exactly one implementation instead of drifting. Behavior is unchanged.
+ *
+ * @param {object} matrix - scoreCollection's return (needs ratings + builtMons).
+ * @returns {object} matrix with `ratings`/`builtMons` pruned to one key per species.
+ */
+export function dedupeBestPerSpecies(matrix) {
+  const bestBySpecies = new Map();
+  for (const key of Object.keys(matrix.ratings)) {
+    const speciesId = matrix.builtMons[key].speciesId;
+    const score = computeWeightedScore(matrix.ratings[key]);
+    const cur = bestBySpecies.get(speciesId);
+    if (!cur || score > cur.score) bestBySpecies.set(speciesId, { key, score });
+  }
+  const keep = new Set([...bestBySpecies.values()].map((v) => v.key));
+  const ratings = {};
+  const builtMons = {};
+  for (const key of keep) {
+    ratings[key] = matrix.ratings[key];
+    builtMons[key] = matrix.builtMons[key];
+  }
+  return { ...matrix, ratings, builtMons };
+}
+
+/**
  * All C(pool, 3) index combinations of an array, in lexicographic order.
  * Small and pure; kept here rather than pulling in a dependency.
  */
