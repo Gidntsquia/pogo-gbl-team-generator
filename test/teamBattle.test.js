@@ -12,7 +12,7 @@
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
-import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
+import { battleTeams, initTeamBattle, wrapRunScenario } from '../src/engine/teamBattle.js';
 
 // Rank-1 IVs (attack-weight rank 1 is close enough for these coarse tests).
 const IVS = { atk: 0, def: 15, hp: 15 };
@@ -235,5 +235,122 @@ describe('T20: pre-battle team state is independent of leftover shared-battle-co
     assert.deepEqual(canonical, none, 'dirtying the shared battle context changes nothing pre-battle');
     assert.deepEqual(reversed, canonical, 'reversed dirtying order changes nothing pre-battle');
     assert.deepEqual(shuffled, canonical, 'shuffled dirtying order changes nothing pre-battle');
+  });
+});
+
+// GOALS T20b -- investigated the second, independent order-dependence
+// mechanism (see src/engine/README.md's "Known limitation", mechanism 2):
+// vendor/pvpoke's TrainingAI#runScenario builds a throwaway single-battle
+// Battle to test a shield/bait scenario and calls that throwaway battle's
+// setNewPokemon() on the REAL pokemon/opponent it's given, which repoints
+// their private `battle` ref (via Pokemon#setBattle) at the throwaway --
+// and runScenario's own restore block never puts `.battle`, `.baitShields`,
+// or `.priority` back. wrapRunScenario (teamBattle.js) wraps runScenario on
+// both of a battle's TrainingAI instances so every call is transparent for
+// exactly those 4 fields, using pvpoke's own public getBattle()/setBattle().
+// This test proves the WRAPPING MECHANISM itself against fake stand-ins (no
+// engine boot needed -- pure function, like T23's evolve.js fake-fitness
+// tests) since every real vendor call site of runScenario only reads its
+// *return value*, never the mutated fields, once wrapped.
+//
+// IMPORTANT, and reported honestly rather than glossed over: landing this
+// wrap is a REAL fix for a genuinely leaky restore block (proven by this
+// test), and re-running scripts/variance-study.mjs after landing it shows
+// it is not a no-op -- one candidate's canonical (single fixed order) win
+// rate shifted slightly. But it does NOT eliminate the known 1-in-360
+// reversed-ordering flip in that same script's `--candidates 5 --opponents
+// 8 --shuffles 3 --seed variance-study` run -- that residual is therefore
+// evidence of a THIRD, still-unidentified mechanism, not explained by the
+// leak this ticket found and fixed. See PROGRESS.md for the numbers and
+// src/engine/README.md's Known limitation section for the standing doctrine
+// -- T20b's box stays unchecked; this is a real partial finding, not a full
+// resolution.
+describe('T20b: wrapRunScenario makes runScenario side-effect-transparent for battle/baitShields/farmEnergy/priority', () => {
+  function makeFakeMon(label) {
+    let battle = { label: `real-${label}` };
+    return {
+      label,
+      getBattle: () => battle,
+      setBattle: (b) => {
+        battle = b;
+      },
+      baitShields: 1,
+      farmEnergy: false,
+      priority: 0,
+    };
+  }
+
+  /** Mimics pvpoke's own runScenario: mutates all 4 fields on both args and does not restore them -- the vendor bug this wraps around. */
+  function makeLeakyOriginal(returnValue) {
+    return function (type, poke, opp) {
+      const throwaway = { label: 'throwaway' };
+      poke.setBattle(throwaway);
+      opp.setBattle(throwaway);
+      poke.baitShields = 0;
+      opp.baitShields = 0;
+      poke.farmEnergy = true;
+      opp.farmEnergy = true;
+      poke.priority = 99;
+      opp.priority = 99;
+      return returnValue;
+    };
+  }
+
+  test('restores all 4 fields on both pokemon and opponent after a call, and passes the return value through', () => {
+    const pokemon = makeFakeMon('pokemon');
+    const opponent = makeFakeMon('opponent');
+    const ai = { runScenario: makeLeakyOriginal({ average: 500 }) };
+    wrapRunScenario(ai);
+
+    const pokemonBattleBefore = pokemon.getBattle();
+    const opponentBattleBefore = opponent.getBattle();
+    const result = ai.runScenario('NO_BAIT', pokemon, opponent);
+
+    assert.deepEqual(result, { average: 500 }, 'return value passes through unchanged');
+    assert.equal(pokemon.getBattle(), pokemonBattleBefore, 'pokemon.battle restored');
+    assert.equal(opponent.getBattle(), opponentBattleBefore, 'opponent.battle restored');
+    assert.equal(pokemon.baitShields, 1, 'pokemon.baitShields restored');
+    assert.equal(opponent.baitShields, 1, 'opponent.baitShields restored');
+    assert.equal(pokemon.farmEnergy, false, 'pokemon.farmEnergy restored');
+    assert.equal(opponent.farmEnergy, false, 'opponent.farmEnergy restored');
+    assert.equal(pokemon.priority, 0, 'pokemon.priority restored');
+    assert.equal(opponent.priority, 0, 'opponent.priority restored');
+  });
+
+  test('restores fields even if the wrapped call throws', () => {
+    const pokemon = makeFakeMon('pokemon');
+    const opponent = makeFakeMon('opponent');
+    const leaky = makeLeakyOriginal(null);
+    const ai = {
+      runScenario(type, poke, opp) {
+        leaky(type, poke, opp);
+        throw new Error('boom');
+      },
+    };
+    wrapRunScenario(ai);
+
+    const pokemonBattleBefore = pokemon.getBattle();
+    assert.throws(() => ai.runScenario('NO_BAIT', pokemon, opponent), /boom/);
+    assert.equal(pokemon.getBattle(), pokemonBattleBefore, 'still restored after a throw');
+    assert.equal(pokemon.baitShields, 1);
+    assert.equal(pokemon.farmEnergy, false);
+    assert.equal(pokemon.priority, 0);
+  });
+
+  test('nested/sequential calls each restore to what was true immediately before THAT call (stack discipline, not a single global save)', () => {
+    const pokemon = makeFakeMon('pokemon');
+    const opponent = makeFakeMon('opponent');
+    const ai = { runScenario: makeLeakyOriginal({ average: 1 }) };
+    wrapRunScenario(ai);
+
+    // Two sequential calls (as evaluateMatchup makes 4 in a row): each call's
+    // leak must be undone before the next call observes pokemon's state, and
+    // the field must end at its true pre-first-call value, not some
+    // intermediate leaked value from either call.
+    ai.runScenario('BOTH_BAIT', pokemon, opponent);
+    ai.runScenario('NEITHER_BAIT', pokemon, opponent);
+
+    assert.equal(pokemon.baitShields, 1);
+    assert.equal(pokemon.getBattle().label, 'real-pokemon');
   });
 });

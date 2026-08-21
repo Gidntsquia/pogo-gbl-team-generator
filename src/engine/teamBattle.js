@@ -145,6 +145,68 @@ export function initTeamBattle(ctx) {
 }
 
 /**
+ * GOALS T20b (determinism mechanism 2): pvpoke's own TrainingAI#runScenario
+ * (vendor/pvpoke/src/js/training/TrainingAI.js) builds a throwaway
+ * single-battle `Battle` to test a shield/bait scenario, and calls that
+ * throwaway battle's own setNewPokemon() on the REAL pokemon/opponent
+ * instances it's given -- which (via Pokemon#setBattle) repoints their
+ * PRIVATE `battle` reference at the throwaway battle. Its own restore block
+ * (TrainingAI.js's runScenario, ~921-937) puts back hp/energy/cooldown/
+ * shields/stat-buffs/form/index but NOT `.battle`, `.baitShields`, or
+ * `.priority` -- so after runScenario returns, the pokemon's private
+ * `battle` still points at a battle that no longer exists. A LATER
+ * resetMoves() on that same instance (another scenario evaluation, a
+ * switch/shield decision, or -- across sequential battleTeams() calls --
+ * this module's own next-battle fullReset()) can then read
+ * `battle.getOpponent(self.index)` against the wrong (or a torn-down)
+ * opponent, and which throwaway battle was "last" depends on the exact
+ * order scenarios were evaluated in -- an order that can differ between a
+ * serial and a threaded run of the same battle set (see
+ * src/engine/README.md's "Known limitation").
+ *
+ * Fix shape (permitted: wrapping pvpoke's own code is allowed; editing
+ * vendor files or reimplementing battle/AI logic is not): wrap runScenario
+ * on each battle's two TrainingAI instances so every call snapshots and
+ * restores exactly these fields on BOTH its `pokemon` and `opponent`
+ * arguments, via pvpoke's own public getBattle()/setBattle() getter/setter
+ * (baitShields/farmEnergy/priority are plain public properties). This makes
+ * runScenario side-effect-transparent to its caller for state outside its
+ * own return value -- every other read of a Pokemon's `battle` already
+ * assumes it reflects whichever battle is actually running.
+ *
+ * Verified harmless to the callers that DO rely on runScenario's
+ * baitShields/farmEnergy mutation: evaluateMatchup sets them itself right
+ * before calling runScenario (each scenario type sets them again on entry)
+ * and finalizes them via processStrategy afterward, never reading the
+ * value in between; decideShield only ever reads runScenario's *return
+ * value* (`.average`), never the mutated fields.
+ *
+ * @param {object} ai - a TrainingAI instance (e.g. from Player#getAI())
+ */
+export function wrapRunScenario(ai) {
+  const original = ai.runScenario;
+  ai.runScenario = function (type, pokemon, opponent) {
+    const snapshots = [pokemon, opponent].map((mon) => ({
+      mon,
+      battle: mon.getBattle(),
+      baitShields: mon.baitShields,
+      farmEnergy: mon.farmEnergy,
+      priority: mon.priority,
+    }));
+    try {
+      return original.call(ai, type, pokemon, opponent);
+    } finally {
+      for (const s of snapshots) {
+        s.mon.setBattle(s.battle);
+        s.mon.baitShields = s.baitShields;
+        s.mon.farmEnergy = s.farmEnergy;
+        s.mon.priority = s.priority;
+      }
+    }
+  };
+}
+
+/**
  * Order a team array so the chosen lead sits at index 0 (pvpoke uses
  * getTeam()[0] as the starting Pokemon). Returns a shallow copy; the same
  * Pokemon instances are reused, just reordered.
@@ -236,6 +298,10 @@ export function battleTeams(ctx, params) {
 
   const p0 = new Player(0, difficulty, battle);
   const p1 = new Player(1, difficulty, battle);
+  // GOALS T20b: make runScenario's battle/baitShields/farmEnergy/priority
+  // mutations side-effect-transparent (see wrapRunScenario's own doc comment).
+  wrapRunScenario(p0.getAI());
+  wrapRunScenario(p1.getAI());
   p0.setRoster(orderedA);
   p0.setTeam(orderedA);
   p1.setRoster(orderedB);
