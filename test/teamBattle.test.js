@@ -11,7 +11,7 @@
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { initEngine, buildPokemon } from '../src/engine/harness.js';
+import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 
 // Rank-1 IVs (attack-weight rank 1 is close enough for these coarse tests).
@@ -141,5 +141,99 @@ describe('determinism', () => {
     assert.equal(rA.winner, rB.winner);
     assert.deepEqual(rA.survivorsHp, rB.survivorsHp);
     assert.equal(rA.summary.seed, 42);
+  });
+});
+
+// GOALS T20 -- proves the mechanism-1 fix (teamBattle.js stamping
+// setBattle()/.index on all 6 members before fullReset()). Root cause: every
+// buildPokemon() call sets a fresh mon's PRIVATE `battle` ref to ctx.battle --
+// the single shared Battle instance src/scoring/index.js's 1v1 sims reuse
+// across the whole pipeline (harness.js buildPokemon/simBattle) -- and its
+// `.index` defaults to 0. A mon that goes on to sit on a 3v3 team's BENCH
+// never had setNewPokemon() called on it (only the two leads do), so its
+// fullReset() -> resetMoves() -> initializeMove() reads
+// `battle.getOpponent(self.index)` off that stale shared context: whatever
+// opponent a completely unrelated 1v1 scoring battle last left sitting in
+// ctx.battle's other player slot. That leftover opponent can flip a
+// close-DPE bestChargedMove tie-break. This test reproduces the exact
+// mechanism (dirty ctx.battle with real 1v1 sims against different
+// species, in different orders, then build a fresh probe team and run it
+// through battleTeams) and asserts the probe team's PRE-BATTLE state --
+// captured the instant teamBattle's setup calls fullReset(), before the turn
+// loop runs -- is bit-identical no matter what was left in ctx.battle
+// beforehand. This does NOT assert full battle-outcome identity across
+// thread counts/orderings -- that remains open per T20b (a second,
+// independent order-dependence mechanism inside TrainingAI).
+describe('T20: pre-battle team state is independent of leftover shared-battle-context state', () => {
+  /** @returns {{index:number, bestChargedMove:string|null, fastMoves:Array, chargedMoves:Array}} */
+  function snapshotMon(mon) {
+    return {
+      index: mon.index,
+      bestChargedMove: mon.bestChargedMove ? mon.bestChargedMove.moveId : null,
+      fastMoves: mon.fastMovePool.map((m) => ({ id: m.moveId, damage: m.damage, dpe: m.dpe })),
+      chargedMoves: mon.chargedMovePool.map((m) => ({ id: m.moveId, damage: m.damage, dpe: m.dpe })),
+    };
+  }
+
+  /**
+   * Wrap each mon's fullReset() to snapshot its state the instant that call
+   * returns -- this is exactly the pre-battle moment teamBattle.js's setup
+   * produces, captured without touching production code.
+   */
+  function captureAtFullReset(mons) {
+    const snapshots = mons.map(() => null);
+    mons.forEach((mon, i) => {
+      const origFullReset = mon.fullReset.bind(mon);
+      mon.fullReset = function (...args) {
+        const result = origFullReset(...args);
+        snapshots[i] = snapshotMon(mon);
+        return result;
+      };
+    });
+    return snapshots;
+  }
+
+  /**
+   * Mirrors what src/scoring/index.js's 1v1 matrix pass does: run a real sim
+   * on ctx's single shared battle, leaving `oppId` (built fresh, IVS rank-1)
+   * sitting in one of ctx.battle's player slots as leftover state for
+   * whatever mon gets built next.
+   */
+  function dirtyWithOpponent(oppId) {
+    const dummyA = buildPokemon(ctx, { speciesId: oppId, ivs: IVS });
+    const dummyB = buildPokemon(ctx, { speciesId: 'magikarp', ivs: IVS });
+    simBattle(ctx, { p1: dummyA, p2: dummyB, shields: [0, 0] });
+  }
+
+  const DIRTY_SPECIES = ['skarmory', 'lanturn', 'medicham', 'sableye', 'clodsire'];
+
+  /** Dirty ctx.battle with `dirtyOrder`, THEN build a fresh probe team and run it through a real battleTeams call, returning its captured pre-battle state. */
+  function snapshotForOrdering(dirtyOrder) {
+    for (const oppId of dirtyOrder) dirtyWithOpponent(oppId);
+    const probeTeam = team(STRONG_IDS);
+    const snapshots = captureAtFullReset(probeTeam);
+    battleTeams(ctx, { teamA: probeTeam, teamB: team(WEAK_IDS), seed: 'T20-probe' });
+    return snapshots;
+  }
+
+  test('probe team pre-battle state (index, bestChargedMove, per-move damage/DPE) is bit-identical regardless of what opponent was left in the shared scoring-battle context, or in what order', () => {
+    const none = snapshotForOrdering([]);
+    const canonical = snapshotForOrdering(DIRTY_SPECIES);
+    const reversed = snapshotForOrdering([...DIRTY_SPECIES].reverse());
+    const shuffled = snapshotForOrdering([
+      DIRTY_SPECIES[2],
+      DIRTY_SPECIES[0],
+      DIRTY_SPECIES[4],
+      DIRTY_SPECIES[1],
+      DIRTY_SPECIES[3],
+    ]);
+
+    assert.equal(canonical.length, 3);
+    for (const snap of canonical) {
+      assert.ok(snap.bestChargedMove, 'a bestChargedMove was actually selected');
+    }
+    assert.deepEqual(canonical, none, 'dirtying the shared battle context changes nothing pre-battle');
+    assert.deepEqual(reversed, canonical, 'reversed dirtying order changes nothing pre-battle');
+    assert.deepEqual(shuffled, canonical, 'shuffled dirtying order changes nothing pre-battle');
   });
 });

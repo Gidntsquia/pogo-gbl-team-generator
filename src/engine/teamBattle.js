@@ -310,6 +310,23 @@ export function battleTeams(ctx, params) {
   // main loop, and symmetric across both players) ---------------------------
   p0.reset();
   p1.reset();
+  // GOALS T20: bench members never went through setNewPokemon (only the two
+  // leads do, above), so their fullReset() -> resetMoves() -> initializeMove()
+  // (Pokemon.js:831-839) reads a stale PRIVATE `battle`/`index` left over from
+  // whatever context last built/battled that instance -- frequently a shared
+  // scoring-pipeline battle from an unrelated matchup -- and the
+  // bestChargedMove DPE tie-break can flip depending on that leftover
+  // opponent. Stamp all 6 members with the same public setters
+  // Battle#setNewPokemon itself uses (Battle.js:82-120) before resetting them,
+  // so every member's tie-break sees THIS battle's real opponent.
+  for (const mon of orderedA) {
+    mon.setBattle(battle);
+    mon.index = 0;
+  }
+  for (const mon of orderedB) {
+    mon.setBattle(battle);
+    mon.index = 1;
+  }
   for (const mon of orderedA) mon.fullReset();
   for (const mon of orderedB) mon.fullReset();
   battle.getPokemon().forEach((mon) => mon.setBattle(battle));
