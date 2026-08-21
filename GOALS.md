@@ -75,7 +75,7 @@ Jaxon's ask, verbatim spirit: gen 0 = random candidate teams from his collection
   7. Dragonite (Shadow) / Diggersby / Tinkaton — Dragonite rendered with a shadow aura (and shiny-green — cosmetic only).
   8. Tinkaton / Diggersby / Feraligatr.
   9. Wigglytuff / Malamar / Jellicent.
-  10. Sliggoo / Empoleon / Sableye (Shadow) — team card: Sliggoo (Dragon Breath, Dragon Pulse, Body Slam), Empoleon (Metal Sound, Hydro Cannon, Drill Peck), Sableye (Shadow) (moves cut off). NOTE a display discrepancy: the panel simultaneously showed a Shadow Feraligatr center-stage while this card listed Empoleon — trust the card; do NOT substitute Feraligatr; record this note on the entry.
+  10. Sliggoo / Feraligatr (Shadow) / Sableye (Shadow) — CORRECTED by Jaxon directly (2026-08-21): the on-screen card listing Empoleon was stale; the panel's Shadow Feraligatr render was the real member. Sliggoo moves from the card: Dragon Breath, Dragon Pulse, Body Slam; Sableye (Shadow) moves cut off; Feraligatr's likely set is the ranking list's (Shadow Claw, Hydro Cannon, Ice Beam) — note as such, don't assert.
   11. Corsola (Galarian) / Tinkaton / Kingdra — team card: Corsola-G (Astonish, Power Gem, Night Shade), Tinkaton (Fairy Wind, Gigaton Hammer, Bulldoze), third member Kingdra by visual (blue seahorse).
   12. Malamar / Feraligatr / Tinkaton.
   13. Stunfisk / Malamar / Wigglytuff — NORMAL Stunfisk (orange with yellow lips), explicitly NOT Galarian.
