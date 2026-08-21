@@ -128,3 +128,8 @@ Project bootstrapped in an interactive session; switching to the scheduled-routi
 - **Verify commands run clean THIS fire:** `node --test test/sampleTeams.test.js` → 8/8. `npm test` → 99/99 green (91 prior + 8 new).
 - **Dependencies:** none added (no npm deps in rng.js or sampleTeams.js; both pure JS + existing vendor/pvpoke data reads).
 - **Next:** T11 (weighted candidate-team sampler, seq after T9, parallel-safe with T10 — now both open only via T11) — `src/teams/sample.js`: `sampleCandidateTeams({matrix, pool, weights, count, seed, excludeSpecies})`. Should reuse `pickWeighted`/`rngFromSeed` from the new `src/util/rng.js` rather than re-deriving sampling machinery. Then T12 (wire into CLI + report + E2E, seq after T10+T11) is the last item in the sampling initiative.
+
+## 2026-08-21T05:39Z — orchestrator (community meta teams from Jaxon)
+- Jaxon supplied the images from the Reddit post r/TheSilphRoad 1tv2140 (YonkouJean's "recommended GL teams from top players", Season 27). Orchestrator extracted all 12 teams into `data/meta-teams-community.json` (provenance + extraction notes in the file; core-breaker strips deliberately excluded — those are the teams' counters, not members). 6 entries flagged `uncertain` on specific sprite reads (see notes fields); Jaxon will spot-correct the JSON if any are wrong — loaders must skip-with-warning unresolvable ids regardless.
+- Queued **T10b** (inserted after T10, before T11): merge this file into the curated opponent pool for both the exhaustive path and sampleOpponentTeams' curated mix, namespaced ids, report labeling, bogus-id resilience.
+- T10 landed at e1a070f while this was in flight; orchestrator spot-verifying its suite locally in parallel.

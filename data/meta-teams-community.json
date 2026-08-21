@@ -1,0 +1,20 @@
+{
+  "source": "https://www.reddit.com/r/TheSilphRoad/comments/1tv2140/great_league_recommended_teams_gbl_season_27/",
+  "curator": "YonkouJean PGO infographic — Great League teams recommended/used by top GBL players, GBL Season 27 (Aug 2026)",
+  "collectedAt": "2026-08-21",
+  "extraction": "Orchestrator read the post's team images (supplied by Jaxon). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged sprite read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve in the gamemaster. Core-breaker strips in the images are the teams' counters, deliberately NOT included.",
+  "teams": [
+    { "id": "omarchm10", "name": "OMARCHM10 (Top 40 GBL S10)", "members": ["forretress", "azumarill", "feraligatr"] },
+    { "id": "alexbrown1e", "name": "ALEXBROWN1E (Top 13 GBL S24)", "members": ["sandslash_alolan_shadow", "malamar", "feraligatr"], "uncertain": true, "notes": "slot 2 dark fins-up silhouette read as Malamar" },
+    { "id": "paco100488", "name": "PACO100488 (Top 39 GBL S10)", "members": ["kingdra", "medicham", "lickilicky"], "uncertain": true, "notes": "slot 1 blue seahorse read as Kingdra (alt: Seadra)" },
+    { "id": "xjoaovict0r-a", "name": "XJOAOVICT0R (Top 1 GBL, S11-24 era)", "members": ["forretress", "mantine", "seaking"] },
+    { "id": "0yuwaru96", "name": "0YUWARU96 (Top 31 GBL S22)", "members": ["jumpluff", "kecleon", "lickilicky"] },
+    { "id": "yonkoujean", "name": "YONKOUJEAN (infographic author)", "members": ["florges", "aegislash_shield", "lickilicky"], "uncertain": true, "notes": "slot 1 pink flower read as Florges" },
+    { "id": "rochababyface1", "name": "ROCHABABYFACE1 (5th place 2024 Worlds)", "members": ["azumarill", "stunfisk", "ninetales_shadow"] },
+    { "id": "xjoaovict0r-b", "name": "XJOAOVICT0R (Top 1 GBL, S11-24 era)", "members": ["kingdra_shadow", "gourgeist_super", "lickilicky"], "uncertain": true, "notes": "slot 1 gold seahorse with shadow aura read as Shadow Kingdra (shiny art); slot 2 read as Gourgeist (Super)" },
+    { "id": "kenkenpa5678", "name": "KENKENPA5678 (content creator)", "members": ["gourgeist_super", "furret", "kecleon"], "uncertain": true, "notes": "slot 1 read as Gourgeist (Super)" },
+    { "id": "cachtonfr", "name": "CACHTONFR (Top 3 GBL S23, Top 3 Dortmund 2024)", "members": ["mantine", "seismitoad", "talonflame_shadow"], "uncertain": true, "notes": "slot 2 blue bumpy frog read as Seismitoad (alt: Poliwrath/Araquanid); slot 3 red-spiked read as Shadow Talonflame (alt: Turtonator)" },
+    { "id": "tzspenx", "name": "TZSPENX (Top 2 Monterrey 2025)", "members": ["shelgon_shadow", "quagsire_shadow", "sableye_shadow"], "uncertain": true, "notes": "slot 1 round blue shadow mon read as Shadow Shelgon (alt: Wailmer/Sealeo line)" },
+    { "id": "sweetpian", "name": "SWEETPIAN (Top 58 GBL S12)", "members": ["seaking", "altaria", "lickilicky"] }
+  ]
+}
