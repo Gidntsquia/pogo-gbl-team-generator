@@ -1,9 +1,12 @@
 # src/engine
 
-A headless runner for **pvpoke's own** Great League (CP 1500) battle
-simulator. Nothing in this directory reimplements battle math, CP/level
-math, or move-selection logic — every number `simBattle` and `buildPokemon`
-produce comes from executing `vendor/pvpoke`'s unmodified JS.
+A headless runner for **pvpoke's own** CP-capped cup battle simulator,
+defaulting to Great League (CP 1500) but usable for any CP cap pvpoke ships
+vendored ranking data for (`initEngine({ cp: 2500 })` for Ultra League, etc.
+— see "CP-cap parameterization" below). Nothing in this directory
+reimplements battle math, CP/level math, or move-selection logic — every
+number `simBattle` and `buildPokemon` produce comes from executing
+`vendor/pvpoke`'s unmodified JS.
 
 ## Files
 
@@ -260,13 +263,37 @@ construction time. No network I/O and no DOM ever happen.
 pvpoke's browser build fetches `gamemaster.json` and per-league ranking
 files over `$.ajax`. `initEngine` never lets that fire: it reads
 `vendor/pvpoke/src/data/gamemaster.json` and
-`vendor/pvpoke/src/data/rankings/all/overall/rankings-1500.json` directly
-off disk with `fs.readFileSync`, assigns them onto the `GameMaster`
-singleton (`gm.data`, `gm.rankings.alloverall1500`) exactly where pvpoke's
-own code expects to find them, and calls pvpoke's own `gm.createSearchMaps()`
-to index them. Everything downstream — `getPokemonById`, `getMoveById`,
+`vendor/pvpoke/src/data/rankings/all/overall/rankings-<cp>.json` (`<cp>`
+being `opts.cp`, default `1500`) directly off disk with `fs.readFileSync`,
+assigns them onto the `GameMaster` singleton (`gm.data`,
+`gm.rankings.alloverall<cp>`) exactly where pvpoke's own code expects to
+find them, and calls pvpoke's own `gm.createSearchMaps()` to index them.
+Everything downstream — `getPokemonById`, `getMoveById`,
 `selectRecommendedMoveset` — is pvpoke's unmodified code reading real
 vendor data.
+
+### CP-cap parameterization (ROADMAP "--cp 2500 / Ultra League" gap, engine layer)
+
+`initEngine({ cp })` (default `1500`) loads the matching
+`rankings-<cp>.json` and calls pvpoke's own `battle.setCP(cp)` — always,
+even for the 1500 default, so `ctx.battle.getCP()` reflects an explicit
+choice rather than relying on `Battle()`'s own default. `buildPokemon`
+needed **no changes**: its CP-cap search loop already reads
+`battle.getCP()` dynamically rather than a hardcoded 1500, so it was
+already CP-generic. Every CP cap pvpoke ships (500/1500/2500/10000) shares
+the same `"all"` cup (only a Mega-Pokemon exclusion, no CP/type
+restriction), so `battle.setCup()` is still never called — only the CP
+number itself varies. An unsupported `cp` (no matching vendored rankings
+file) throws a clear error rather than silently falling back.
+`test/engine.test.js`'s `initEngine({ cp })` describe block verifies this
+end-to-end against `rankings-2500.json`, the same "reproduces pvpoke's own
+ratings exactly" pattern the CP-1500 tests use below.
+
+This covers the **engine layer only**. `src/scoring/index.js`'s
+`defaultCp1500Ivs`, `src/meta/teams.js`/`src/meta/usage.js`'s hardcoded
+`.../1500.json` data paths, and a `--cp` CLI flag are NOT yet wired to this
+— see ROADMAP.md's "--cp 2500 / Ultra League flag" gap for the remaining
+scope.
 
 ## API contract
 

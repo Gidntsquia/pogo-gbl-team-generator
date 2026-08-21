@@ -267,3 +267,79 @@ describe('simBattle', () => {
     }
   });
 });
+
+describe('initEngine({ cp }) -- Ultra League (CP 2500) parameterization', () => {
+  // Sibling of the CP-1500 "reproduces pvpoke's own rankings...json battle
+  // ratings exactly" block above, run against rankings-2500.json instead, to
+  // confirm the engine layer is genuinely CP-cap-generic (ROADMAP's
+  // "--cp 2500 / Ultra League flag" gap, engine-layer slice) rather than
+  // just accepting the option and silently still simulating Great League.
+  const UL_VALIDATION_PAIRS = [
+    ['lickilicky', 'corviknight'],
+    ['tinkaton', 'corviknight'],
+  ];
+
+  let ulCtx;
+
+  before(async () => {
+    ulCtx = await initEngine({ cp: 2500 });
+  });
+
+  test('battle is configured for CP 2500, "all" cup, level cap 50 -- and CP-1500 ctx is unaffected', () => {
+    assert.strictEqual(ulCtx.battle.getCP(), 2500);
+    assert.strictEqual(ulCtx.battle.getLevelCap(), 50);
+    assert.strictEqual(ulCtx.battle.getCup().name, 'all');
+    assert.strictEqual(ulCtx.cp, 2500);
+    assert.strictEqual(ulCtx.gm.rankings.alloverall2500, ulCtx.rankings);
+
+    // The default (no opts.cp) ctx built in the top-level before() hook must
+    // stay exactly Great League -- two initEngine() calls must not share or
+    // clobber each other's Battle/rankings state.
+    assert.strictEqual(ctx.battle.getCP(), 1500);
+    assert.strictEqual(ctx.cp, 1500);
+  });
+
+  test('rejects an unsupported CP cap with a clear error', async () => {
+    await assert.rejects(() => initEngine({ cp: 999 }), /no vendored rankings for cp=999/);
+  });
+
+  test('buildPokemon respects the CP-2500 cap, not 1500', () => {
+    const built = buildPokemon(ulCtx, { speciesId: 'lickilicky', ivs: { atk: 4, def: 13, hp: 13 } });
+    assert.ok(built.cp <= 2500, `lickilicky cp=${built.cp}`);
+    assert.ok(built.cp > 1500, `expected a CP-2500-built lickilicky to exceed 1500, got ${built.cp}`);
+  });
+
+  test('reproduces pvpoke\'s own precomputed default-IV level/CP (defaultIVs.cp2500) for several species', () => {
+    for (const speciesId of ['lickilicky', 'corviknight', 'tinkaton']) {
+      const [expectedLevel, atk, def, hp] = ulCtx.gm.getPokemonById(speciesId).defaultIVs.cp2500;
+      const built = buildPokemon(ulCtx, { speciesId, ivs: { atk, def, hp } });
+      assert.strictEqual(built.level, expectedLevel, `${speciesId} level`);
+      assert.ok(built.cp <= 2500, `${speciesId} cp=${built.cp}`);
+    }
+  });
+
+  describe('reproduces pvpoke\'s own rankings-2500.json battle ratings exactly', () => {
+    for (const [rowId, oppId] of UL_VALIDATION_PAIRS) {
+      test(`${rowId} vs ${oppId} (shields 1/1, pvpoke's "leads" scenario)`, () => {
+        const expectedRating1 = ratingFromRankings(ulCtx.rankings, rowId, oppId);
+        const expectedRating2 = ratingFromRankings(ulCtx.rankings, oppId, rowId);
+        assert.ok(
+          expectedRating1 !== undefined && expectedRating2 !== undefined,
+          `fixture assumption: ${rowId} <-> ${oppId} should be a listed matchup/counter both directions`
+        );
+
+        const cp2500IvsFor = (speciesId) => {
+          const [, atk, def, hp] = ulCtx.gm.getPokemonById(speciesId).defaultIVs.cp2500;
+          return { atk, def, hp };
+        };
+        const p1 = buildPokemon(ulCtx, { speciesId: rowId, ivs: cp2500IvsFor(rowId) });
+        const p2 = buildPokemon(ulCtx, { speciesId: oppId, ivs: cp2500IvsFor(oppId) });
+
+        const result = simBattle(ulCtx, { p1, p2, shields: [1, 1] });
+
+        assert.strictEqual(result.rating1, expectedRating1);
+        assert.strictEqual(result.rating2, expectedRating2);
+      });
+    }
+  });
+});

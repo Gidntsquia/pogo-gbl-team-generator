@@ -1,10 +1,11 @@
 // JavaScript Document
 //
 // Headless pvpoke battle-engine harness. Boots pvpoke's real Great League
-// (CP 1500) simulator (see pvpokeLoader.js / README.md) and exposes three
-// functions: initEngine, buildPokemon, simBattle. No battle math is
-// reimplemented here -- every number in the returned results comes from
-// executing vendor/pvpoke's own code.
+// (CP 1500, or another CP cap via opts.cp -- see initEngine) simulator (see
+// pvpokeLoader.js / README.md) and exposes three functions: initEngine,
+// buildPokemon, simBattle. No battle math is reimplemented here -- every
+// number in the returned results comes from executing vendor/pvpoke's own
+// code.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -19,20 +20,28 @@ const BEST_BUDDY_MAX_LEVEL = 51;
  */
 
 /**
- * Boot a headless pvpoke battle engine for Great League (CP 1500).
+ * Boot a headless pvpoke battle engine for a CP-capped cup (Great League,
+ * CP 1500, by default).
  *
  * Loads vendor/pvpoke's own JS into a vm sandbox (pvpokeLoader.js) and reads
- * gamemaster + the Great League "all"/"overall" ranking data directly from
- * vendor/pvpoke/src/data as JSON -- pvpoke's own ajax loading is never used.
- * The ranking data both drives buildPokemon's recommended-moveset selection
- * (pvpoke's own `selectRecommendedMoveset`) and is what test/engine.test.js
- * validates simBattle's output against.
+ * gamemaster + the "all"/"overall" ranking data for the chosen CP cap
+ * directly from vendor/pvpoke/src/data as JSON -- pvpoke's own ajax loading
+ * is never used. The ranking data both drives buildPokemon's
+ * recommended-moveset selection (pvpoke's own `selectRecommendedMoveset`)
+ * and is what test/engine.test.js validates simBattle's output against.
  *
- * @param {{ vendorRoot?: string }} [opts]
+ * Every CP cap pvpoke ships (500/1500/2500/10000) uses the same "all" cup
+ * (no type/tag restriction beyond excluding Mega Pokemon), so only the CP
+ * cap itself varies -- battle.setCup() is still never called.
+ *
+ * @param {{ vendorRoot?: string, cp?: number }} [opts] cp defaults to 1500
+ *   (Great League); pass 2500 for Ultra League, etc. Must have a matching
+ *   vendor/pvpoke/src/data/rankings/all/overall/rankings-<cp>.json file.
  * @returns {Promise<object>} ctx -- pass to buildPokemon/simBattle
  */
 export async function initEngine(opts = {}) {
   const { context, GameMaster, Battle, Pokemon, vendorRoot } = loadPvpokeEngine(opts);
+  const cp = opts.cp ?? GREAT_LEAGUE_CP;
 
   const gm = GameMaster.getInstance();
 
@@ -40,29 +49,34 @@ export async function initEngine(opts = {}) {
   gm.data = JSON.parse(readFileSync(gamemasterPath, 'utf8'));
   gm.createSearchMaps();
 
-  // Great League (CP 1500), cup "all" -- the same file the acceptance
-  // criteria validates against (vendor/pvpoke/src/data/rankings/all/overall/
-  // rankings-1500.json), and the same cup Battle()'s own default
-  // (`{name: "all", exclude: [{filterType: "tag", values: ["mega"]}]}`)
-  // already matches, so nothing here ever calls battle.setCup().
   const rankingsPath = path.join(
     vendorRoot,
-    'src/data/rankings/all/overall/rankings-1500.json'
+    `src/data/rankings/all/overall/rankings-${cp}.json`
   );
-  const rankings = JSON.parse(readFileSync(rankingsPath, 'utf8'));
+  let rankings;
+  try {
+    rankings = JSON.parse(readFileSync(rankingsPath, 'utf8'));
+  } catch (err) {
+    throw new Error(
+      `initEngine: no vendored rankings for cp=${cp} (expected ${rankingsPath}). ` +
+        `pvpoke ships 500/1500/2500/10000. (${err.message})`
+    );
+  }
   // Key format matches Pokemon.js's own selectRecommendedMoveset:
   // `cupName + category + battle.getCP()`.
-  gm.rankings[`alloverall${GREAT_LEAGUE_CP}`] = rankings;
+  gm.rankings[`alloverall${cp}`] = rankings;
 
   // One shared Battle instance, reused across every buildPokemon/simBattle
   // call -- mirrors pvpoke's own battle/rankers/Ranker.js, which keeps a
   // single `battle` alive across thousands of simulated matchups rather than
-  // constructing a fresh one per battle. Battle()'s defaults (cp: 1500,
-  // levelCap: 50, cup: "all") are exactly Great League, so no setup calls
-  // are needed here either.
+  // constructing a fresh one per battle. setCP is always called (even for
+  // the 1500 default) so ctx.battle.getCP() -- and therefore
+  // buildPokemon's CP-cap search below -- always reflects the caller's
+  // chosen cap explicitly rather than relying on Battle()'s own default.
   const battle = new Battle();
+  battle.setCP(cp);
 
-  return { context, GameMaster, Battle, Pokemon, gm, battle, vendorRoot, rankings };
+  return { context, GameMaster, Battle, Pokemon, gm, battle, vendorRoot, rankings, cp };
 }
 
 function assertValidIVs(ivs) {
@@ -76,8 +90,9 @@ function assertValidIVs(ivs) {
 
 /**
  * Build a battle-ready pvpoke Pokemon at the highest level (cap 50, or 51
- * with bestBuddy) whose CP does not exceed 1500, using the caller's exact
- * IVs and pvpoke's own recommended-moveset logic.
+ * with bestBuddy) whose CP does not exceed ctx.battle's CP cap (1500 by
+ * default, or whatever `initEngine({ cp })` was called with), using the
+ * caller's exact IVs and pvpoke's own recommended-moveset logic.
  *
  * @param {object} ctx - from initEngine
  * @param {{ speciesId: string, ivs: IVSpread, shadow?: boolean, bestBuddy?: boolean }} params
@@ -119,7 +134,7 @@ export function buildPokemon(ctx, { speciesId, ivs, shadow = false, bestBuddy = 
   pokemon.isCustom = true;
 
   const maxLevel = bestBuddy ? BEST_BUDDY_MAX_LEVEL : DEFAULT_MAX_LEVEL;
-  const targetCP = battle.getCP(); // 1500
+  const targetCP = battle.getCP(); // 1500 by default, or initEngine's opts.cp
 
   // Port of the level-search inner loop from pvpoke's own
   // Pokemon.generateIVCombinations (vendor/pvpoke/src/js/pokemon/Pokemon.js):
