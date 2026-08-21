@@ -132,6 +132,43 @@ here:
   `Battle#simulate` (via `start()`) fully reset HP/energy/cooldown/shields
   from each Pokemon's own `start*` fields before every simulation.
 
+## Performance (GOALS T14)
+
+`scripts/bench.mjs` times repeated `battleTeams` calls between two fixed,
+competitively-matched teams (built once, battled many times — the same
+build-once/battle-many pattern `evaluateTeams` and `tournament.mjs` already
+use) and reports ms/battle. Sandbox baseline: **~172ms/battle** (Jaxon's
+local machine measured ~73-68ms/battle in earlier PROGRESS entries — faster
+hardware, same code).
+
+A `node --cpu-prof` capture of a 150-battle bench run (analyzed by bucketing
+sampled stack frames by source file) found **97.0%** of samples inside
+`vendor/pvpoke` (`DamageCalculator.damage`, `ActionLogic.decideAction`,
+`Battle.step`/`useMove`, `Pokemon.resetMoves`, `TrainingAI.*`) and only
+**0.3%** inside this package's own `src/engine/*` wrapper code — and over
+half of *that* sliver is `initEngine`'s one-time setup (gamemaster load +
+search-map indexing), not the per-battle hot path. The per-battle wrapper
+functions (`battleTeams`, the virtual-timer `drain()`, the symmetric-AI
+`forceSwitch`/`decrementSwitchTimer` overrides, `orderWithLead`) accounted
+for roughly 0.15% of total samples combined. `node --prof` /
+`--prof-process` on the same workload corroborates this: essentially every
+named-function JS tick traces to a `vendor/pvpoke/src/js/*` file.
+
+**Conclusion: there is no meaningful single-thread win available in OUR
+code.** The engine itself (which standing rule 4 forbids touching) accounts
+for essentially all wall-clock time; this package's driving code is already
+close to the noise floor. T14 is therefore a documented **null result** —
+profiled, nothing safe to squeeze — and the real lever for "make battles
+faster" is T15's cross-core parallelism (running independent `battleTeams`
+calls concurrently in separate `worker_threads`, each with its own vm engine
+context), not shaving wrapper overhead that isn't there.
+
+To reproduce the profiling: `node --cpu-prof --cpu-prof-dir=out
+--cpu-prof-name=bench.cpuprofile scripts/bench.mjs --n 150`, then inspect
+`out/bench.cpuprofile` (Chrome DevTools "Performance" tab, or `node
+--prof`/`--prof-process` for a text report) — bucket `callFrame.url` by
+`vendor/pvpoke` vs `src/engine` to repeat the split above.
+
 ## Validation
 
 `test/engine.test.js` rebuilds several real Great League Pokemon using
