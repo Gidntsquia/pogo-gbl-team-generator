@@ -1,10 +1,11 @@
-// End-to-end test (GOALS T6): fixture CSV -> CLI's runPipeline -> report,
-// exercising the whole pipeline (importer -> scoring -> meta teams ->
-// evaluator -> report) through the real 3v3 engine exactly as `node
-// src/cli.js` would run it, kept fast via tiny topK/meta knobs.
+// End-to-end test (GOALS T6, sampled path added T12): fixture CSV -> CLI's
+// runPipeline -> report, exercising the whole pipeline (importer -> scoring
+// -> meta/candidate teams -> evaluator -> report) through the real 3v3 engine
+// exactly as `node src/cli.js` would run it, kept fast via tiny knobs. Covers
+// the sampled (default) path plus a smaller check of --exhaustive.
 //
-// This does NOT spawn a subprocess (that path is covered by the T5 manual
-// acceptance run logged in PROGRESS.md); it drives the same runPipeline the
+// This does NOT spawn a subprocess (that path is covered by the T5/T12 manual
+// acceptance runs logged in PROGRESS.md); it drives the same runPipeline the
 // CLI entry point calls, then checks the on-disk report file it writes.
 
 import { test } from 'node:test';
@@ -21,16 +22,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
 
 // Small enough to finish quickly in CI, large enough to form >= 1 team.
-const TINY = { topK: 4, meta: 2, scoreMeta: 4, top: 3 };
+// Default (sampled) path -- no `exhaustive` flag, matching a bare CLI run.
+const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 3, seed: 'e2e-test-seed' };
+// --exhaustive opt-in path (pre-T12 behavior).
+const EXHAUSTIVE_TINY = { exhaustive: true, topK: 4, meta: 2, scoreMeta: 4, top: 3 };
 
-test('e2e: fixture collection -> CLI pipeline -> report.md on disk', async () => {
-  const report = await runPipeline(FIXTURE, TINY);
+test('e2e: fixture collection -> CLI pipeline (sampled, default) -> report.md on disk', async () => {
+  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
 
   // Pipeline produced sane, well-formed output.
   assert.ok(report.monCount >= 3, 'scored several mons from the fixture');
   assert.ok(report.rankedTeams.length >= 1, 'ranked at least one team');
-  assert.ok(report.rankedTeams.length <= TINY.top, 'teamCount cap honored');
-  assert.equal(report.metaTeams.length, TINY.meta, 'meta team count honored');
+  assert.ok(report.rankedTeams.length <= SAMPLED_TINY.top, 'teamCount cap honored');
+  assert.equal(report.metaTeams.length, SAMPLED_TINY.opponents, 'opponent team count honored');
+  assert.equal(report.settings.mode, 'sampled', 'default path runs in sampled mode');
 
   const top = report.rankedTeams[0];
   assert.equal(top.members.length, 3, 'a recommended team has 3 members');
@@ -59,8 +64,21 @@ test('e2e: fixture collection -> CLI pipeline -> report.md on disk', async () =>
   assert.match(onDisk, /# Great League Team Report/);
   assert.match(onDisk, /## Recommended teams/);
   assert.match(onDisk, /## Appendix: per-Pokemon 1v1 scores/);
+  assert.match(onDisk, /mode=sampled/);
   assert.ok(
     onDisk.includes(top.members[0].name),
     'report names the top recommended team'
   );
+});
+
+test('e2e: fixture collection -> CLI pipeline (--exhaustive) -> report.md on disk', async () => {
+  const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
+
+  assert.ok(report.rankedTeams.length >= 1, 'ranked at least one team');
+  assert.equal(report.metaTeams.length, EXHAUSTIVE_TINY.meta, 'meta team count honored');
+  assert.equal(report.settings.mode, 'exhaustive', '--exhaustive runs in exhaustive mode');
+
+  const markdown = renderReport(report);
+  assert.match(markdown, /# Great League Team Report/);
+  assert.doesNotMatch(markdown, /mode=sampled/, 'exhaustive report does not claim sampled mode');
 });

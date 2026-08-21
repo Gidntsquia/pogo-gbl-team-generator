@@ -1,9 +1,11 @@
-// CLI + report pipeline tests (GOALS T5).
+// CLI + report pipeline tests (GOALS T5, sampled path added T12).
 //
 // Drives runPipeline (the CLI's exported pipeline) with tiny knobs so the real
 // 3v3 engine still runs but the battle count stays small, plus pure-formatting
 // checks on the report renderer. The full-size default CLI run is exercised by
-// hand in the T5 verify step, not here (too slow for the suite).
+// hand in the T5/T12 verify steps, not here (too slow for the suite). Covers
+// BOTH the sampled path (default since T12) and the --exhaustive path (old T5
+// behavior, still available).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,15 +20,17 @@ import { renderReport, renderSummary } from '../src/report/index.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
 
-// Small enough to run fast, large enough to form >= 1 candidate team.
-const TINY = { topK: 4, meta: 2, scoreMeta: 4, top: 3 };
+// Small enough to run fast, large enough to form >= 1 candidate team. Default
+// (sampled) mode -- no `exhaustive` flag, matching what a bare `node
+// src/cli.js <csv>` run does since T12.
+const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 3, seed: 'cli-test-seed' };
+// --exhaustive opt-in path (pre-T12 behavior).
+const EXHAUSTIVE_TINY = { exhaustive: true, topK: 4, meta: 2, scoreMeta: 4, top: 3 };
 
-test('runPipeline produces ranked teams and a well-formed report', async () => {
-  const report = await runPipeline(FIXTURE, TINY);
-
+function assertWellFormedReport(report, expectedMetaCount, expectedTopCap) {
   assert.ok(report.rankedTeams.length >= 1, 'expected at least one ranked team');
-  assert.ok(report.rankedTeams.length <= TINY.top, 'teamCount cap honored');
-  assert.equal(report.metaTeams.length, TINY.meta, 'meta limit honored');
+  assert.ok(report.rankedTeams.length <= expectedTopCap, 'teamCount cap honored');
+  assert.equal(report.metaTeams.length, expectedMetaCount, 'opponent/meta count honored');
   assert.ok(report.monCount >= 3, 'expected several scored mons from the fixture');
 
   const top = report.rankedTeams[0];
@@ -34,7 +38,7 @@ test('runPipeline produces ranked teams and a well-formed report', async () => {
   const species = new Set(top.members.map((m) => m.speciesId));
   assert.equal(species.size, 3, 'team members are all distinct species');
   assert.ok(top.winRate >= 0 && top.winRate <= 1, 'win rate in [0,1]');
-  assert.equal(top.perMeta.length, TINY.meta, 'perMeta has one row per meta team');
+  assert.equal(top.perMeta.length, expectedMetaCount, 'perMeta has one row per meta team');
   assert.ok(top.bestLead && typeof top.bestLead.name === 'string', 'bestLead present');
 
   // Ranking is by descending win rate (tiebreak avgHpMargin).
@@ -46,15 +50,40 @@ test('runPipeline produces ranked teams and a well-formed report', async () => {
       'teams sorted best-first'
     );
   }
+}
+
+test('runPipeline (sampled, default path) produces ranked teams and a well-formed report', async () => {
+  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
+  assertWellFormedReport(report, SAMPLED_TINY.opponents, SAMPLED_TINY.top);
+
+  assert.equal(report.settings.mode, 'sampled', 'default path reports mode: sampled');
+  assert.equal(report.settings.seed, SAMPLED_TINY.seed, 'seed carried through to settings');
+  assert.equal(report.settings.poolSize, SAMPLED_TINY.pool, 'pool size carried through to settings');
+  for (const m of report.metaTeams) {
+    assert.ok(m.label === 'curated' || m.label === 'sampled', `opponent team labeled curated/sampled, got ${m.label}`);
+  }
 });
 
-test('renderReport writes a Markdown report that names >= 1 team', async () => {
-  const report = await runPipeline(FIXTURE, TINY);
+test('runPipeline (--exhaustive) still produces the old C(topK,3) + curated-only behavior', async () => {
+  const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
+  assertWellFormedReport(report, EXHAUSTIVE_TINY.meta, EXHAUSTIVE_TINY.top);
+
+  assert.equal(report.settings.mode, 'exhaustive', 'explicit --exhaustive reports mode: exhaustive');
+  assert.equal(report.settings.topK, EXHAUSTIVE_TINY.topK, 'topK carried through to settings');
+  for (const m of report.metaTeams) {
+    assert.equal(m.label, null, 'exhaustive opponent teams are unlabeled (curated-only pool)');
+  }
+});
+
+test('renderReport writes a Markdown report that names >= 1 team (sampled, default path)', async () => {
+  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
   const md = renderReport(report);
 
   assert.match(md, /# Great League Team Report/);
   assert.match(md, /## Recommended teams/);
   assert.match(md, /## Appendix: per-Pokemon 1v1 scores/);
+  assert.match(md, /mode=sampled/, 'settings line reports sampled mode');
+  assert.match(md, /seed=cli-test-seed/, 'settings line surfaces the seed for reproducibility');
 
   // Names at least one recommended team (its first member's display name).
   const firstMember = report.rankedTeams[0].members[0].name;
@@ -74,6 +103,14 @@ test('renderReport writes a Markdown report that names >= 1 team', async () => {
   writeFileSync(outPath, md, 'utf8');
   assert.ok(existsSync(outPath));
   assert.ok(readFileSync(outPath, 'utf8').length > 0);
+});
+
+test('renderReport settings line uses the old topK/candidates shape for --exhaustive', async () => {
+  const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
+  const md = renderReport(report);
+
+  assert.doesNotMatch(md, /mode=sampled/, 'exhaustive report does not claim sampled mode');
+  assert.match(md, new RegExp(`topK=${EXHAUSTIVE_TINY.topK}`), 'settings line reports topK');
 });
 
 test('renderSummary lists the top teams and flags warnings', () => {

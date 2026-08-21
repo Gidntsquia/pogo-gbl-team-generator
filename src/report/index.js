@@ -31,9 +31,15 @@ function memberNames(team) {
  * @property {import('../teams/index.js').TeamResult[]} rankedTeams
  * @property {Array<{speciesId:string, name:string, score:number, leadIn:string}>} monScores
  *   matrix.mons (per-mon 1v1 weighted scores + lead-in summary).
- * @property {Array<{id:string, name:string}>} metaTeams - opponent pool used.
+ * @property {Array<{id:string, name:string, label?:('curated'|'sampled'|null)}>} metaTeams
+ *   opponent pool used. `label` is present (GOALS T12) when the opponent pool
+ *   was sampled (src/meta/sampleTeams.js); null/absent for the exhaustive
+ *   curated-only path.
  * @property {string[]} warnings - collection + scoring warnings, surfaced verbatim.
- * @property {object} settings - the run knobs (topK, metaCount, scoreMeta, etc.).
+ * @property {object} settings - the run knobs. `settings.mode` is `'sampled'`
+ *   (GOALS T12 default: candidateTarget/poolSize/seed/curatedRatio) or
+ *   `'exhaustive'`/absent (topK/candidateCount), plus scoreMeta/difficulty/
+ *   excludeSpecies common to both.
  * @property {string} [generatedAt] - optional ISO timestamp; omitted -> no date line.
  */
 
@@ -137,11 +143,27 @@ export function renderReport(input) {
   out.push('');
 
   const s = settings;
+  // GOALS T12: settings.mode is 'sampled' (default) or 'exhaustive'/absent
+  // (the old T5 shape -- absent is treated as exhaustive so a caller-built
+  // settings object without `mode`, e.g. an older test fixture, still renders).
+  const modeParts =
+    s.mode === 'sampled'
+      ? [
+          'mode=sampled',
+          `candidates=${s.candidateCount}${
+            s.candidateTarget !== undefined && s.candidateTarget !== s.candidateCount
+              ? ` (requested ${s.candidateTarget})`
+              : ''
+          }`,
+          `opponents=${metaTeams.length}`,
+          `pool=${s.poolSize}`,
+          `seed=${s.seed}`,
+          `curatedRatio=${s.curatedRatio}`,
+        ]
+      : [`topK=${s.topK}`, `candidates=${s.candidateCount}`, `metaTeams=${metaTeams.length}`];
   out.push('**Settings:** ' +
     [
-      `topK=${s.topK}`,
-      `candidates=${s.candidateCount}`,
-      `metaTeams=${metaTeams.length}`,
+      ...modeParts,
       `scoreMeta=${s.scoreMeta}`,
       s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
       s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.join('/')}` : null,
@@ -163,9 +185,12 @@ export function renderReport(input) {
 
   out.push('## Opponent meta teams');
   out.push('');
-  out.push('The candidate teams above were battled against these curated Great League teams:');
+  out.push('The candidate teams above were battled against these Great League teams ' +
+    '(curated presets and community-submitted teams; in sampled mode also ' +
+    'weighted-random compositions from the current meta -- see Settings above ' +
+    'for the seed used):');
   out.push('');
-  metaTeams.forEach((m, i) => out.push(`${i + 1}. ${m.name}`));
+  metaTeams.forEach((m, i) => out.push(`${i + 1}. ${m.name}${m.label ? ` _(${m.label})_` : ''}`));
   out.push('');
 
   out.push('## Appendix: per-Pokemon 1v1 scores');

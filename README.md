@@ -15,13 +15,19 @@ simulator (vendored and executed headlessly, never reimplemented).
    (weighted across the 0/1/2-shield scenarios) using pvpoke's real battle
    simulator. This 1v1 score is used only to prune your collection down to
    a manageable candidate pool — it is not the final ranking.
-3. **Build candidate teams**: every combination of 3 from your top-scoring
-   Pokemon (no duplicate species within a team; a shadow and its base form
-   count as the same species).
-4. **Battle each candidate team** against a set of curated real Great
-   League team presets (pvpoke's own GBL training data) — a full 3v3 team
-   battle (shared 2-shield pool, switching, AI leads) across all 9
-   lead-matchup pairings, via pvpoke's Training/emulate engine.
+3. **Build candidate teams.** By default these are *sampled*: 3-mon
+   combinations drawn from a wide pool of your Pokemon, weighted so a mon
+   that scores well in your own 1v1 matrix *and/or* is a current
+   Great-League staple lands on more candidate teams (no duplicate species
+   within a team; a shadow and its base form count as the same species).
+   `--exhaustive` switches to the older behavior: every combination of 3
+   from your top-`topK`-scoring Pokemon.
+4. **Battle each candidate team** against a pool of opponent teams — by
+   default a mix of curated/community Great League presets plus
+   weighted-random compositions from the current meta; `--exhaustive` uses
+   only the fixed curated list. Each matchup is a full 3v3 team battle
+   (shared 2-shield pool, switching, AI leads) across all 9 lead-matchup
+   pairings, via pvpoke's Training/emulate engine.
 5. **Rank** candidate teams by mean win rate across all those battles
    (tiebreak: mean surviving-HP margin), and write a report.
 
@@ -61,14 +67,24 @@ score appendix).
 ```
 node src/cli.js <collection.csv> [options]
 
-  --top N          teams to show in the report        (default 5)
-  --topK K         candidate pool size (best-scoring)  (default 5)
-  --meta M         number of opponent meta teams       (default 5)
-  --score-meta S   meta size used for 1v1 pruning       (default 20)
-  --difficulty D   AI difficulty 0-3 (3 = strongest)    (default: engine default)
-  --exclude a,b    species ids to exclude from teams    (default: none)
-  --out PATH       report output path                   (default out/report.md)
-  --help           print this help and exit
+  --top N            teams to show in the report        (default 5)
+  --score-meta S     meta size used for 1v1 pruning      (default 20)
+  --difficulty D     AI difficulty 0-3 (3 = strongest)   (default: engine default)
+  --exclude a,b      species ids to exclude from teams   (default: none)
+  --out PATH         report output path                  (default out/report.md)
+  --help             print this help and exit
+
+Sampling (default path):
+  --candidates N     candidate teams to sample             (default 15)
+  --opponents M      opponent teams to sample               (default 7)
+  --pool P           user-mon pool sampled from             (default 30)
+  --seed S           PRNG seed (reproducible)                (default a fixed built-in string)
+  --curated-ratio R  fraction of opponents from curated pool (default 0.4)
+
+Exhaustive path (opt-in):
+  --exhaustive       use C(topK,3) candidates + a fixed curated opponent list
+  --topK K           candidate pool size (best-scoring)  (default 5, exhaustive only)
+  --meta M           number of opponent meta teams       (default 5, exhaustive only)
 ```
 
 Try it on the bundled fixture:
@@ -99,15 +115,63 @@ levels that mon up to 51 instead of 50 (see `buildPokemon` in
 `src/engine/harness.js`), which can raise its best-possible CP-1500 IV
 spread's stat product slightly.
 
+### Sampling: how the weighting works
+
+By default, both sides of every matchup are *sampled* rather than
+exhaustively enumerated (see `src/meta/usage.js`, `src/teams/sample.js`,
+`src/meta/sampleTeams.js`; design writeup in `PLAN.md`'s Rev 3 section):
+
+- **Per-species usage weight** (`src/meta/usage.js`): every species gets a
+  weight derived from pvpoke's own Great League ranking score (higher score
+  → higher weight, tunable via a documented exponent), so current meta
+  staples are more likely to be picked without the fringe being zeroed out.
+  A committed snapshot (`data/meta-usage.json`) can override the vendored
+  scores with a freshness refresh — see below.
+- **Candidate teams** (`--candidates`, `--pool`): sampled from your
+  `--pool` best-scoring Pokemon (deduped to one per species), with
+  `P(mon)` blended from your own 1v1 matrix score and that species' usage
+  weight — so a mon that's *both* strong in your hands *and* a meta staple
+  shows up on more candidate teams.
+- **Opponent teams** (`--opponents`, `--curated-ratio`): a mixture of
+  curated/community Great League team presets (a `--curated-ratio`
+  fraction, default 0.4) plus weighted-random 3-mon compositions from the
+  wide usage-weighted pool.
+- **Reproducibility** (`--seed`): everything is driven by a seeded PRNG
+  (`src/util/rng.js`, no npm dependency) — the same collection + the same
+  `--seed` always produces the same candidate/opponent teams. The seed used
+  is printed in the report's Settings line.
+
+Refresh the live usage snapshot (optional; never required, never run
+automatically):
+
+```bash
+node scripts/refresh-usage.mjs
+```
+
+This fetches pvpoke's live Great League rankings JSON and writes
+`data/meta-usage.json`. Network failure here never breaks anything — the
+loader falls back to the vendored rankings file whenever the snapshot is
+missing, unparseable, or malformed.
+
 ### Tuning the search (speed vs. thoroughness)
 
-Total 3v3 battles run = `C(topK, 3) candidate teams × meta teams × 9 lead
-pairings`. The defaults (`topK=5`, `meta=5` → 10 candidate teams × 5 meta
-teams × 9 = 450 battles) finish in about a minute on a typical machine.
-Raising `--topK` grows the candidate pool combinatorially — `--topK 10` is
-`C(10,3) = 120` candidate teams — so raise it gradually. `--score-meta`
-only affects the cheaper 1v1 pruning pass used to pick which Pokemon are
-even eligible for the candidate pool.
+**Sampled (default) path:** total 3v3 battles run = `--candidates ×
+--opponents × 9 lead pairings`. The defaults (`candidates=15`,
+`opponents=7` → 15 × 7 × 9 = 945 battles) finish in about 2 minutes on a
+typical machine. Runtime grows roughly linearly with `--candidates` /
+`--opponents`, so both can be raised more freely than `--topK` below.
+`--pool` only controls how wide a Pokemon pool candidates are sampled
+from — raising it doesn't change the battle count.
+
+**Exhaustive (`--exhaustive`) path:** total 3v3 battles run = `C(topK, 3)
+candidate teams × meta teams × 9 lead pairings`. The defaults (`topK=5`,
+`meta=5` → 10 candidate teams × 5 meta teams × 9 = 450 battles) finish in
+about a minute. Raising `--topK` grows the candidate pool
+*combinatorially* — `--topK 10` is `C(10,3) = 120` candidate teams — so
+raise it gradually.
+
+`--score-meta` (both paths) only affects the cheaper 1v1 pruning pass used
+to pick which Pokemon are even eligible for the candidate pool.
 
 ## How scoring works
 
@@ -130,8 +194,11 @@ even eligible for the candidate pool.
   offset (they run a little above the "true" 50/50 baseline). Trust the
   ranking; treat the absolute percentages as directional.
 - **Meta opponents** come from pvpoke's own curated Great League team
-  presets (`vendor/pvpoke/src/data/training/teams/gobattleleague/1500.json`),
-  not hand-picked archetypes.
+  presets (`vendor/pvpoke/src/data/training/teams/gobattleleague/1500.json`)
+  plus community-submitted teams (`data/meta-teams-community.json`), not
+  hand-picked archetypes. By default (sampled path) most opponents are
+  weighted-random compositions from the current meta rather than only this
+  fixed list — see "Sampling: how the weighting works" above.
 
 ## Tests
 
@@ -153,5 +220,4 @@ See `ROADMAP.md` for the full backlog. Notably:
   level 51.
 - Teams are built and scored using each Pokemon's pvpoke-*recommended*
   moveset, not your Pokemon's actual currently-learned moves.
-- Meta teams are a fixed curated pool, not weighted by observed usage.
 - Only Great League (CP ≤ 1500) is supported end-to-end today.
