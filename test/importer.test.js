@@ -8,6 +8,7 @@ import path from 'node:path';
 import { importCollection } from '../src/importer/index.js';
 import { parseCsv } from '../src/importer/csv.js';
 import { createSpeciesResolver } from '../src/importer/gamemaster.js';
+import { createMoveResolver } from '../src/importer/moves.js';
 import { parseNumber, parseBoolFlag, parseShadowPurified } from '../src/importer/util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -311,4 +312,77 @@ test('importCollection: generic format tolerates extra/reordered columns', () =>
   assert.equal(warnings.length, 0);
   assert.equal(mons.length, 1);
   assert.equal(mons[0].speciesId, 'umbreon');
+});
+
+// ------------------------------------------------- moves.js / current-moves --
+
+test('createMoveResolver: resolves fast/charged move names scoped to the species pool', () => {
+  const resolveMoves = createMoveResolver();
+  const resolved = resolveMoves({
+    speciesId: 'azumarill',
+    fastMoveName: 'Bubble',
+    chargedMoveNames: ['Ice Beam', 'Play Rough'],
+  });
+  assert.deepEqual(resolved, { fastMove: 'BUBBLE', chargedMoves: ['ICE_BEAM', 'PLAY_ROUGH'] });
+});
+
+test('createMoveResolver: a single charged move (blank second slot) resolves fine', () => {
+  const resolveMoves = createMoveResolver();
+  const resolved = resolveMoves({
+    speciesId: 'azumarill',
+    fastMoveName: 'Bubble',
+    chargedMoveNames: ['Hydro Pump', ''],
+  });
+  assert.deepEqual(resolved, { fastMove: 'BUBBLE', chargedMoves: ['HYDRO_PUMP'] });
+});
+
+test('createMoveResolver: unknown/mismatched move name returns null (never guesses)', () => {
+  const resolveMoves = createMoveResolver();
+  // "Hyper Beam" isn't in Azumarill's own chargedMoves pool.
+  assert.equal(
+    resolveMoves({ speciesId: 'azumarill', fastMoveName: 'Bubble', chargedMoveNames: ['Hyper Beam'] }),
+    null
+  );
+  assert.equal(
+    resolveMoves({ speciesId: 'azumarill', fastMoveName: 'Not A Real Move', chargedMoveNames: ['Ice Beam'] }),
+    null
+  );
+  assert.equal(resolveMoves({ speciesId: 'not_a_real_species', fastMoveName: 'Bubble', chargedMoveNames: ['Ice Beam'] }), null);
+});
+
+test('importCollection: Poke Genie format resolves the real fixture\'s Quick/Charge Move columns', () => {
+  const { mons, warnings } = importCollection(POKEGENIE_FIXTURE);
+  const azumarill1 = mons.find((m) => m.sourceRow === 2); // Bubble / Ice Beam / Play Rough
+  assert.ok(azumarill1);
+  assert.deepEqual(azumarill1.moves, { fastMove: 'BUBBLE', chargedMoves: ['ICE_BEAM', 'PLAY_ROUGH'] });
+  // Real fixture rows all resolve cleanly -- no fallback warnings expected.
+  assert.equal(warnings.filter((w) => w.includes('current moveset')).length, 0);
+});
+
+test('importCollection: generic format opportunistically recognizes move columns', () => {
+  const csv = writeTempCsv(
+    'name,atk,def,sta,fast move,charged move 1,charged move 2\n' +
+      'Azumarill,1,15,14,Bubble,Ice Beam,Play Rough\n' +
+      'Registeel,0,15,14,,,\n' // no move data at all -- no warning expected
+  );
+  const { mons, warnings } = importCollection(csv);
+  assert.equal(warnings.length, 0);
+
+  const azumarill = mons.find((m) => m.speciesId === 'azumarill');
+  assert.deepEqual(azumarill.moves, { fastMove: 'BUBBLE', chargedMoves: ['ICE_BEAM', 'PLAY_ROUGH'] });
+
+  const registeel = mons.find((m) => m.speciesId === 'registeel');
+  assert.equal(registeel.moves, undefined);
+});
+
+test('importCollection: an unresolvable move name falls back gracefully with a warning, mon still imported', () => {
+  const csv = writeTempCsv(
+    'name,atk,def,sta,fast move,charged move 1\n' + 'Azumarill,1,15,14,Not A Real Move,Ice Beam\n'
+  );
+  const { mons, warnings } = importCollection(csv);
+  assert.equal(mons.length, 1, 'a bad move name must not drop the whole row');
+  assert.equal(mons[0].moves, undefined);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /could not resolve current moveset/);
+  assert.match(warnings[0], /Azumarill/);
 });

@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { parseCsv } from './csv.js';
 import { createSpeciesResolver } from './gamemaster.js';
+import { createMoveResolver } from './moves.js';
 import { parseNumber, parseBoolFlag, parseShadowPurified } from './util.js';
 
 /**
@@ -37,6 +38,14 @@ import { parseNumber, parseBoolFlag, parseShadowPurified } from './util.js';
  * @property {number} sourceRow - 1-based row number in the source CSV,
  *   counting the header as row 1 (i.e. matches what a spreadsheet app
  *   would show), for tracing a warning or a mon back to its CSV line.
+ * @property {{fastMove: string, chargedMoves: string[]}} [moves] - GOALS T17
+ *   current-moves mode: this mon's actual moveset, resolved from the CSV's
+ *   move-name columns to pvpoke moveIds. Present ONLY when the CSV named a
+ *   fast move and at least one charged move AND both resolved against this
+ *   species' own gamemaster move pool -- absent otherwise (no move columns
+ *   in this CSV, or a name that didn't match), never a guess. Consumed only
+ *   when a caller opts into current-moves mode (src/scoring/index.js's
+ *   `scoreCollection` `opts.currentMoves`); otherwise unused.
  */
 
 function normalizeHeader(raw) {
@@ -123,10 +132,34 @@ function readPokeGenieLevel(row, headerIndex) {
 }
 
 /**
+ * GOALS T17: resolve a row's move-name columns against the mon's already-
+ * resolved species, returning `undefined` when the CSV states no move names
+ * at all (no columns / all blank -- not an error, just no data), or the
+ * resolved `{fastMove, chargedMoves}` -- pushing a fallback-note warning (not
+ * a row-drop) when at least one move name was present but resolution failed.
+ *
+ * @returns {{fastMove: string, chargedMoves: string[]}|undefined}
+ */
+function resolveRowMoves({ speciesId, shadow, fastMoveName, chargedMoveNames, label, rowNumber, resolveMoves, warnings }) {
+  const anyNamed = [fastMoveName, ...chargedMoveNames].some((n) => String(n ?? '').trim() !== '');
+  if (!anyNamed) return undefined;
+
+  const resolved = resolveMoves({ speciesId, shadow, fastMoveName, chargedMoveNames });
+  if (!resolved) {
+    warnings.push(
+      `Row ${rowNumber}: could not resolve current moveset for "${label}" -- ` +
+        'current-moves mode (if used) will fall back to the recommended moveset for this mon'
+    );
+    return undefined;
+  }
+  return resolved;
+}
+
+/**
  * @returns {NormalizedMon|null} null if the row was unusable (pushes a
  *   warning explaining why).
  */
-function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings) {
+function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves) {
   const name = String(cell(row, headerIndex, 'name') ?? '').trim();
   const form = String(cell(row, headerIndex, 'form') ?? '').trim();
   const gender = String(cell(row, headerIndex, 'gender') ?? '').trim();
@@ -159,6 +192,22 @@ function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings) 
     cell(row, headerIndex, 'shadow/purified', 'shadow / purified', 'status')
   );
 
+  const fastMoveName = cell(row, headerIndex, 'quick move', 'fast move');
+  const chargedMoveNames = [
+    cell(row, headerIndex, 'charge move', 'charged move', 'charge move 1', 'charged move 1'),
+    cell(row, headerIndex, 'charge move 2', 'charged move 2'),
+  ];
+  const moves = resolveRowMoves({
+    speciesId: resolved.speciesId,
+    shadow,
+    fastMoveName,
+    chargedMoveNames,
+    label: name,
+    rowNumber,
+    resolveMoves,
+    warnings,
+  });
+
   return {
     speciesId: resolved.speciesId,
     name: resolved.speciesName,
@@ -172,6 +221,7 @@ function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings) 
     // real export does carry Best Buddy status under a plausible header,
     // recognize it opportunistically rather than silently dropping it.
     bestBuddy: parseBoolFlag(cell(row, headerIndex, 'best buddy', 'buddy')),
+    ...(moves ? { moves } : {}),
     sourceRow: rowNumber,
   };
 }
@@ -181,7 +231,7 @@ function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings) 
 /**
  * @returns {NormalizedMon|null}
  */
-function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings) {
+function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves) {
   const name = String(cell(row, headerIndex, 'name') ?? '').trim();
   if (!name) {
     warnings.push(`Row ${rowNumber}: missing name -- skipped`);
@@ -204,13 +254,33 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings) {
     return null;
   }
 
+  const shadow = parseBoolFlag(cell(row, headerIndex, 'shadow'));
+  // Not in PLAN.md's documented generic column list either -- recognized
+  // opportunistically like purified/bestBuddy below, mirroring GOALS T8's
+  // precedent for this format.
+  const fastMoveName = cell(row, headerIndex, 'fast move', 'fastmove', 'quick move');
+  const chargedMoveNames = [
+    cell(row, headerIndex, 'charged move 1', 'charged1', 'charge move', 'charge move 1', 'chargedmove1'),
+    cell(row, headerIndex, 'charged move 2', 'charged2', 'charge move 2', 'chargedmove2'),
+  ];
+  const moves = resolveRowMoves({
+    speciesId: resolved.speciesId,
+    shadow,
+    fastMoveName,
+    chargedMoveNames,
+    label: name,
+    rowNumber,
+    resolveMoves,
+    warnings,
+  });
+
   return {
     speciesId: resolved.speciesId,
     name: resolved.speciesName,
     ivs: { atk, def, hp },
     cp: parseNumber(cell(row, headerIndex, 'cp')),
     level: parseNumber(cell(row, headerIndex, 'level')),
-    shadow: parseBoolFlag(cell(row, headerIndex, 'shadow')),
+    shadow,
     // purified/bestBuddy aren't in PLAN.md's documented generic column
     // list ([,shadow][,level][,cp] only); recognized opportunistically if
     // present, and default to false (matching the documented shape)
@@ -218,6 +288,7 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings) {
     purified: parseBoolFlag(cell(row, headerIndex, 'purified')),
     lucky: parseBoolFlag(cell(row, headerIndex, 'lucky')),
     bestBuddy: parseBoolFlag(cell(row, headerIndex, 'bestbuddy', 'best buddy', 'buddy')),
+    ...(moves ? { moves } : {}),
     sourceRow: rowNumber,
   };
 }
@@ -258,6 +329,7 @@ export function importCollection(csvPath) {
   }
 
   const resolveSpecies = createSpeciesResolver();
+  const resolveMoves = createMoveResolver();
   const mapRow = format === 'pokegenie' ? mapPokeGenieRow : mapGenericRow;
   const mons = [];
 
@@ -265,7 +337,7 @@ export function importCollection(csvPath) {
     const row = rows[i];
     if (isBlankRow(row)) continue;
     const rowNumber = i + 1; // spreadsheet-style: header occupies row 1
-    const mon = mapRow(row, headerIndex, rowNumber, resolveSpecies, warnings);
+    const mon = mapRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves);
     if (mon) mons.push(mon);
   }
 

@@ -179,6 +179,7 @@ export function renderReport(input) {
       s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
       s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.join('/')}` : null,
       s.threads ? `threads=${s.threads}` : null,
+      s.currentMoves ? 'currentMoves=on' : null,
     ]
       .filter(Boolean)
       .join(', '));
@@ -305,6 +306,7 @@ export function renderReportHtml(input) {
     s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
     s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.map(escapeHtml).join('/')}` : null,
     s.threads ? `threads=${s.threads}` : null,
+    s.currentMoves ? 'currentMoves=on' : null,
   ]
     .filter(Boolean)
     .join(', ');

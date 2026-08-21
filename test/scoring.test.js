@@ -169,6 +169,50 @@ describe('scoreCollection', () => {
     assert.equal(calls[calls.length - 1].completed, 2);
     assert.equal(calls[calls.length - 1].total, 2);
   });
+
+  // ----------------------------------------- GOALS T17: current-moves mode --
+
+  test('currentMoves: applies a user mon\'s own resolved moveset instead of recommended', () => {
+    // Azumarill's pvpoke-recommended Great League moveset is Bubble + Ice
+    // Beam/Play Rough; pick a deliberately different (but legal) moveset so
+    // the assertion can't pass by coincidence.
+    const withMoves = [
+      {
+        ...collection[0],
+        moves: { fastMove: 'ROCK_SMASH', chargedMoves: ['HYDRO_PUMP'] },
+      },
+    ];
+    const m = scoreCollection(ctx, withMoves, { groupEntries: TEST_META, currentMoves: true });
+    assert.equal(m.warnings.length, 0);
+
+    const built = m.builtMons['azumarill#1'];
+    assert.equal(built.pokemon.fastMove.moveId, 'ROCK_SMASH');
+    assert.deepEqual(Array.from(built.pokemon.chargedMoves, (c) => c.moveId), ['HYDRO_PUMP']);
+    // Spec-carrying (T15b plumbing) must record the applied moveset too, so
+    // --threads rebuilds match the serial build.
+    assert.equal(built.spec.fastMove, 'ROCK_SMASH');
+    assert.deepEqual(built.spec.chargedMoves, ['HYDRO_PUMP']);
+  });
+
+  test('currentMoves: a mon with no resolved moves falls back to recommended, with a warning', () => {
+    const m = scoreCollection(ctx, collection, { groupEntries: TEST_META, currentMoves: true });
+    assert.equal(m.warnings.length, 2, 'both fixture mons carry no `moves` field');
+    assert.match(m.warnings[0], /azumarill#1.*current-moves mode/);
+    // Falls back to buildPokemon's own recommended moveset -- still a valid,
+    // battle-ready mon, not skipped.
+    assert.equal(m.mons.length, 2);
+    assert.equal(m.builtMons['azumarill#1'].spec.fastMove, undefined);
+  });
+
+  test('currentMoves defaults to false: a resolved `moves` field is ignored unless opted in', () => {
+    const withMoves = [
+      { ...collection[0], moves: { fastMove: 'ROCK_SMASH', chargedMoves: ['HYDRO_PUMP'] } },
+    ];
+    const m = scoreCollection(ctx, withMoves, { groupEntries: TEST_META });
+    assert.equal(m.warnings.length, 0);
+    // Recommended moveset (Bubble), not the supplied ROCK_SMASH.
+    assert.equal(m.builtMons['azumarill#1'].pokemon.fastMove.moveId, 'BUBBLE');
+  });
 });
 
 describe('computeWeightedScore', () => {

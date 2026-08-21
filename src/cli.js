@@ -35,6 +35,11 @@
 //                       see src/engine/parallel.js -- win rates/ranking are
 //                       identical either way; HP-margin figures can drift
 //                       slightly, see src/engine/README.md)
+//   --current-moves    score/battle each mon with its OWN moveset from the
+//                       CSV's move columns (GOALS T17) instead of pvpoke's
+//                       recommended moveset -- a mon with no resolvable
+//                       move data still falls back to recommended (with a
+//                       warning), never dropped from the run.
 //   --help             print this help and exit
 //
 // Sampling (default path -- GOALS T9-T12, PLAN.md Rev 3):
@@ -117,6 +122,7 @@ Options:
   --html PATH        HTML report output path              (default ${DEFAULTS.html})
   --no-html          skip writing the HTML report
   --threads N        run battles across N worker threads   (default: serial)
+  --current-moves    use each mon's own CSV moveset instead of recommended
   --help             print this help and exit
 
 Sampling (default path):
@@ -193,7 +199,11 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  *           topK?:number, meta?:number,
  *           candidates?:number, opponents?:number, pool?:number,
  *           seed?:number|string, curatedRatio?:number, threads?:number,
+ *           currentMoves?:boolean,
  *           onProgress?:(p:{completed:number,total:number})=>void }} [opts]
+ *   `currentMoves` (GOALS T17) is forwarded verbatim to scoreCollection's
+ *   opts.currentMoves -- omitted/falsy keeps today's behavior (every mon
+ *   scored/battled with pvpoke's recommended moveset).
  *   `threads` (GOALS T15b) is forwarded verbatim to evaluateTeams' opts.threads
  *   -- omitted/falsy keeps the serial battleTeams loop (today's behavior,
  *   default); a positive integer runs battles through src/engine/parallel.js's
@@ -212,7 +222,7 @@ export async function runPipeline(csvPath, opts = {}) {
   const { mons, warnings: importWarnings } = importCollection(csvPath);
 
   const ctx = await initEngine();
-  const matrix = scoreCollection(ctx, mons, { metaLimit: scoreMeta });
+  const matrix = scoreCollection(ctx, mons, { metaLimit: scoreMeta, currentMoves: opts.currentMoves });
   const deduped = dedupeBestPerSpecies(matrix);
 
   let candidates;
@@ -231,6 +241,7 @@ export async function runPipeline(csvPath, opts = {}) {
       difficulty: opts.difficulty,
       excludeSpecies,
       threads: opts.threads,
+      currentMoves: !!opts.currentMoves,
     };
   } else {
     const candidateTarget = opts.candidates ?? DEFAULTS.candidates;
@@ -262,6 +273,7 @@ export async function runPipeline(csvPath, opts = {}) {
       difficulty: opts.difficulty,
       excludeSpecies,
       threads: opts.threads,
+      currentMoves: !!opts.currentMoves,
     };
   }
 
@@ -314,6 +326,7 @@ async function main(argv) {
         seed: { type: 'string' },
         'curated-ratio': { type: 'string' },
         threads: { type: 'string' },
+        'current-moves': { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -345,6 +358,7 @@ async function main(argv) {
     seed: values.seed ?? DEFAULTS.seed,
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : undefined,
+    currentMoves: values['current-moves'] ?? false,
   };
   const outPath = values.out ?? DEFAULTS.out;
   const htmlPath = values.html ?? DEFAULTS.html;

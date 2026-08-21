@@ -64,6 +64,24 @@ test('runPipeline (sampled, default path) produces ranked teams and a well-forme
   }
 });
 
+test('runPipeline (currentMoves: GOALS T17) forwards the opt-in flag and surfaces it in settings', async () => {
+  const withoutFlag = await runPipeline(FIXTURE, SAMPLED_TINY);
+  assert.equal(withoutFlag.settings.currentMoves, false, 'defaults to off');
+
+  const report = await runPipeline(FIXTURE, { ...SAMPLED_TINY, currentMoves: true });
+  assertWellFormedReport(report, SAMPLED_TINY.opponents, SAMPLED_TINY.top);
+  assert.equal(report.settings.currentMoves, true);
+  // Real fixture rows resolve to a moveset for most mons; scoring may add a
+  // fallback-note warning for any that don't -- either way the pipeline must
+  // still complete and rank teams (never a hard failure from this flag).
+  assert.ok(report.rankedTeams.length >= 1);
+
+  const md = renderReport(report);
+  assert.match(md, /currentMoves=on/);
+  const html = renderReportHtml(report);
+  assert.match(html, /currentMoves=on/);
+});
+
 test('runPipeline (--exhaustive) still produces the old C(topK,3) + curated-only behavior', async () => {
   const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
   assertWellFormedReport(report, EXHAUSTIVE_TINY.meta, EXHAUSTIVE_TINY.top);

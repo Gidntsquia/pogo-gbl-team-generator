@@ -76,6 +76,7 @@ node src/cli.js <collection.csv> [options]
   --out PATH         Markdown report output path         (default out/report.md)
   --html PATH        HTML report output path              (default out/report.html)
   --no-html          skip writing the HTML report
+  --current-moves    use each mon's own CSV moveset instead of recommended
   --help             print this help and exit
 
 Sampling (default path):
@@ -118,6 +119,32 @@ The importer recognizes these headers opportunistically in both formats
 levels that mon up to 51 instead of 50 (see `buildPokemon` in
 `src/engine/harness.js`), which can raise its best-possible CP-1500 IV
 spread's stat product slightly.
+
+### Current-moves mode (`--current-moves`)
+
+By default every Pokemon is scored and battled with pvpoke's own
+*recommended* Great League moveset for that species — not necessarily the
+moveset it actually has TM'd in-game. Pass `--current-moves` to use each
+mon's real moveset instead, read straight from your collection CSV:
+
+- **Poke Genie CSV**: already carries `Quick Move`, `Charge Move`, and
+  `Charge Move 2` columns in a stock export — nothing to add.
+- **Generic CSV**: add `fast move`, `charged move 1`, and (optionally)
+  `charged move 2` columns with the move's display name (e.g. `Ice Beam`).
+
+Move names are matched against that *specific* Pokemon's own legal move
+pool in the vendored gamemaster (not a global name lookup — a couple of
+move names collide across species with a different underlying move, e.g.
+Aegislash's signature Charged "Air Slash" isn't the same move as the common
+Fast "Air Slash"), so a typo'd or illegal move name simply fails to match
+rather than silently picking the wrong move.
+
+Reliability note: if a mon's move names don't resolve (missing columns,
+a typo, a move that species can't actually learn), it is **never dropped**
+— it falls back to pvpoke's recommended moveset for that mon, and a note is
+added to the report's collection warnings so you can see which mons fell
+back. `--current-moves` only changes *which* moveset is used; nothing else
+about scoring or battling changes.
 
 ### Sampling: how the weighting works
 
@@ -223,5 +250,7 @@ See `ROADMAP.md` for the full backlog. Notably:
   "Best Buddy (level 51) mons" above) for those mons to be scored/built at
   level 51.
 - Teams are built and scored using each Pokemon's pvpoke-*recommended*
-  moveset, not your Pokemon's actual currently-learned moves.
+  moveset by default — pass `--current-moves` to use each mon's actual
+  currently-learned moves instead (see "Current-moves mode" above); moves
+  that don't resolve fall back to recommended with a warning.
 - Only Great League (CP ≤ 1500) is supported end-to-end today.

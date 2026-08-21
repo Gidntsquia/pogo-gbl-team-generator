@@ -304,8 +304,16 @@ export function computeLeadIn(ratingsBySpecies) {
  *   groupEntries?: GroupEntry[],
  *   groupFile?: string,
  *   meta?: MetaMon[],
+ *   currentMoves?: boolean,
  *   onProgress?: (progress: {completed: number, total: number, speciesId: string}) => void,
  * }} [opts]
+ *   `currentMoves` (GOALS T17, default false = today's behavior): when true,
+ *   a user mon carrying a resolved `moves` field (src/importer's
+ *   current-moves column parsing) gets that EXACT moveset applied via
+ *   `applyGroupMoveset` instead of pvpoke's recommended moveset (mirrors
+ *   `buildMetaMon`'s own pattern -- no new move-selection logic). A mon
+ *   without resolvable move data falls back to the recommended moveset with
+ *   a `warnings` note, never a hard failure.
  *   `meta` lets a caller pass an already-loaded MetaMon[] (from a prior
  *   loadMeta call) to skip reloading/rebuilding it -- e.g. to score several
  *   collections against one meta build, or to inject a hand-picked test
@@ -357,6 +365,19 @@ export function scoreCollection(ctx, mons, opts = {}) {
         bestBuddy: !!mon.bestBuddy,
       };
       const pokemon = buildPokemon(ctx, spec);
+
+      if (opts.currentMoves) {
+        if (mon.moves) {
+          applyGroupMoveset(pokemon, mon.moves);
+          spec.fastMove = mon.moves.fastMove;
+          spec.chargedMoves = mon.moves.chargedMoves;
+        } else {
+          warnings.push(
+            `${key}: current-moves mode requested but no resolvable moveset -- used pvpoke's recommended moveset instead`
+          );
+        }
+      }
+
       built.push({ key, speciesId: mon.speciesId, name: mon.name, pokemon, spec });
     } catch (err) {
       warnings.push(`skipped ${key}: ${err.message}`);
