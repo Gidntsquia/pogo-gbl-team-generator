@@ -178,6 +178,7 @@ export function renderReport(input) {
       `scoreMeta=${s.scoreMeta}`,
       s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
       s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.join('/')}` : null,
+      s.threads ? `threads=${s.threads}` : null,
     ]
       .filter(Boolean)
       .join(', '));
@@ -303,6 +304,7 @@ export function renderReportHtml(input) {
     `scoreMeta=${s.scoreMeta}`,
     s.difficulty !== undefined ? `difficulty=${s.difficulty}` : null,
     s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.map(escapeHtml).join('/')}` : null,
+    s.threads ? `threads=${s.threads}` : null,
   ]
     .filter(Boolean)
     .join(', ');

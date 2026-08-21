@@ -10,22 +10,28 @@
 // Pokemon instances built in one thread's vm context cannot be sent to
 // another thread (postMessage's structured clone doesn't preserve class
 // instances/methods, and a vm context is tied to its own V8 isolate anyway),
-// so specs travel as plain data -- {speciesId, ivs, shadow, bestBuddy} per
-// mon -- and each worker rebuilds + caches its own Pokemon instances. See
-// src/engine/parallel.js's header comment for why the cache is split into
-// cacheA/cacheB (mirror-match distinctness).
+// so specs travel as plain data -- {speciesId, ivs, shadow, bestBuddy,
+// fastMove?, chargedMoves?} per mon -- and each worker rebuilds + caches its
+// own Pokemon instances. See src/engine/parallel.js's header comment for why
+// the cache is split into cacheA/cacheB (mirror-match distinctness).
+// fastMove/chargedMoves (GOALS T15b), when present, are reapplied via
+// src/scoring/index.js's applyGroupMoveset -- buildPokemon alone always
+// selects pvpoke's RECOMMENDED moveset, which is not what a buildMetaMon-built
+// mon (e.g. a curated preset team member) necessarily carries.
 
 import { parentPort, workerData } from 'node:worker_threads';
 import { initEngine, buildPokemon } from './harness.js';
 import { battleTeams } from './teamBattle.js';
+import { applyGroupMoveset } from '../scoring/index.js';
 
 if (!parentPort) {
   throw new Error('parallelWorker.js must be run as a worker_thread');
 }
 
-/** Stable cache key for a plain-data mon spec. */
+/** Stable cache key for a plain-data mon spec (moveset included -- two specs for the same species/IVs but different explicit movesets must not share a build). */
 function monKey(m) {
-  return `${m.speciesId}|${m.ivs.atk},${m.ivs.def},${m.ivs.hp}|${m.shadow ? 1 : 0}|${m.bestBuddy ? 1 : 0}`;
+  const moveset = m.fastMove ? `${m.fastMove}/${(m.chargedMoves || []).join(',')}` : '';
+  return `${m.speciesId}|${m.ivs.atk},${m.ivs.def},${m.ivs.hp}|${m.shadow ? 1 : 0}|${m.bestBuddy ? 1 : 0}|${moveset}`;
 }
 
 /**
@@ -47,6 +53,12 @@ function buildTeam(ctx, cache, monSpecs) {
         shadow: !!m.shadow,
         bestBuddy: !!m.bestBuddy,
       });
+      // buildPokemon always applies pvpoke's RECOMMENDED moveset; a spec
+      // carrying an explicit fastMove (from buildMetaMon, e.g. a curated
+      // preset team member) must have that exact moveset reapplied here --
+      // otherwise a threaded rebuild silently diverges from what the main
+      // thread's serial path would have battled with.
+      if (m.fastMove) applyGroupMoveset(built, { fastMove: m.fastMove, chargedMoves: m.chargedMoves });
       cache.set(key, built);
     }
     return built;

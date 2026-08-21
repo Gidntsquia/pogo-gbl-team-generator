@@ -75,6 +75,11 @@ const SCORE_WEIGHTS = Object.freeze({ s00: 0.25, s11: 0.5, s22: 0.25 });
  * @property {object} pokemon - the built, battle-ready pvpoke Pokemon
  *   instance (moveset already applied), safe to reuse across many simBattle
  *   calls.
+ * @property {{speciesId:string, ivs:IVSpread, shadow:boolean, bestBuddy:boolean}} spec
+ *   plain-data mirror of the params `pokemon` was built from (GOALS T15b) --
+ *   this is exactly the `MonSpec` shape src/engine/parallel.js's runBattles
+ *   needs, since a live Pokemon instance can't cross a worker_thread boundary.
+ *   Meta mons are never Best Buddy, so this is always `bestBuddy: false` here.
  */
 
 /** Read one vendor/pvpoke meta group file (default: Great League's great.json) as raw entries. */
@@ -119,8 +124,14 @@ function defaultCp1500Ivs(ctx, lookupId) {
  * src/js/pokemon/Pokemon.js, ~line 1000), just fed a caller-supplied moveset
  * instead of one read from pvpoke's rankings data. No move-selection logic
  * (which move is "best", movepool legality, etc.) is reimplemented here.
+ *
+ * Exported (GOALS T15b) so src/engine/parallelWorker.js can reapply the same
+ * explicit moveset after rebuilding a Pokemon from a plain-data MonSpec --
+ * buildPokemon alone always applies pvpoke's RECOMMENDED moveset, which is
+ * not necessarily what a buildMetaMon-built mon (e.g. a curated preset team
+ * member) was actually carrying.
  */
-function applyGroupMoveset(pokemon, { fastMove, chargedMoves }) {
+export function applyGroupMoveset(pokemon, { fastMove, chargedMoves }) {
   pokemon.selectMove('fast', fastMove);
   pokemon.selectMove('charged', chargedMoves[0], 0);
   if (chargedMoves.length > 1) {
@@ -158,6 +169,10 @@ export function buildMetaMon(ctx, entry) {
     fastMove: entry.fastMove,
     chargedMoves: entry.chargedMoves,
     pokemon,
+    // fastMove/chargedMoves included (unlike buildRecommendedMon's spec below)
+    // because this mon carries an EXPLICIT moveset, not pvpoke's recommended
+    // one -- see applyGroupMoveset's export comment above.
+    spec: { speciesId: baseSpeciesId, ivs, shadow, bestBuddy: false, fastMove: entry.fastMove, chargedMoves: entry.chargedMoves },
   };
 }
 
@@ -190,6 +205,7 @@ export function buildRecommendedMon(ctx, speciesId) {
     fastMove: pokemon.fastMove.moveId,
     chargedMoves: Array.from(pokemon.chargedMoves).map((m) => m.moveId),
     pokemon,
+    spec: { speciesId: baseSpeciesId, ivs, shadow, bestBuddy: false },
   };
 }
 
@@ -302,12 +318,17 @@ export function computeLeadIn(ratingsBySpecies) {
  *   meta: string[],
  *   ratings: Object<string, Object<string, {s00:number, s11:number, s22:number}>>,
  *   warnings: string[],
- *   builtMons: Object<string, {speciesId: string, name: string, pokemon: object}>,
+ *   builtMons: Object<string, {speciesId: string, name: string, pokemon: object, spec: object}>,
  * }}
  *   `builtMons` is keyed by the same userMonKey as `ratings` and exposes the
  *   already-built, battle-ready Pokemon instance for each scored user mon --
  *   an addition to PLAN.md's Matrix shape (backward compatible: an additive
  *   field, existing consumers of mons/meta/ratings/warnings are unaffected).
+ *   `spec` (GOALS T15b) is the plain-data `{speciesId, ivs, shadow, bestBuddy}`
+ *   `pokemon` was built from -- src/engine/parallel.js's runBattles needs
+ *   plain-data MonSpecs (a live Pokemon can't cross a worker_thread boundary),
+ *   and `bestBuddy` specifically is otherwise unrecoverable from a built
+ *   Pokemon instance (only consumed at build time for the level-51 cap).
  *   PLAN.md's team evaluator (src/teams/index.js, GOALS T4) takes `matrix` as
  *   one of its inputs and needs to resolve a userMonKey to something it can
  *   hand to battleTeams; the Matrix shape as originally specified had no such
@@ -329,13 +350,14 @@ export function scoreCollection(ctx, mons, opts = {}) {
         warnings.push(`skipped ${key}: speciesId not found in gamemaster`);
         continue;
       }
-      const pokemon = buildPokemon(ctx, {
+      const spec = {
         speciesId: mon.speciesId,
         ivs: mon.ivs,
         shadow: !!mon.shadow,
         bestBuddy: !!mon.bestBuddy,
-      });
-      built.push({ key, speciesId: mon.speciesId, name: mon.name, pokemon });
+      };
+      const pokemon = buildPokemon(ctx, spec);
+      built.push({ key, speciesId: mon.speciesId, name: mon.name, pokemon, spec });
     } catch (err) {
       warnings.push(`skipped ${key}: ${err.message}`);
     }
@@ -370,7 +392,7 @@ export function scoreCollection(ctx, mons, opts = {}) {
       score: computeWeightedScore(perMeta),
       leadIn: computeLeadIn(perMeta),
     });
-    builtMons[user.key] = { speciesId: user.speciesId, name: user.name, pokemon: user.pokemon };
+    builtMons[user.key] = { speciesId: user.speciesId, name: user.name, pokemon: user.pokemon, spec: user.spec };
 
     completed += 1;
     opts.onProgress?.({ completed, total, speciesId: user.speciesId });

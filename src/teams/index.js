@@ -22,6 +22,7 @@
 // win% therefore carries that constant offset -- the report says so.
 
 import { battleTeams } from '../engine/teamBattle.js';
+import { runBattles } from '../engine/parallel.js';
 import { computeWeightedScore } from '../scoring/index.js';
 
 const TEAM_SIZE = 3;
@@ -33,6 +34,16 @@ const PAIRINGS_PER_META = LEADS.length * LEADS.length; // 9
  * @property {string} key - userMonKey (matches matrix.ratings / matrix.builtMons).
  * @property {string} speciesId - base gamemaster speciesId.
  * @property {string} name - display name.
+ */
+
+/**
+ * @typedef {{speciesId:string, ivs:{atk:number,def:number,hp:number}, shadow?:boolean,
+ *   bestBuddy?:boolean, fastMove?:string, chargedMoves?:string[]}} MonSpec
+ *   see src/engine/parallel.js -- plain-data mirror of a built Pokemon, the
+ *   shape runBattles' BattleSpec.teamA/teamB need. `fastMove`/`chargedMoves`
+ *   are present only for mons built with an EXPLICIT (non-recommended)
+ *   moveset (buildMetaMon, e.g. curated preset team members) -- see
+ *   parallelWorker.js's buildTeam for why this matters.
  */
 
 /**
@@ -174,9 +185,30 @@ function bestBy(arr, valueFn) {
  * (3 candidate leads x 3 meta leads) via battleTeams. Teams are ranked by mean
  * win rate; ties broken by mean surviving-HP margin.
  *
- * @param {object} ctx - from initEngine (initTeamBattle is applied lazily by battleTeams).
+ * GOALS T15b: when `opts.threads` is set, every battle across every candidate
+ * is collected into one flat spec list and run through a single
+ * src/engine/parallel.js runBattles() call (one worker pool for the whole
+ * evaluateTeams call, not one per candidate) instead of calling battleTeams
+ * serially; results are consumed back in the exact same (candidate, metaTeam,
+ * leadA, leadB) order the serial path iterates in. `opts.threads` omitted/
+ * falsy keeps today's serial battleTeams loop untouched -- same code path as
+ * before this ticket. Public interface is otherwise frozen (PLAN Rev 2/3);
+ * the function is now async either way so callers must `await` it.
+ *
+ * Win rates and team RANKING are identical between the serial and threaded
+ * paths (verified: test/teams.test.js, and by hand against a real CLI run --
+ * PROGRESS.md's T15b entry). Exact `avgHpMargin`/`safeSwap.avgHpPct` numbers
+ * can drift by a small amount, because threading changes the ORDER battles
+ * run in and pvpoke's own Pokemon#resetMoves() has a discovered
+ * order-sensitivity when a Pokemon instance is reused across sequential
+ * battles (see src/engine/README.md's "Known limitation" section) -- this is
+ * pre-existing pvpoke behavior, not something this ticket's threading
+ * introduces; serial execution is merely self-consistent because its order
+ * never changes run to run.
+ *
+ * @param {object} ctx - from initEngine (initTeamBattle is applied lazily by battleTeams); ctx.vendorRoot is used by the threaded path to boot worker engine contexts.
  * @param {{
- *   metaTeams: Array<{id:string, name:string, members:Array<{pokemon:object}>}>,
+ *   metaTeams: Array<{id:string, name:string, members:Array<{pokemon:object, spec:MonSpec}>}>,
  *   matrix: object,
  *   candidates?: string[][],
  *   opts?: {
@@ -184,15 +216,16 @@ function bestBy(arr, valueFn) {
  *     teamCount?: number,
  *     excludeSpecies?: string[],
  *     difficulty?: number,
+ *     threads?: number,
  *     onProgress?: (p:{completed:number, total:number}) => void,
  *   }
  * }} params
  *   `candidates` (arrays of 3 userMonKeys) may be supplied directly; when
  *   omitted they are generated from `matrix` via buildCandidates(matrix, opts).
  *   `teamCount` caps how many ranked teams are returned (default: all).
- * @returns {TeamResult[]} ranked best-first.
+ * @returns {Promise<TeamResult[]>} ranked best-first.
  */
-export function evaluateTeams(ctx, params) {
+export async function evaluateTeams(ctx, params) {
   const { metaTeams, matrix } = params;
   const opts = params.opts ?? {};
   if (!Array.isArray(metaTeams) || metaTeams.length === 0) {
@@ -200,14 +233,51 @@ export function evaluateTeams(ctx, params) {
   }
   const candidates = params.candidates ?? buildCandidates(matrix, opts);
 
-  const results = [];
-  let completed = 0;
-  for (const keys of candidates) {
-    const members = keys.map((key) => {
+  const threaded = typeof opts.threads === 'number' && opts.threads > 0;
+
+  const candidateMembers = candidates.map((keys) =>
+    keys.map((key) => {
       const b = matrix.builtMons[key];
       if (!b) throw new Error(`evaluateTeams: no built pokemon for key "${key}"`);
-      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon };
-    });
+      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon, spec: b.spec };
+    })
+  );
+
+  // Threaded path: collect every battle across every candidate into ONE flat
+  // spec list and run it through a single runBattles() call (one worker pool
+  // for the whole evaluateTeams call), rather than booting a fresh pool per
+  // candidate. Iteration order below (candidate -> metaTeam -> leadA -> leadB)
+  // is the exact order the serial path's nested loops process battles in, so
+  // `allResults[globalIdx++]` lines up 1:1 with the same POSITION a serial
+  // battleTeams call would occupy. Each individual battle's WINNER is
+  // deterministic given (teams, leads, seed) -- see teamBattle.js's
+  // effectiveSeed derivation (hashed from team speciesIds + leads, not call
+  // order). Exact HP totals can still drift from the serial run's because
+  // runBattles distributes work across workers (and each worker's per-spec
+  // build cache reuses Pokemon instances in ITS OWN order, not the serial
+  // loop's order) -- see this function's header comment and src/engine/
+  // README.md's "Known limitation" section for why.
+  let allResults = null;
+  if (threaded) {
+    const specs = [];
+    for (const members of candidateMembers) {
+      const teamASpecs = members.map((m) => m.spec);
+      for (const metaTeam of metaTeams) {
+        const teamBSpecs = metaTeam.members.map((m) => m.spec);
+        for (const leadA of LEADS) {
+          for (const leadB of LEADS) {
+            specs.push({ teamA: teamASpecs, teamB: teamBSpecs, leadA, leadB, difficulty: opts.difficulty });
+          }
+        }
+      }
+    }
+    allResults = await runBattles(specs, { threads: opts.threads, vendorRoot: ctx.vendorRoot });
+  }
+  let globalIdx = 0;
+
+  const results = [];
+  let completed = 0;
+  for (const members of candidateMembers) {
     const teamA = members.map((m) => m.pokemon);
 
     // Per-candidate-lead win tally (index 0..2), for bestLead.
@@ -237,7 +307,9 @@ export function evaluateTeams(ctx, params) {
         const orderedIndices = [leadA, ...LEADS.filter((i) => i !== leadA)];
 
         for (const leadB of LEADS) {
-          const r = battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty: opts.difficulty });
+          const r = threaded
+            ? allResults[globalIdx++]
+            : battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty: opts.difficulty });
           const margin = r.survivorsHp.a - r.survivorsHp.b;
           hpSum += margin;
           if (r.winner === 'a') {

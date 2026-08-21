@@ -31,6 +31,10 @@
 //   --out PATH         Markdown report output path           (default out/report.md)
 //   --html PATH        HTML report output path                (default out/report.html)
 //   --no-html          skip writing the HTML report
+//   --threads N        run battles across N worker threads     (default: serial;
+//                       see src/engine/parallel.js -- win rates/ranking are
+//                       identical either way; HP-margin figures can drift
+//                       slightly, see src/engine/README.md)
 //   --help             print this help and exit
 //
 // Sampling (default path -- GOALS T9-T12, PLAN.md Rev 3):
@@ -112,6 +116,7 @@ Options:
   --out PATH         Markdown report output path         (default ${DEFAULTS.out})
   --html PATH        HTML report output path              (default ${DEFAULTS.html})
   --no-html          skip writing the HTML report
+  --threads N        run battles across N worker threads   (default: serial)
   --help             print this help and exit
 
 Sampling (default path):
@@ -187,8 +192,15 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  *           excludeSpecies?:string[], exhaustive?:boolean,
  *           topK?:number, meta?:number,
  *           candidates?:number, opponents?:number, pool?:number,
- *           seed?:number|string, curatedRatio?:number,
+ *           seed?:number|string, curatedRatio?:number, threads?:number,
  *           onProgress?:(p:{completed:number,total:number})=>void }} [opts]
+ *   `threads` (GOALS T15b) is forwarded verbatim to evaluateTeams' opts.threads
+ *   -- omitted/falsy keeps the serial battleTeams loop (today's behavior,
+ *   default); a positive integer runs battles through src/engine/parallel.js's
+ *   worker-thread pool instead. Win rates and team ranking are identical
+ *   either way; exact HP-margin figures can drift slightly -- see
+ *   evaluateTeams' own header comment and src/engine/README.md's "Known
+ *   limitation" section.
  * @returns {Promise<import('./report/index.js').ReportInput>}
  */
 export async function runPipeline(csvPath, opts = {}) {
@@ -212,7 +224,14 @@ export async function runPipeline(csvPath, opts = {}) {
     const metaCount = opts.meta ?? DEFAULTS.meta;
     metaTeams = loadMetaTeams(ctx, { limit: metaCount });
     candidates = buildCandidates(deduped, { topK, excludeSpecies });
-    settings = { mode: 'exhaustive', topK, scoreMeta, difficulty: opts.difficulty, excludeSpecies };
+    settings = {
+      mode: 'exhaustive',
+      topK,
+      scoreMeta,
+      difficulty: opts.difficulty,
+      excludeSpecies,
+      threads: opts.threads,
+    };
   } else {
     const candidateTarget = opts.candidates ?? DEFAULTS.candidates;
     const opponentCount = opts.opponents ?? DEFAULTS.opponents;
@@ -242,16 +261,18 @@ export async function runPipeline(csvPath, opts = {}) {
       scoreMeta,
       difficulty: opts.difficulty,
       excludeSpecies,
+      threads: opts.threads,
     };
   }
 
-  const rankedTeams = evaluateTeams(ctx, {
+  const rankedTeams = await evaluateTeams(ctx, {
     metaTeams,
     matrix,
     candidates,
     opts: {
       teamCount: top,
       difficulty: opts.difficulty,
+      threads: opts.threads,
       onProgress: opts.onProgress,
     },
   });
@@ -292,6 +313,7 @@ async function main(argv) {
         pool: { type: 'string' },
         seed: { type: 'string' },
         'curated-ratio': { type: 'string' },
+        threads: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -322,6 +344,7 @@ async function main(argv) {
     pool: intFlag(values.pool, 'pool', DEFAULTS.pool),
     seed: values.seed ?? DEFAULTS.seed,
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
+    threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : undefined,
   };
   const outPath = values.out ?? DEFAULTS.out;
   const htmlPath = values.html ?? DEFAULTS.html;

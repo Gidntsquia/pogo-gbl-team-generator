@@ -7,15 +7,30 @@
 // executed unmodified inside each worker's own headless engine context (see
 // parallelWorker.js).
 //
-// Why this is safe to parallelize: every battleTeams() call is already fully
-// self-contained and deterministic given its own (teams, leads, difficulty,
-// seed) -- src/engine/teamBattle.js resets a fresh Battle + virtual clock +
-// seeded RNG per call and never shares mutable state across calls on the same
-// ctx. Running independent battles on independent engine contexts (one per
-// worker thread, each its own V8 isolate) therefore produces bit-identical
-// per-battle results to running them serially on one context; only the ORDER
-// battles are computed in changes, and runBattles() puts every result back in
-// spec order before resolving, so callers never observe that reordering.
+// Why this is safe to parallelize: every battleTeams() call's WINNER is
+// deterministic given its own (teams, leads, difficulty, seed) --
+// src/engine/teamBattle.js resets a fresh Battle + virtual clock + seeded RNG
+// per call. Running independent battles on independent engine contexts (one
+// per worker thread, each its own V8 isolate) therefore produces the same
+// winners as running them serially on one context; runBattles() puts every
+// result back in spec order before resolving, so callers never observe
+// worker-assignment reordering.
+//
+// CORRECTION (discovered during GOALS T15b, see src/engine/README.md's "Known
+// limitation" section): this is NOT quite "bit-identical per battle" as
+// originally documented here at T15 time -- a Pokemon INSTANCE reused across
+// several battles carries a subtle pvpoke engine artifact (Pokemon#
+// resetMoves()'s bestChargedMove tie-break reads a stale battle-slot index)
+// that makes exact HP totals sensitive to which order that instance's battles
+// ran in. Since a worker's per-spec build cache reuses instances in the order
+// specs happen to land on that worker (not the serial loop's order), threaded
+// and serial runs can therefore differ in HP margin even though win/loss
+// outcomes (verified empirically) do not. This affects any REUSE of a
+// Pokemon instance across sequential battles, so it already existed in
+// today's serial evaluateTeams/tournament.mjs too -- serial is merely
+// self-consistent because its order never changes run to run. Standing rule 4
+// (vendor is read-only, never reimplement battle math) means this is
+// documented as a known engine characteristic, not "fixed" here.
 //
 // Team-building happens PER WORKER, not on the main thread: pvpoke Pokemon
 // instances live inside a specific vm context tied to one V8 isolate, so they
@@ -37,7 +52,16 @@ const WORKER_PATH = path.join(__dirname, 'parallelWorker.js');
 export const THREADS_ENV_VAR = 'POGO_GBL_THREADS';
 
 /**
- * @typedef {{ speciesId: string, ivs: {atk:number, def:number, hp:number}, shadow?: boolean, bestBuddy?: boolean }} MonSpec
+ * @typedef {{
+ *   speciesId: string, ivs: {atk:number, def:number, hp:number},
+ *   shadow?: boolean, bestBuddy?: boolean,
+ *   fastMove?: string, chargedMoves?: string[]
+ * }} MonSpec
+ *   `fastMove`/`chargedMoves` (GOALS T15b) are set only for a mon built with
+ *   an EXPLICIT moveset (src/scoring/index.js's buildMetaMon, e.g. a curated
+ *   preset team member) rather than pvpoke's recommended one -- when present,
+ *   parallelWorker.js reapplies that exact moveset after rebuilding the
+ *   Pokemon, since buildPokemon alone always selects the recommended moveset.
  */
 
 /**

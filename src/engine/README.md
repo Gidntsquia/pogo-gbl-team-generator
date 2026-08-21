@@ -88,10 +88,13 @@ once across OS threads with no change to the engine or any battle math.
 `node:worker_threads` workers, each of which boots its **own** headless
 pvpoke engine context exactly once (`parallelWorker.js` calls the same
 `initEngine` everything else uses) and then answers a stream of battle specs
-from the main thread. Results come back **in spec order**, bit-identical to
-what a serial loop of `battleTeams(ctx, spec)` calls on one context would
-produce -- `test/parallel.test.js` asserts this directly, plus edge cases at
-`threads=1` and `threads=4`.
+from the main thread. Results come back **in spec order**; `test/parallel.test.js`
+asserts they match a serial loop of `battleTeams(ctx, spec)` calls (plus edge
+cases at `threads=1` and `threads=4`) for that suite's battle plans. See
+**"Known limitation"** below, discovered during T15b: this holds for battle
+*winners* generally, but exact HP totals are not guaranteed bit-identical to a
+serial run when a Pokemon instance is reused across several battles, because
+pvpoke itself carries a subtle order-sensitivity across such reuse.
 
 **Why specs are plain data, and why team-building happens per worker, not on
 the main thread.** A built pvpoke `Pokemon` instance lives inside one
@@ -147,19 +150,61 @@ sandbox's ~172ms/battle for the same code -- see T14), more physical cores
 free of that contention should scale further toward linear; that number is
 not measured here and should be recorded locally when convenient.
 
-**Integration status.** `evaluateTeams` (`src/teams/index.js`) and
-`scripts/tournament.mjs` still drive `battleTeams` directly (serially) --
-`runBattles` exists and is fully tested as a standalone executor, but wiring
-an opt-in `opts.threads`/`--threads` through those callers needs one small
-prerequisite first: neither `matrix.builtMons` (built by
-`src/scoring/index.js`) nor meta-team members currently retain the raw
-`{ivs, shadow, bestBuddy}` a `MonSpec` needs -- only `{speciesId, name,
-pokemon}` survives past `buildPokemon`. Extracting that data back out of an
-already-built `Pokemon` instance is not reliable (`bestBuddy` in particular
-is never stored on the instance, only consumed at build time for the
-level-51 cap), so the correct fix is carrying the raw params alongside
-`pokemon` in those shapes, not reconstructing them after the fact. See
-PROGRESS.md's T15 entry and GOALS.md's follow-up ticket.
+**Integration status (GOALS T15b).** `matrix.builtMons` (`src/scoring/index.js`)
+and every meta-team member (`buildMetaMon`/`buildRecommendedMon`) now carry a
+`spec` field alongside `pokemon` -- the raw `{speciesId, ivs, shadow,
+bestBuddy}` a `MonSpec` needs (plus `fastMove`/`chargedMoves` when the mon was
+built with an EXPLICIT moveset via `buildMetaMon`, e.g. a curated preset team
+member -- `parallelWorker.js` reapplies it via `applyGroupMoveset`, since
+`buildPokemon` alone always selects pvpoke's *recommended* moveset, which is
+not always what the mon was actually carrying; this was a real bug caught
+during verification, see PROGRESS.md). `evaluateTeams` (`src/teams/index.js`)
+now accepts an opt-in `opts.threads` (and the CLI a `--threads` flag) that
+collects every battle across every candidate into one flat spec list and runs
+it through a single `runBattles()` call. `scripts/tournament.mjs` still drives
+`battleTeams` directly (serially) -- GOALS explicitly reserves that file for
+its own ticket (T13) and wiring `--threads` into it is deferred to a follow-up
+(see GOALS.md); it needs the same kind of spec-carrying plumbing this ticket
+added to `src/scoring/index.js`/`src/meta/*`, applied to its own candidate/
+opponent member shapes.
+
+## Known limitation: battle order and reused-instance move selection
+
+Discovered during T15b's verification (executing real battles caught this --
+see the standing rule about verification, not code review, being what counts).
+pvpoke's `Pokemon#resetMoves()` (called by `fullReset()`, which our
+`battleTeams()` wrapper calls on every team member before every battle) picks
+`bestChargedMove` partly from `move.dpe`, which `initializeMove()` computes via
+`move.damage = DamageCalculator.damage(self, battle.getOpponent(self.index), move)`.
+`self.index` is the Pokemon's *battle slot* from whichever `Battle` it last
+participated in; our wrapper calls `fullReset()` **before**
+`battle.setNewPokemon()` reassigns indices for the *current* battle, so this
+read can see a stale/absent opponent relative to the battle about to run. The
+practical effect: a Pokemon instance's very first battle can pick a (very
+slightly) different `bestChargedMove` tie-break than its second, third, etc.
+battle -- verified directly (`buildPokemon` + `applyGroupMoveset` twice,
+identical moveset/stats/shadowType/level/cp both times, same seed, same
+opponent instances, yet different `survivorsHp`/turn counts on the first call
+only; stable from the second call onward).
+
+This is a **pre-existing pvpoke engine characteristic**, not something T15/T15b
+introduced -- it applies to *any* reuse of a Pokemon instance across
+sequential battles, which today's serial `evaluateTeams`/`tournament.mjs`
+already do constantly (a candidate's `teamA` instances are built once and
+battle every meta team in a loop; a meta team's `teamB` instances are built
+once and battle every candidate). Serial execution is self-consistent only
+because its battle order never changes run to run; `runBattles`' worker pool
+distributes specs across workers in an order that generally differs from the
+serial loop's, and each worker's own build cache reuses instances in *its*
+order -- so **win/loss outcomes and team win rates are unaffected (verified:
+`test/teams.test.js`'s threaded-vs-serial test, and by hand against a real CLI
+run with real sampled data -- see PROGRESS.md's T15b entry), but exact HP
+totals (`avgHpMargin`, `safeSwap.avgHpPct`) can drift by a small amount**
+between a serial and a threaded run of the same inputs. Standing rule 4
+(vendor is read-only, never reimplement battle math) means this is documented
+here as a known characteristic rather than patched; it is also direct evidence
+for ROADMAP's existing "TrainingAI variance study" gap, which a future fire
+could use this as a starting point for.
 
 ## Why a `vm` sandbox instead of a browser
 

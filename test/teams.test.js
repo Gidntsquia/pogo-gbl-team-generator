@@ -99,13 +99,13 @@ describe('evaluateTeams', () => {
     { speciesId: 'magikarp', name: 'Magikarp', ivs: { atk: 15, def: 15, hp: 15 }, shadow: false, sourceRow: 4 },
   ];
 
-  test('a team of strong staples ranks above every team carrying a joke mon', () => {
+  test('a team of strong staples ranks above every team carrying a joke mon', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 2 });
     assert.equal(metaTeams.length, 2);
 
     // C(4,3) = exactly 4 candidates, all distinct species.
-    const ranked = evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
+    const ranked = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
     assert.equal(ranked.length, 4);
 
     const top = ranked[0];
@@ -124,10 +124,10 @@ describe('evaluateTeams', () => {
     }
   });
 
-  test('result objects are well-formed', () => {
+  test('result objects are well-formed', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 2 });
-    const ranked = evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
+    const ranked = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
 
     for (const t of ranked) {
       assert.equal(t.members.length, 3);
@@ -157,10 +157,10 @@ describe('evaluateTeams', () => {
     }
   });
 
-  test('excludeSpecies keeps a species out of every candidate', () => {
+  test('excludeSpecies keeps a species out of every candidate', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 1 });
-    const ranked = evaluateTeams(ctx, {
+    const ranked = await evaluateTeams(ctx, {
       matrix,
       metaTeams,
       opts: { topK: 4, excludeSpecies: ['magikarp'] },
@@ -170,21 +170,51 @@ describe('evaluateTeams', () => {
     for (const m of ranked[0].members) assert.notEqual(m.speciesId, 'magikarp');
   });
 
-  test('is deterministic (same ranking + win rates on a repeat run)', () => {
+  test('is deterministic (same ranking + win rates on a repeat run)', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 1 });
-    const a = evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
-    const b = evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
+    const a = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
+    const b = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
     assert.deepEqual(
       a.map((t) => [t.members.map((m) => m.key).join('+'), t.winRate, t.avgHpMargin]),
       b.map((t) => [t.members.map((m) => m.key).join('+'), t.winRate, t.avgHpMargin])
     );
   });
 
-  test('teamCount caps how many ranked teams are returned', () => {
+  test('teamCount caps how many ranked teams are returned', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 1 });
-    const ranked = evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4, teamCount: 2 } });
+    const ranked = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4, teamCount: 2 } });
     assert.equal(ranked.length, 2);
+  });
+
+  // GOALS T15b: opts.threads runs the same battles through
+  // src/engine/parallel.js's worker-thread pool instead of the serial
+  // battleTeams loop. Per-battle results are deterministic given a fixed
+  // (teams, leads, seed) IN ISOLATION, but a discovered pvpoke engine
+  // characteristic (see src/engine/README.md's "Known limitation: battle
+  // order and reused-instance move selection") means a Pokemon INSTANCE's
+  // resetMoves()/bestChargedMove tie-break can be influenced by which
+  // opponent it most recently fought (battle.getOpponent(self.index) reads a
+  // stale index at fullReset() time, before setNewPokemon reassigns it for
+  // the current battle) -- so exact avgHpMargin can drift by a few HP when
+  // battle ORDER changes (serial's fixed nested-loop order vs the threaded
+  // pool's worker-distribution order), even though win/loss/winRate and team
+  // RANKING are unaffected (verified by hand against a real CLI run -- see
+  // PROGRESS.md GOALS T15b entry). This is pre-existing pvpoke behavior any
+  // time a Pokemon instance is reused across sequential battles (already true
+  // of today's serial evaluateTeams/tournament.mjs, just self-consistent
+  // there since the order never changes) -- not something threading itself
+  // gets wrong. Assert what's actually guaranteed: identical win rates and
+  // identical ranking (bestLead too, since it's also win-rate-derived).
+  test('opts.threads produces identical win rates and ranking to the serial path', async () => {
+    const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
+    const metaTeams = loadMetaTeams(ctx, { limit: 2 });
+    const serial = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
+    const threaded = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4, threads: 2 } });
+    assert.deepEqual(
+      serial.map((t) => [t.members.map((m) => m.key).sort().join('+'), t.winRate, t.bestLead.key]),
+      threaded.map((t) => [t.members.map((m) => m.key).sort().join('+'), t.winRate, t.bestLead.key])
+    );
   });
 });
