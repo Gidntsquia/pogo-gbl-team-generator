@@ -7,8 +7,9 @@ Target: tournament-scale runs (10^5–10^6 battles) ≥4x faster on THIS Mac (8 
 | id | status | agent | attempts | note |
 |----|--------|-------|----------|------|
 | T19 executor rework (persistent pool + per-spec errors) | done (integrated 16:00Z, npm test 186/186) | t19-executor | 1 | baseline this Mac: serial 78.11ms/battle; per-call-boot threading 36.24 best @ t4, degrades @ t7 |
-| T20a determinism investigation (read-only) | running | t20a-determinism | 1 | no repo writes; findings report feeds T20 spec |
-| T20 order-independence fix | ready (after T19+T20a) | ROUTINE (handoff) | 0 | write T20a findings INTO GOALS T20 text at handoff; owns src/engine/teamBattle.js + touched tests |
+| T20a determinism investigation (read-only) | done (~16:05Z; findings baked into GOALS T20/T20b + PLAN Rev 4 amendment) | t20a-determinism | 1 | mechanism 1 proven+fix validated; mechanism 2 DISCOVERED (TrainingAI.runScenario restore gap) — full bit-identity deferred to T20b |
+| T20 land mechanism-1 stamp fix | ready → ROUTINE | ROUTINE | 0 | proven fix + narrow acceptance bar in ticket text |
+| T20b mechanism-2 hunt | queued last (after T22, behind T23–T25) | ROUTINE | 0 | wrap-don't-edit vendor boundary stated in ticket |
 | T21 tournament/evaluator adopt pool + threaded default | ready (after T20) | ROUTINE | 0 | owns scripts/tournament.mjs, src/teams/index.js, test/tournament.test.js, test/teams.test.js |
 | T22 code (bench --threads + docs) | ready (after T21) | ROUTINE | 0 | owns scripts/bench.mjs, test/bench.test.js, README.md, ROADMAP.md |
 | T22 measurement (local A/B on this Mac) | ready (after T22 code) | ORCHESTRATOR via Bash | 0 | no agent — run bench + tournament A/B directly, record in PROGRESS.md |
@@ -29,6 +30,8 @@ Target: tournament-scale runs (10^5–10^6 battles) ≥4x faster on THIS Mac (8 
 - **Jaxon directive #2 (2026-08-21): "survival of the fittest" evolutionary team search** — designed as PLAN.md Rev 5 + GOALS T23–T25 (routine tickets, per routines-first rule). Design calls made without asking (all tunable flags): fresh opponent draw per generation with elites re-evaluated (no overfitting/stale fitness; `--fixed-opponents` opts out); ~10% immigrants to prevent inbreeding (Jaxon didn't ask for these — documented as GA-standard diversity, can be set to 0); top-50% survive / bottom-50% die / top-quartile mutate; convergence = top-10 set stable 3 gens. Analytics confirmed cheap (pure counting, no battles) → in by default incl. 2-species core tracking. T23 marked parallel-safe; T24 gated on T21 so it's built on the persistent executor from day one.
 
 - **Jaxon GA-selection revision (2026-08-21, mid-turn):** bottom-50% death too harsh → `deathRate` default 0.25; mutation is a seeded RANDOM roll per survivor with probability scaling by fitness percentile (linear 0.05→0.40 default), not a deterministic top-quartile entitlement. PLAN Rev 5 + GOALS T23 updated before anything committed.
+
+- **Adjudication on determinism (16:05Z):** investigation PROVED the known stale-`.index`/`.battle` mechanism and validated a zero-cost stamp fix — but also DISPROVED the Rev 4 bit-identity goal as stated: a second in-battle mechanism flips a reproduced knife-edge battle even with pre-battle state bit-identical. Decision: land the proven fix (T20, narrow provable bar), get reproducibility-at-fixed-(seed,threads) via deterministic partitioning (T21), keep serial as cross-config reference, queue mechanism 2 (T20b) BEHIND the evolution tickets — user value first, ~0.28% rank-preserving residue is acceptable meanwhile. No known-red acceptance tests.
 
 ## Watchdog
 Armed ~15:40Z until ~16:10Z (sleep 1800, WATCHDOG_TICK).
