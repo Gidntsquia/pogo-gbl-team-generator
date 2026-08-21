@@ -18,7 +18,7 @@
     { "id": "sweetpian", "name": "SWEETPIAN (Top 58 GBL S12)", "members": ["seaking", "altaria", "lickilicky"], "notes": "confirmed by Jaxon" },
     { "id": "gorgiiboy", "name": "GORGIIBOY (Top 3 GBL S11)", "members": ["sandslash_alolan", "mantine", "seaking"] },
     { "id": "omarchm10-b", "name": "OMARCHM10 (Top 40 GBL S10)", "members": ["quagsire_shadow", "wigglytuff", "charjabug"] },
-    { "id": "tzspenx-b", "name": "TZSPENX (Top 2 Monterrey 2025)", "members": ["mantine", "ursaluna", "lickilicky"], "uncertain": true, "notes": "slot 2 brown big-clawed bear read as Ursaluna" },
+    { "id": "tzspenx-b", "name": "TZSPENX (Top 2 Monterrey 2025)", "members": ["mantine", "diggersby", "lickilicky"], "notes": "confirmed by Jaxon (slot 2 = Diggersby — the 'claws' are its ear-paws)" },
     { "id": "sweetpian-b", "name": "SWEETPIAN (Top 58 GBL S12)", "members": ["thievul", "mantine", "charjabug"], "uncertain": true, "notes": "slot 1 orange fox with dark mask/legs read as Thievul (alt: Zoroark)" },
     { "id": "paco100488-b", "name": "PACO100488 (Top 39 GBL S10)", "members": ["mimikyu", "altaria", "ninetales_shadow"] },
     { "id": "jp-cup-a1", "name": "JP Nature Cup — Bastiodon core (前回の採用1位パ)", "tier": "off-meta", "members": ["bastiodon", "ludicolo", "abomasnow"] },
