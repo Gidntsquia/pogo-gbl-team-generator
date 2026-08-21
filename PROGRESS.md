@@ -288,3 +288,8 @@ Project bootstrapped in an interactive session; switching to the scheduled-routi
 - **Files touched:** `scripts/shield-weight-review.mjs` (new), `test/shieldWeightReview.test.js` (new, 4 tests), `ROADMAP.md` (shield-scenario weighting review struck through + findings; Best Buddy detection + Safe-swap analysis struck through as stale-doc fixes), `PROGRESS.md` (this entry).
 - **Dependencies:** none added.
 - **Next:** ROADMAP gaps remaining — current-moves mode (needs new importer move-column parsing + a move-name-to-pvpoke-id resolver; scoped but unstarted, a good next-fire candidate), --cp 2500/Ultra League flag (scoped as multi-file, see 10:23Z entry), vendor refresh discipline (procedural, not a coding ticket). A larger-scale re-run of this fire's weighting review (more topK/opponents, maybe a second fixture) would tighten confidence if Jaxon wants it, but isn't blocking anything.
+
+## 2026-08-21T11:33Z — orchestrator (OVERNIGHT TOURNAMENT COMPLETE + delivered)
+- T13 run finished 11:21Z: 500→100→10 funnel, 225,000 battles total (75K+60K+90K), ZERO battle errors, 4h13m of the 7h15m budget. Deadline self-tuner scaled stage 3 UP 500→1000 opponents (all 58 curated/community teams + 942 weighted-random). Serial mode throughout (bit-deterministic per seed, per the T15c doctrine).
+- Final ranking delivered to Jaxon (out/my-teams-tournament.md). Top team: Thievul/Araquanid/Stunfisk 82% overall (68% vs curated, 83% vs sampled), best lead Araquanid. Araquanid appears in 5 of the top 6 teams.
+- Watch cron deleted (job done); supervision cron stays for routine oversight.
