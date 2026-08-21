@@ -24,7 +24,12 @@ const TEAM_SIZE = 3;
 // DEFAULT_GAMMA pattern -- weights both signals equally, so a mon that's
 // BOTH a strong 1v1 performer AND a meta staple stands out clearly (PLAN Rev
 // 3: "so Jaxon's OWN meta mons land on more candidate teams").
-const DEFAULT_BLEND_ALPHA = 0.5;
+//
+// Exported (GOALS T23) so src/teams/evolve.js's mutation swap-in step can
+// weight its replacement-mon pick with the exact same blend, instead of
+// re-deriving it -- PLAN Rev 5 explicitly says "swap-in weighted by the Rev
+// 3 blend".
+export const DEFAULT_BLEND_ALPHA = 0.5;
 
 // Sampling without replacement can re-draw the same 3-species team more than
 // once, especially on a small pool or heavily skewed weights; duplicates are
@@ -48,7 +53,7 @@ function combinationsCount3(n) {
  * Entries whose species is in `exclude`, or whose key is missing from the
  * matrix, are dropped.
  */
-function buildScoredPool(matrix, pool, exclude) {
+export function buildScoredPool(matrix, pool, exclude) {
   const bySpecies = new Map();
   for (const key of pool) {
     const built = matrix.builtMons[key];
@@ -71,7 +76,7 @@ function buildScoredPool(matrix, pool, exclude) {
  * against the full rankings field) keeps the blend meaningful regardless of
  * how strong/weak the user's overall collection is.
  */
-function makeBlendedWeightFn(entries, weights, alpha) {
+export function makeBlendedWeightFn(entries, weights, alpha) {
   const usageOf = (speciesId) => weights?.get(speciesId) ?? 0;
   const maxScore = Math.max(0, ...entries.map((e) => e.score)) || 1;
   const maxUsage = Math.max(0, ...entries.map((e) => usageOf(e.speciesId))) || 1;

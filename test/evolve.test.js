@@ -1,0 +1,290 @@
+// Tests for src/teams/evolve.js -- the GA core module (GOALS T23). Pure
+// generational logic over FAKE fitness arrays and a fake scoreCollection
+// matrix (no engine boot, no vendor data, no battles) -- verifies:
+// determinism under seed, deathRate honored exactly, mutation probability
+// monotone in fitness percentile, mutants differ from their parent in
+// exactly one slot and never duplicate a species, population stays unique +
+// exactly at the target size with the immigrant floor respected, the
+// convergence detector fires exactly when specified, and excludeSpecies is
+// honored end to end (initPopulation + nextGeneration).
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  initPopulation,
+  nextGeneration,
+  hasConverged,
+  DEFAULT_IMMIGRANT_FRACTION,
+} from '../src/teams/evolve.js';
+
+/** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
+function mon(key, speciesId, score) {
+  return {
+    key,
+    builtMon: { speciesId, name: speciesId },
+    ratings: { somemeta: { s00: score, s11: score, s22: score } },
+  };
+}
+
+/** Build a fake scoreCollection-shaped matrix from a list of mon() entries. */
+function fakeMatrix(mons) {
+  const ratings = {};
+  const builtMons = {};
+  for (const m of mons) {
+    ratings[m.key] = m.ratings;
+    builtMons[m.key] = m.builtMon;
+  }
+  return { ratings, builtMons };
+}
+
+function poolKeys(mons) {
+  return mons.map((m) => m.key);
+}
+
+/** N distinct-species fake mons, scores spread out so the blend isn't flat. */
+function makeMons(n) {
+  const mons = [];
+  for (let i = 0; i < n; i++) {
+    mons.push(mon(`mon${i}`, `species${i}`, 1000 - i * 7));
+  }
+  return mons;
+}
+
+const WIDE_POOL_MONS = makeMons(40); // plenty of room: C(40,3) = 9880 possible teams
+const WIDE_MATRIX = fakeMatrix(WIDE_POOL_MONS);
+const WIDE_POOL = poolKeys(WIDE_POOL_MONS);
+
+function teamSignature(team) {
+  return [...team].sort().join('|');
+}
+
+function speciesOf(team) {
+  return team.map((key) => WIDE_MATRIX.builtMons[key].speciesId);
+}
+
+/** A population of `count` unique teams sampled from the wide pool, seeded. */
+function samplePopulation(count, seed) {
+  return initPopulation({ matrix: WIDE_MATRIX, pool: WIDE_POOL, count, seed });
+}
+
+test('initPopulation delegates to sampleCandidateTeams: unique 3-distinct-species teams, deterministic under seed', () => {
+  const a = initPopulation({ matrix: WIDE_MATRIX, pool: WIDE_POOL, count: 12, seed: 'gen0' });
+  const b = initPopulation({ matrix: WIDE_MATRIX, pool: WIDE_POOL, count: 12, seed: 'gen0' });
+  assert.deepEqual(a, b);
+  assert.equal(a.length, 12);
+  for (const team of a) {
+    assert.equal(team.length, 3);
+    assert.equal(new Set(speciesOf(team)).size, 3);
+  }
+});
+
+test('nextGeneration is deterministic across repeated calls under the same seed', () => {
+  const population = samplePopulation(20, 'pop-det');
+  const fitness = population.map((_, i) => i / population.length);
+  const a = nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'gen-det' });
+  const b = nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'gen-det' });
+  assert.deepEqual(a, b);
+});
+
+test('a different seed produces a different next generation', () => {
+  const population = samplePopulation(20, 'pop-diff');
+  const fitness = population.map((_, i) => i / population.length);
+  const a = nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'seed-a' });
+  const b = nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'seed-b' });
+  assert.notDeepEqual(a, b);
+});
+
+test('deathRate is honored exactly: round(deathRate * P) worst-fitness teams die', () => {
+  const P = 20;
+  const population = samplePopulation(P, 'death-check');
+  const fitness = population.map((_, i) => i); // strictly increasing, no ties
+  const { lineage } = nextGeneration({
+    population,
+    fitness,
+    pool: WIDE_POOL,
+    matrix: WIDE_MATRIX,
+    seed: 'death-check-gen',
+    opts: { deathRate: 0.25 },
+  });
+  assert.equal(lineage.died.length, 5, 'round(0.25 * 20) = 5');
+  // The 5 lowest-fitness indices (0..4) must be exactly the ones that died.
+  assert.deepEqual([...lineage.died].sort((a, b) => a - b), [0, 1, 2, 3, 4]);
+});
+
+test('mutation probability is monotone in fitness percentile among survivors', () => {
+  const P = 16;
+  const population = samplePopulation(P, 'mono-pop');
+  const fitness = population.map((_, i) => i); // fixed ranking every trial below
+
+  // deathRate 0.5 + immigrantFraction 0 keeps mutantSlotsAvailable (8) well
+  // above the expected number of successful rolls at these odds (floor 0.05,
+  // ceil 0.4), so oversubscription capping never distorts the raw roll rate
+  // -- every successful roll becomes a 'mutant' lineage entry.
+  const opts = { deathRate: 0.5, immigrantFraction: 0 };
+
+  const trials = 250;
+  const mutantCountByIndex = new Map();
+  for (let t = 0; t < trials; t++) {
+    const { lineage } = nextGeneration({
+      population,
+      fitness,
+      pool: WIDE_POOL,
+      matrix: WIDE_MATRIX,
+      seed: `mono-trial-${t}`,
+      opts,
+    });
+    for (const entry of lineage.entries) {
+      if (entry.origin !== 'mutant') continue;
+      mutantCountByIndex.set(entry.parentIndex, (mutantCountByIndex.get(entry.parentIndex) ?? 0) + 1);
+    }
+  }
+
+  // Survivors are indices 8..15 (fitness 8..15, worst-to-best among them).
+  // Index 8 = lowest surviving percentile (floor chance); index 15 = highest
+  // (ceil chance) -- expect meaningfully more mutation rolls at the top.
+  const lowestSurvivorMutations = mutantCountByIndex.get(8) ?? 0;
+  const highestSurvivorMutations = mutantCountByIndex.get(15) ?? 0;
+  assert.ok(
+    highestSurvivorMutations > lowestSurvivorMutations * 2,
+    `expected the highest-percentile survivor to mutate meaningfully more often ` +
+      `(lowest=${lowestSurvivorMutations}, highest=${highestSurvivorMutations})`
+  );
+
+  // Coarser, noise-robust monotonicity check: the theoretical per-index
+  // chance is 0.05 + 0.35*percentile, so summing across the bottom half of
+  // survivors (indices 8-11, percentiles 0/7..3/7) vs the top half (12-15,
+  // percentiles 4/7..1) gives a wide expected gap (theoretical sums 0.5P vs
+  // 1.3P) that easily survives sampling noise at this trial count, unlike a
+  // tighter per-index or adjacent-band comparison.
+  const bottomHalf = [8, 9, 10, 11].reduce((sum, idx) => sum + (mutantCountByIndex.get(idx) ?? 0), 0);
+  const topHalf = [12, 13, 14, 15].reduce((sum, idx) => sum + (mutantCountByIndex.get(idx) ?? 0), 0);
+  assert.ok(topHalf > bottomHalf, `expected the top-percentile half (${topHalf}) to mutate more than the bottom half (${bottomHalf})`);
+});
+
+test('every mutant differs from its parent in exactly one slot and has 3 distinct species', () => {
+  const P = 24;
+  const population = samplePopulation(P, 'mutant-shape-pop');
+  const fitness = population.map((_, i) => i);
+  const { population: next, lineage } = nextGeneration({
+    population,
+    fitness,
+    pool: WIDE_POOL,
+    matrix: WIDE_MATRIX,
+    seed: 'mutant-shape-gen',
+    opts: { deathRate: 0.4, mutationCeil: 0.9, mutationFloor: 0.5 }, // force plenty of mutants
+  });
+
+  let mutantCount = 0;
+  lineage.entries.forEach((entry, i) => {
+    if (entry.origin !== 'mutant') return;
+    mutantCount++;
+    const parentTeam = population[entry.parentIndex];
+    const mutantTeam = next[i];
+    let diffCount = 0;
+    for (let slot = 0; slot < 3; slot++) {
+      if (parentTeam[slot] !== mutantTeam[slot]) diffCount++;
+    }
+    assert.equal(diffCount, 1, `mutant should differ from parent in exactly one slot, got ${diffCount}`);
+    assert.equal(entry.swappedSlot, [0, 1, 2].find((slot) => parentTeam[slot] !== mutantTeam[slot]));
+    assert.equal(new Set(speciesOf(mutantTeam)).size, 3, 'mutant must have 3 distinct species');
+  });
+  assert.ok(mutantCount > 0, 'sanity: this config should actually produce mutants');
+});
+
+test('population stays unique and exactly at target size, with the immigrant floor respected', () => {
+  const P = 30;
+  const population = samplePopulation(P, 'size-pop');
+  const fitness = population.map((_, i) => i);
+  const { population: next, lineage } = nextGeneration({
+    population,
+    fitness,
+    pool: WIDE_POOL,
+    matrix: WIDE_MATRIX,
+    seed: 'size-gen',
+    opts: { deathRate: 0.25 }, // default immigrantFraction (0.1)
+  });
+
+  assert.equal(next.length, P, 'the wide pool should always be able to fill back up to P');
+  const signatures = new Set(next.map(teamSignature));
+  assert.equal(signatures.size, P, 'no two teams in the next population share a species-set');
+
+  const immigrantCount = lineage.entries.filter((e) => e.origin === 'immigrant').length;
+  const expectedFloor = Math.round(DEFAULT_IMMIGRANT_FRACTION * P);
+  assert.ok(
+    immigrantCount >= expectedFloor,
+    `expected at least the ${expectedFloor}-team immigrant floor, got ${immigrantCount}`
+  );
+});
+
+test('excludeSpecies is honored end to end: initPopulation and nextGeneration (mutants + immigrants)', () => {
+  const excludeSpecies = WIDE_POOL_MONS.slice(0, 5).map((m) => m.builtMon.speciesId);
+
+  const gen0 = initPopulation({ matrix: WIDE_MATRIX, pool: WIDE_POOL, count: 20, seed: 'exclude-gen0', excludeSpecies });
+  for (const team of gen0) {
+    for (const species of excludeSpecies) assert.ok(!speciesOf(team).includes(species));
+  }
+
+  const fitness = gen0.map((_, i) => i);
+  const { population: next } = nextGeneration({
+    population: gen0,
+    fitness,
+    pool: WIDE_POOL,
+    matrix: WIDE_MATRIX,
+    seed: 'exclude-gen1',
+    opts: { deathRate: 0.4, mutationCeil: 0.9, mutationFloor: 0.5, excludeSpecies },
+  });
+  for (const team of next) {
+    for (const species of excludeSpecies) assert.ok(!speciesOf(team).includes(species));
+  }
+});
+
+test('convergence detector fires exactly when the top-N set is stable for `window` generations', () => {
+  const P = 10;
+  const stablePop = samplePopulation(P, 'converge-stable');
+  const stableFitness = stablePop.map((_, i) => i);
+  const stableGen = { population: stablePop, fitness: stableFitness };
+
+  const churnPop = samplePopulation(P, 'converge-churn');
+  const churnGen = { population: churnPop, fitness: churnPop.map((_, i) => i) };
+
+  // Not enough history yet.
+  assert.deepEqual(hasConverged([stableGen, stableGen], { window: 3 }), { converged: false, reason: null });
+
+  // 3 identical generations in a row -> converged.
+  const converged = hasConverged([stableGen, stableGen, stableGen], { window: 3, topN: 5 });
+  assert.equal(converged.converged, true);
+  assert.match(converged.reason, /top-5 composition unchanged for 3 consecutive generations/);
+
+  // A churny generation breaks the streak even if it's the most recent one.
+  const broken = hasConverged([stableGen, stableGen, churnGen], { window: 3, topN: 5 });
+  assert.equal(broken.converged, false);
+  assert.equal(broken.reason, null);
+
+  // Only the most recent `window` generations matter -- an old churn doesn't
+  // block convergence once the streak restarts.
+  const recovered = hasConverged([churnGen, stableGen, stableGen, stableGen], { window: 3, topN: 5 });
+  assert.equal(recovered.converged, true);
+});
+
+test('a too-small population still returns a coherent (possibly short) result rather than throwing', () => {
+  const tinyMons = makeMons(4); // C(4,3) = 4 possible teams total
+  const tinyMatrix = fakeMatrix(tinyMons);
+  const tinyPool = poolKeys(tinyMons);
+  const population = initPopulation({ matrix: tinyMatrix, pool: tinyPool, count: 4, seed: 'tiny' });
+  assert.equal(population.length, 4);
+
+  const fitness = population.map((_, i) => i);
+  const { population: next, lineage } = nextGeneration({
+    population,
+    fitness,
+    pool: tinyPool,
+    matrix: tinyMatrix,
+    seed: 'tiny-gen',
+    opts: { deathRate: 0.25 },
+  });
+  assert.ok(next.length <= 4, 'never exceeds the requested population size');
+  const signatures = new Set(next.map(teamSignature));
+  assert.equal(signatures.size, next.length, 'no duplicate team compositions even under pool exhaustion');
+  assert.ok(Array.isArray(lineage.died));
+});
