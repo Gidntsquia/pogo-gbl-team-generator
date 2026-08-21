@@ -78,6 +78,7 @@ node src/cli.js <collection.csv> [options]
   --html PATH        HTML report output path              (default out/report.html)
   --no-html          skip writing the HTML report
   --current-moves    use each mon's own CSV moveset instead of recommended
+  --threads N        run battles across N worker threads     (default: serial)
   --help             print this help and exit
 
 Sampling (default path):
@@ -236,6 +237,41 @@ raise it gradually.
 
 `--score-meta` (both paths) only affects the cheaper 1v1 pruning pass used
 to pick which Pokemon are even eligible for the candidate pool.
+
+### Performance: parallel battles (`--threads`)
+
+3v3 battles are CPU-bound and independent of each other, so they can run
+across multiple OS threads with no change to the battle math itself — every
+battle still runs unmodified pvpoke engine code, just on more cores at once.
+
+```bash
+node src/cli.js fixtures/sample-pokegenie.csv --threads 4
+node scripts/tournament.mjs fixtures/sample-pokegenie.csv --threads 4
+```
+
+- `src/cli.js --threads N` runs the whole battle set for a single CLI
+  invocation through one worker pool. Omit it for serial (the default).
+- `scripts/tournament.mjs --threads N` (for large offline/overnight runs —
+  see its own `--help`) defaults to `max(1, cpus - 1)` already; pass
+  `--threads 1` to force serial.
+- Either way, the *same* `(seed, threads)` reproduces the exact same battle
+  results every run — worker assignment is a deterministic function of the
+  battle list and thread count, not real-time scheduling.
+- A threaded run's rankings and win rates match a serial run's. On a very
+  small fraction of individual battles (a documented pvpoke engine
+  characteristic — see `src/engine/README.md`'s "Known limitation" —
+  independent of this project's own code), reused-instance move tie-breaks
+  can differ between a serial run and a threaded one, so **serial stays the
+  bit-exact reference mode**; `--threads` trades that last sliver of
+  cross-run exactness for real wall-clock speed with no change to which
+  teams the report recommends.
+
+`scripts/bench.mjs` measures raw battle throughput if you want to compare
+serial vs. threaded speed on your own machine before committing to a large
+run — see `src/engine/README.md`'s "Parallel battles" section for how to
+read its output, including the `--batches` mode that shows the persistent
+worker pool's boot-cost amortization across repeated batches (the pattern
+`scripts/tournament.mjs` and large multi-call runs actually use).
 
 ## How scoring works
 

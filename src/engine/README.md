@@ -283,6 +283,21 @@ speedup on Jaxon's target hardware; `test/parallel.test.js`'s "pool reused
 across many run() calls" coverage confirms the reuse itself is correct, just
 not yet benchmarked end-to-end.
 
+**GOALS T22 (code half): `--batches B` added.** `node scripts/bench.mjs --n N
+--threads T --batches B` (B > 1) now drives the same N battles, split into B
+roughly-equal groups, through repeated `run()` calls against ONE
+`createExecutor()` pool instead of one `runBattles()` call -- exercising
+exactly the amortization scenario above (`runBenchPersistent` in
+`scripts/bench.mjs`, covered at tiny N by `test/bench.test.js`). Per-batch
+timing is printed (or returned in the JSON via `--json`), so batch 0 (pool
+boot + battles) is directly comparable against batch 1+ (amortized, no
+boot) -- this is the tool to run locally to fill in the table above with
+real amortized-pool numbers; `--threads` without `--batches` (or with
+`--batches 1`) is unchanged and still reproduces the pre-T22 one-shot
+`runBattles()` measurement byte-for-byte. **The measured numbers themselves
+are T22's measurement half and belong on Jaxon's target hardware** (per
+GOALS T22's split-ownership note) -- not pasted here from a sandbox run.
+
 **Integration status (GOALS T15b).** `matrix.builtMons` (`src/scoring/index.js`)
 and every meta-team member (`buildMetaMon`/`buildRecommendedMon`) now carry a
 `spec` field alongside `pokemon` -- the raw `{speciesId, ivs, shadow,

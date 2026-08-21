@@ -20,15 +20,28 @@
 // vendor/pvpoke/src/js/ are the engine itself -- see PROGRESS.md for the T14
 // findings from one such run.)
 //
-// Usage: node scripts/bench.mjs [--n 200] [--difficulty 3] [--threads N] [--json]
+// Usage: node scripts/bench.mjs [--n 200] [--difficulty 3] [--threads N]
+//          [--batches B] [--json]
 //
 // GOALS T15: --threads N runs the same N deterministic battles through
 // src/engine/parallel.js's runBattles() instead of a serial loop, so the two
 // modes are directly comparable (same teams, same lead cycling, same seeds).
+//
+// GOALS T22: --threads N --batches B (B > 1) instead drives the same N
+// battles, split into B roughly-equal batches, through ONE persistent
+// createExecutor() pool via repeated run() calls -- the "amortized across
+// many run() calls" scenario src/engine/README.md's Performance section
+// flagged as unmeasured (bench.mjs previously only ever made one runBattles()
+// call per process, so every measurement paid pool-boot cost exactly once
+// per invocation regardless of N; this mode shows what real multi-call
+// callers like scripts/tournament.mjs (T21) and a future evolve driver (T24)
+// actually experience: boot cost paid ONCE, then amortized across every
+// subsequent batch). --batches is ignored (and --threads alone reproduces
+// the pre-T22 one-shot runBattles() behavior byte-for-byte) unless > 1.
 
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
-import { runBattles, defaultThreadCount } from '../src/engine/parallel.js';
+import { runBattles, createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 
 const IVS = { atk: 0, def: 15, hp: 15 };
 // Two competitively-matched Great League staple trios (not a blowout like
@@ -40,12 +53,13 @@ const TEAM_B_IDS = ['stunfisk_galarian', 'mandibuzz', 'clodsire'];
 const LEADS = [0, 1, 2];
 
 function parseArgs(argv) {
-  const opts = { n: 200, difficulty: 3, json: false, threads: undefined };
+  const opts = { n: 200, difficulty: 3, json: false, threads: undefined, batches: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--n') opts.n = Number(argv[++i]);
     else if (a === '--difficulty') opts.difficulty = Number(argv[++i]);
     else if (a === '--threads') opts.threads = Number(argv[++i]);
+    else if (a === '--batches') opts.batches = Number(argv[++i]);
     else if (a === '--json') opts.json = true;
   }
   return opts;
@@ -143,8 +157,99 @@ export async function runBenchThreaded(opts = {}) {
   };
 }
 
+/**
+ * Same N deterministic battles as runBench/runBenchThreaded, but split into
+ * `batches` roughly-equal groups and run through repeated `run()` calls
+ * against ONE persistent `createExecutor()` pool (GOALS T22), instead of one
+ * `runBattles()` call that boots and tears down a pool per invocation. This
+ * is what lets a caller SEE the pool-reuse amortization `createExecutor`
+ * (GOALS T19/T21) was built for: the first batch pays lazy pool-boot cost,
+ * every batch after it does not. Per-batch timings are returned so a caller
+ * can compare batch 0 (boot included) against later batches (amortized).
+ *
+ * @param {{ n?: number, difficulty?: number, threads?: number, batches?: number }} [opts]
+ * @returns {Promise<{
+ *   threads: number, batches: number, n: number,
+ *   batchResults: Array<{batch:number, n:number, battleMs:number, msPerBattle:number, turns:number[]}>,
+ *   totalMs: number, msPerBattle: number, turns: number[]
+ * }>}
+ */
+export async function runBenchPersistent(opts = {}) {
+  const { n = 200, difficulty = 3, threads, batches = 4 } = opts;
+  const batchCount = Math.max(1, Math.floor(batches));
+  const perBatch = Math.ceil(n / batchCount);
+
+  const executor = createExecutor({ threads });
+  const batchResults = [];
+  try {
+    let start = 0;
+    for (let b = 0; b < batchCount && start < n; b++) {
+      const size = Math.min(perBatch, n - start);
+      const specs = [];
+      for (let i = 0; i < size; i++) {
+        const idx = start + i;
+        specs.push({
+          teamA: monSpecs(TEAM_A_IDS),
+          teamB: monSpecs(TEAM_B_IDS),
+          leadA: LEADS[idx % 3],
+          leadB: LEADS[Math.floor(idx / 3) % 3],
+          difficulty,
+          seed: 1000 + idx,
+        });
+      }
+
+      const t0 = nowMs();
+      const results = await executor.run(specs);
+      const t1 = nowMs();
+
+      batchResults.push({
+        batch: b,
+        n: size,
+        battleMs: t1 - t0,
+        msPerBattle: (t1 - t0) / size,
+        turns: results.map((r) => r.summary.turns),
+      });
+      start += size;
+    }
+  } finally {
+    await executor.close();
+  }
+
+  const totalMs = batchResults.reduce((s, r) => s + r.battleMs, 0);
+  return {
+    threads: threads ?? defaultThreadCount(),
+    batches: batchResults.length,
+    n,
+    batchResults,
+    totalMs,
+    msPerBattle: totalMs / n,
+    turns: batchResults.flatMap((r) => r.turns),
+  };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+
+  if (opts.threads !== undefined && opts.batches !== undefined && opts.batches > 1) {
+    const result = await runBenchPersistent(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
+    console.log(
+      `bench (persistent pool): ${result.n} battles, difficulty=${opts.difficulty}, ` +
+        `threads=${result.threads}, batches=${result.batches}`
+    );
+    for (const b of result.batchResults) {
+      const tag = b.batch === 0 ? '(boot + battles)' : '(amortized, no boot)';
+      console.log(
+        `  batch ${b.batch}: ${b.n} battles, ${b.battleMs.toFixed(1)}ms total, ` +
+          `${b.msPerBattle.toFixed(2)}ms/battle ${tag}`
+      );
+    }
+    console.log(`  overall ms/battle:     ${result.msPerBattle.toFixed(2)}ms`);
+    return;
+  }
 
   if (opts.threads !== undefined) {
     const result = await runBenchThreaded(opts);

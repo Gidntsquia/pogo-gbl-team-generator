@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runBench, runBenchThreaded } from '../scripts/bench.mjs';
+import { runBench, runBenchThreaded, runBenchPersistent } from '../scripts/bench.mjs';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 
@@ -68,4 +68,44 @@ test('runBenchThreaded (GOALS T15) reproduces the same turn counts as the serial
   const quad = await runBenchThreaded({ n: 6, difficulty: 3, threads: 4 });
   assert.deepEqual(single.turns, serial.turns, 'threads=1 must match the serial loop exactly');
   assert.deepEqual(quad.turns, serial.turns, 'threads=4 must match the serial loop exactly');
+});
+
+test('runBenchPersistent (GOALS T22) produces a well-formed multi-batch report for a tiny N', async () => {
+  const result = await runBenchPersistent({ n: 6, difficulty: 3, threads: 2, batches: 3 });
+
+  assert.equal(result.n, 6);
+  assert.equal(result.batches, 3);
+  assert.equal(result.batchResults.length, 3);
+  assert.equal(
+    result.batchResults.reduce((s, b) => s + b.n, 0),
+    6,
+    'batch sizes sum to the requested n'
+  );
+  for (const b of result.batchResults) {
+    assert.ok(b.battleMs >= 0);
+    assert.ok(Number.isFinite(b.msPerBattle) && b.msPerBattle > 0);
+    assert.equal(b.turns.length, b.n);
+  }
+  assert.equal(result.turns.length, 6);
+  assert.ok(Number.isFinite(result.msPerBattle) && result.msPerBattle > 0);
+});
+
+test('runBenchPersistent (GOALS T22) reproduces the same turn counts as the serial runBench across batch splits', async () => {
+  const serial = await runBench({ n: 8, difficulty: 3 });
+  const oneBatch = await runBenchPersistent({ n: 8, difficulty: 3, threads: 3, batches: 1 });
+  const threeBatches = await runBenchPersistent({ n: 8, difficulty: 3, threads: 3, batches: 3 });
+  assert.deepEqual(oneBatch.turns, serial.turns, 'a single batch against the persistent pool must match serial');
+  assert.deepEqual(
+    threeBatches.turns,
+    serial.turns,
+    'splitting the same n across multiple run() calls on one pool must not change any battle result'
+  );
+});
+
+test('runBenchPersistent (GOALS T22) closes its executor -- process can exit without lingering workers', async () => {
+  // No explicit assertion beyond "this resolves" -- if close() were skipped,
+  // a worker_threads handle would keep the test process alive past its
+  // timeout instead of node:test moving on cleanly.
+  await runBenchPersistent({ n: 4, difficulty: 3, threads: 2, batches: 2 });
+  assert.ok(true);
 });
