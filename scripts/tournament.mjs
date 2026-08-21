@@ -57,6 +57,10 @@
 //                           after stage 2 (see "DEADLINE SELF-TUNING" below) (450)
 //   --exclude a,b          species ids excluded from candidate teams (none)
 //   --difficulty D         AI difficulty 0-3 override               (engine default, 3)
+//   --threads N            GOALS T15c: battle through the worker-pool executor
+//                           (src/engine/parallel.js), batched per candidate;
+//                           omit for the original serial battleTeams loop
+//                           (default: not set, i.e. serial)
 //   --out PATH             final Markdown report path         (<out-dir>/my-teams-tournament.md)
 //   --out-dir DIR          checkpoints + DONE marker + default report dir ("out")
 //   --help                 print this help and exit
@@ -105,6 +109,7 @@ import { parseArgs } from 'node:util';
 import { importCollection } from '../src/importer/index.js';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
+import { runBattles } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadMetaTeams } from '../src/meta/teams.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
@@ -361,32 +366,40 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
 // ---------------------------------------------------------------------------
 
 /**
- * @param {object} ctx - from initEngine.
+ * @param {object} ctx - from initEngine; ctx.vendorRoot is used by the threaded path to boot worker engine contexts.
  * @param {{
  *   candidates: string[][], matrix: object,
- *   opponents: Array<{id:string, name:string, label?:string, members:Array<{pokemon:object}>}>,
+ *   opponents: Array<{id:string, name:string, label?:string, members:Array<{pokemon:object, spec:object}>}>,
  *   pairingsFor: (candidateSig:string, opponentId:string) => Array<{leadA:number, leadB:number}>,
  *   difficulty?: number,
  *   trackLeads?: boolean, - compute bestLead/safeSwap/perMeta/hardestOpponents/curated-vs-sampled (stage 3 only)
+ *   threads?: number, - GOALS T15c: when set, every battle for a given candidate (across
+ *     all its opponents/pairings) is batched into ONE src/engine/parallel.js
+ *     runBattles() call instead of driving battleTeams() serially. Batched per
+ *     CANDIDATE (not per whole stage) so a failure only costs that candidate's
+ *     battles, not the whole stage.
  *   onProgress?: (p:{completed:number, total:number, startedAt:number}) => void,
  *   onLog?: (msg:string) => void,
  * }} params
- * @returns {{ rankings: object[], battleCount: number, errorCount: number, elapsedMs: number, startedAt: number, finishedAt: number }}
+ * @returns {Promise<{ rankings: object[], battleCount: number, errorCount: number, elapsedMs: number, startedAt: number, finishedAt: number }>}
  */
-function runFunnelStage(ctx, params) {
-  const { candidates, matrix, opponents, pairingsFor, difficulty, trackLeads = false, onProgress, onLog } = params;
+async function runFunnelStage(ctx, params) {
+  const { candidates, matrix, opponents, pairingsFor, difficulty, trackLeads = false, threads, onProgress, onLog } = params;
+  const threaded = typeof threads === 'number' && threads > 0;
 
   const startedAt = Date.now();
   const results = [];
   let battleCount = 0;
   let errorCount = 0;
 
-  candidates.forEach((keys, idx) => {
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const keys = candidates[idx];
     const members = keys.map((key) => {
       const b = matrix.builtMons[key];
-      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon };
+      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon, spec: b.spec };
     });
     const teamA = members.map((m) => m.pokemon);
+    const teamASpec = members.map((m) => m.spec);
     const candidateSig = [...keys].sort().join('|');
 
     let winPoints = 0;
@@ -399,9 +412,52 @@ function runFunnelStage(ctx, params) {
     const swapHpSum = [0, 0, 0];
     const swapHpCount = [0, 0, 0];
 
-    for (const opp of opponents) {
+    // Pairings are seeded off (candidateSig, opponent.id) -- pure/deterministic,
+    // so computing them once up front and reusing below (rather than calling
+    // pairingsFor twice) is just an optimization, not a correctness dependency.
+    const oppPlans = opponents.map((opp) => ({ opp, pairings: pairingsFor(candidateSig, opp.id) }));
+
+    // Threaded path: batch this candidate's entire battle set (every opponent x
+    // every pairing) into one runBattles() call, in the exact (opponent, pairing)
+    // order oppPlans/pairings iterate below, so results line up 1:1 by position.
+    // runBattles rejects the WHOLE batch on any single bad spec (src/engine/
+    // parallel.js) -- there is no partial-batch result to recover -- so a
+    // failure here is counted as an error for EVERY battle in THIS candidate's
+    // batch. That is coarser than the serial path's per-battle skip-and-continue
+    // (one bad matchup no longer costs just itself, it costs its whole
+    // candidate), but it preserves the ticket's actual invariant -- one bad
+    // candidate/matchup can never take down the whole overnight run -- and was
+    // an explicitly authorized tradeoff (GOALS T15c: "either wrap per-battle or
+    // batch per-candidate with a try/catch around each runBattles call").
+    let threadedResults = null;
+    if (threaded) {
+      const specs = [];
+      for (const { opp, pairings } of oppPlans) {
+        const teamBSpec = opp.members.map((m) => m.spec);
+        for (const { leadA, leadB } of pairings) {
+          specs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
+        }
+      }
+      if (specs.length > 0) {
+        try {
+          threadedResults = await runBattles(specs, { threads, vendorRoot: ctx.vendorRoot });
+        } catch (err) {
+          errorCount += specs.length;
+          candidateErrors += specs.length;
+          onLog?.(
+            `battle batch error (candidate's ${specs.length} battles skipped): ` +
+              `candidate=[${members.map((m) => m.name).join('/')}]: ${err.message}`
+          );
+          threadedResults = new Array(specs.length).fill(null);
+        }
+      } else {
+        threadedResults = [];
+      }
+    }
+    let planIdx = 0;
+
+    for (const { opp, pairings } of oppPlans) {
       const teamB = opp.members.map((m) => m.pokemon);
-      const pairings = pairingsFor(candidateSig, opp.id);
 
       let oppWinPoints = 0;
       let oppHpSum = 0;
@@ -412,16 +468,21 @@ function runFunnelStage(ctx, params) {
 
       for (const { leadA, leadB } of pairings) {
         let r;
-        try {
-          r = battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty });
-        } catch (err) {
-          errorCount += 1;
-          candidateErrors += 1;
-          onLog?.(
-            `battle error (skipped): candidate=[${members.map((m) => m.name).join('/')}] ` +
-              `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${err.message}`
-          );
-          continue;
+        if (threaded) {
+          r = threadedResults[planIdx++];
+          if (r == null) continue; // part of a failed batch; already counted above
+        } else {
+          try {
+            r = battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty });
+          } catch (err) {
+            errorCount += 1;
+            candidateErrors += 1;
+            onLog?.(
+              `battle error (skipped): candidate=[${members.map((m) => m.name).join('/')}] ` +
+                `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${err.message}`
+            );
+            continue;
+          }
         }
 
         battleCount += 1;
@@ -543,7 +604,7 @@ function runFunnelStage(ctx, params) {
     if (completed % 10 === 0 || completed === candidates.length) {
       onProgress?.({ completed, total: candidates.length, startedAt });
     }
-  });
+  }
 
   results.sort((a, b) => b.winRate - a.winRate || b.avgHpMargin - a.avgHpMargin);
   return { rankings: results, battleCount, errorCount, elapsedMs: Date.now() - startedAt, startedAt, finishedAt: Date.now() };
@@ -734,6 +795,14 @@ function renderDoneMarker(result) {
  *   s2Top?:number, s2Opponents?:number,
  *   s3Top?:number, s3Opponents?:number,
  *   deadlineMinutes?:number,
+ *   threads?:number, - GOALS T15c: battles run through src/engine/parallel.js's
+ *     worker-pool executor, batched per candidate (see runFunnelStage). Omitted/
+ *     falsy keeps the original serial battleTeams loop. NOT part of the
+ *     checkpoint config fingerprint (buildRunConfig) -- it's a pure performance
+ *     knob (same requested battle set either way; only avgHpMargin can drift a
+ *     little, per src/engine/README.md's "Known limitation" section, same
+ *     caveat GOALS T15b already documented for evaluateTeams), so changing
+ *     --threads between runs must NOT invalidate an existing checkpoint.
  *   outDir?:string, out?:string,
  *   onProgress?:(p:{stage:number, completed:number, total:number, startedAt:number})=>void,
  *   onLog?:(msg:string)=>void,
@@ -749,6 +818,7 @@ export async function runTournament(csvPath, opts = {}) {
   const log = (msg) => opts.onLog?.(msg);
   const progressFor = (stageNum) => (p) => opts.onProgress?.({ stage: stageNum, ...p });
   const difficulty = config.difficulty ?? undefined;
+  const threads = opts.threads;
 
   log(`tournament: starting (collection=${config.csvPath}, out-dir=${outDir}, report=${reportPath})`);
 
@@ -801,12 +871,13 @@ export async function runTournament(csvPath, opts = {}) {
       curatedRatio: config.curatedRatio,
     });
 
-    const run = runFunnelStage(ctx, {
+    const run = await runFunnelStage(ctx, {
       candidates: s1CandidateTeams,
       matrix: deduped,
       opponents: s1Opponents,
       pairingsFor: (sig, oppId) => threeRandomPairings(`${config.seed}-s1`, sig, oppId),
       difficulty,
+      threads,
       onProgress: progressFor(1),
       onLog: log,
     });
@@ -872,12 +943,13 @@ export async function runTournament(csvPath, opts = {}) {
       curatedRatio: config.curatedRatio,
     });
 
-    const run = runFunnelStage(ctx, {
+    const run = await runFunnelStage(ctx, {
       candidates: s2CandidateTeams,
       matrix: deduped,
       opponents: s2OpponentsSampled,
       pairingsFor: (sig, oppId) => threeRandomPairings(`${config.seed}-s2`, sig, oppId),
       difficulty,
+      threads,
       onProgress: progressFor(2),
       onLog: log,
     });
@@ -959,13 +1031,14 @@ export async function runTournament(csvPath, opts = {}) {
         `(${s3OpponentsSampled.length} total) -- verified against sampleOpponentTeams' actual curatedCount math.`
     );
 
-    const run = runFunnelStage(ctx, {
+    const run = await runFunnelStage(ctx, {
       candidates: s3CandidateTeams,
       matrix: deduped,
       opponents: s3OpponentsSampled,
       pairingsFor: () => ninePairings(),
       difficulty,
       trackLeads: true,
+      threads,
       onProgress: progressFor(3),
       onLog: log,
     });
@@ -1049,6 +1122,8 @@ Options:
   --deadline-minutes D  overall wall-clock budget (self-tuning)     (default ${DEFAULTS.deadlineMinutes})
   --exclude a,b         species ids excluded from candidate teams   (default: none)
   --difficulty D        AI difficulty 0-3 override                 (default: engine default, 3)
+  --threads N           battle via the worker-pool executor, batched per
+                          candidate (src/engine/parallel.js); omit for serial (default: not set, i.e. serial)
   --out PATH            final Markdown report path                 (default <out-dir>/my-teams-tournament.md)
   --out-dir DIR         checkpoints + DONE marker + default report  (default "${DEFAULTS.outDir}")
   --help                print this help and exit
@@ -1096,6 +1171,7 @@ async function main(argv) {
         'deadline-minutes': { type: 'string' },
         exclude: { type: 'string' },
         difficulty: { type: 'string' },
+        threads: { type: 'string' },
         out: { type: 'string' },
         'out-dir': { type: 'string' },
         help: { type: 'boolean' },
@@ -1122,6 +1198,7 @@ async function main(argv) {
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],
     difficulty: values.difficulty !== undefined ? intFlag(values.difficulty, 'difficulty', undefined) : undefined,
+    threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : undefined,
     s1Candidates: intFlag(values['s1-candidates'], 's1-candidates', DEFAULTS.s1Candidates),
     s1Opponents: intFlag(values['s1-opponents'], 's1-opponents', DEFAULTS.s1Opponents),
     s2Top: intFlag(values['s2-top'], 's2-top', DEFAULTS.s2Top),

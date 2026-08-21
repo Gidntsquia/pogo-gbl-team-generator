@@ -161,12 +161,22 @@ not always what the mon was actually carrying; this was a real bug caught
 during verification, see PROGRESS.md). `evaluateTeams` (`src/teams/index.js`)
 now accepts an opt-in `opts.threads` (and the CLI a `--threads` flag) that
 collects every battle across every candidate into one flat spec list and runs
-it through a single `runBattles()` call. `scripts/tournament.mjs` still drives
-`battleTeams` directly (serially) -- GOALS explicitly reserves that file for
-its own ticket (T13) and wiring `--threads` into it is deferred to a follow-up
-(see GOALS.md); it needs the same kind of spec-carrying plumbing this ticket
-added to `src/scoring/index.js`/`src/meta/*`, applied to its own candidate/
-opponent member shapes.
+it through a single `runBattles()` call.
+
+**GOALS T15c** wired the same executor into `scripts/tournament.mjs`, which
+drives `battleTeams` directly rather than through `evaluateTeams` (its 3-stage
+funnel needs per-battle skip-and-continue error handling across all three
+stages, which `evaluateTeams` doesn't have). `runFunnelStage`'s `opts.threads`
+batches one CANDIDATE's entire battle set (every opponent x every lead
+pairing) into a single `runBattles()` call, rather than the whole stage --
+`runBattles` rejects its entire batch on any one bad spec, so batching at
+stage granularity would mean one bad matchup could cost an entire stage's
+worth of battles; batching per candidate instead means a batch failure only
+costs that one candidate (counted as errors, logged, and skipped, same
+skip-and-continue spirit as the serial path, just at coarser granularity).
+The spec-carrying plumbing T15b already added (`matrix.builtMons[key].spec`,
+every meta/sampled team member's `.spec`) covers everything `tournament.mjs`
+needs -- no additional plumbing was required.
 
 ## Known limitation: battle order and reused-instance move selection
 
@@ -196,11 +206,26 @@ once and battle every candidate). Serial execution is self-consistent only
 because its battle order never changes run to run; `runBattles`' worker pool
 distributes specs across workers in an order that generally differs from the
 serial loop's, and each worker's own build cache reuses instances in *its*
-order -- so **win/loss outcomes and team win rates are unaffected (verified:
-`test/teams.test.js`'s threaded-vs-serial test, and by hand against a real CLI
-run with real sampled data -- see PROGRESS.md's T15b entry), but exact HP
-totals (`avgHpMargin`, `safeSwap.avgHpPct`) can drift by a small amount**
-between a serial and a threaded run of the same inputs. Standing rule 4
+order -- so **exact HP totals (`avgHpMargin`, `safeSwap.avgHpPct`) can drift by
+a small amount** between a serial and a threaded run of the same inputs.
+
+**CORRECTION (GOALS T15c, found by executing a larger real run than T15b's
+test covered):** T15b's original claim here -- that win/loss outcomes and team
+win rates are *unaffected* by threading -- does not hold in general; it only
+held at T15b's smaller test scale. A real `scripts/tournament.mjs` run at
+larger scale (4 finalists x 4 opponents x 9 pairings = 144 stage-3 battles,
+`test/tournament.test.js`) hit a case where the SAME mechanism above (a
+reused instance's `bestChargedMove` tie-break depending on which battles that
+cache entry already went through) reclassified one battle's verdict, not only
+its HP margin -- a narrow win under serial execution came out a tie under
+threaded execution of the identical seed/spec. Practical impact is bounded:
+each such flip moves a team's win rate by at most one battle's weight (out of
+however many battles feed that rate), and it is rare enough that T15b's
+smaller-scale test never tripped over it -- but "unaffected" was too strong a
+claim. `test/tournament.test.js`'s threaded-vs-serial test therefore checks
+win rates within a small documented tolerance rather than exact equality;
+`test/teams.test.js`'s smaller-scale T15b test still happens to pass exactly,
+which is consistent with this being rare rather than absent. Standing rule 4
 (vendor is read-only, never reimplement battle math) means this is documented
 here as a known characteristic rather than patched; it is also direct evidence
 for ROADMAP's existing "TrainingAI variance study" gap, which a future fire

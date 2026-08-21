@@ -137,6 +137,91 @@ test('deterministic: two fresh runs with the same seed produce an identical stag
   assert.deepEqual(ratesOther, ratesShared, 'same seed -> identical win rates (battles are seeded, not wall-clock random)');
 });
 
+// GOALS T15c: wires opts.threads/--threads into runFunnelStage, batching each
+// candidate's battles (across all its opponents/pairings) into one
+// src/engine/parallel.js runBattles() call instead of driving battleTeams()
+// serially -- same worker-pool executor GOALS T15b already wired into
+// evaluateTeams. Because avgHpMargin is this file's stage-to-stage tiebreak,
+// a drifted margin could in principle flip which candidates cross a stage's
+// top-N cutoff if two candidates tied exactly on winRate -- to keep this test
+// independent of that (a full 3-stage funnel isn't what's being verified;
+// per-team battle results are), s2Top/s3Top are set >= the candidate counts
+// feeding them so EVERY candidate advances through every stage regardless of
+// ranking, and finalist teams are compared by team signature (not position)
+// so a tie-break-driven reorder can't fail the assertion either.
+//
+// CORRECTION found while writing this test (executing the code, not reading
+// it, per the standing verification rule): T15b's README claim that "win/loss
+// outcomes and team win rates are unaffected" by threading does NOT hold in
+// general -- it held at T15b's smaller test scale (topK 4, 2 meta teams) but
+// at this test's larger scale (4 finalists x 4 opponents x 9 pairings = 144
+// stage-3 battles) a real run hit a case where ONE battle's verdict differed
+// between the serial and threaded execution of the exact same seed/spec (a
+// narrow win became a tie -- a 0.5/36 shift in that team's winRate). This is
+// the SAME root cause src/engine/README.md's "Known limitation" section
+// already documents (a reused Pokemon instance's resetMoves()/bestChargedMove
+// tie-break reads a stale battle-slot index, so it can differ depending on
+// which OTHER battles that instance's cache entry has already been through --
+// threaded execution reorders that per-worker, changing which battles are
+// "first use" of a cached instance) -- it just turns out that mechanism can
+// occasionally flip a marginal battle's OUTCOME, not only its HP margin. The
+// README's stronger claim is corrected there; here, WIN_RATE_TOLERANCE bounds
+// how much drift this test accepts per team (enough for a couple of such
+// single-battle reclassifications, not enough to hide a real spec-ordering
+// bug, which would misalign far more than one battle in 36).
+const WIN_RATE_TOLERANCE = 3 / 36;
+
+test('opts.threads (worker-pool executor, batched per candidate) produces win rates within tolerance of the serial path', async () => {
+  const THREADS_TINY = {
+    scoreMeta: 4,
+    pool: 8,
+    deadlineMinutes: 60,
+    s1Candidates: 4,
+    s1Opponents: 3,
+    s2Top: 4, // >= s1Candidates: no stage 1->2 narrowing, so no tie-break-dependent cutoff
+    s2Opponents: 3,
+    s3Top: 4, // >= s2Top: no stage 2->3 narrowing, so no tie-break-dependent cutoff
+    s3Opponents: 4,
+    seed: 'tournament-threads-test-seed',
+  };
+
+  const serialDir = tmpOutDir('gbl-tourney-thr-serial-');
+  const serial = await runTournament(FIXTURE, { ...THREADS_TINY, outDir: serialDir, out: path.join(serialDir, 'r.md') });
+
+  const threadedDir = tmpOutDir('gbl-tourney-thr-threaded-');
+  const threaded = await runTournament(FIXTURE, {
+    ...THREADS_TINY,
+    outDir: threadedDir,
+    out: path.join(threadedDir, 'r.md'),
+    threads: 2,
+  });
+
+  const byTeam = (run) => {
+    const map = new Map();
+    for (const t of run.finalRankings) map.set(teamSig(t), { winRate: t.winRate });
+    return map;
+  };
+  const serialByTeam = byTeam(serial);
+  const threadedByTeam = byTeam(threaded);
+
+  assert.deepEqual(
+    [...threadedByTeam.keys()].sort(),
+    [...serialByTeam.keys()].sort(),
+    'same set of finalist teams serial vs threaded (stage narrowing disabled above)'
+  );
+  for (const [sig, s] of serialByTeam) {
+    const t = threadedByTeam.get(sig);
+    assert.ok(
+      Math.abs(t.winRate - s.winRate) <= WIN_RATE_TOLERANCE,
+      `win rate for team ${sig} should match within tolerance (serial=${s.winRate}, threaded=${t.winRate})`
+    );
+  }
+
+  const threadedErrors =
+    threaded.stage1.timing.errorCount + threaded.stage2.timing.errorCount + threaded.stage3.timing.errorCount;
+  assert.equal(threadedErrors, 0, 'no battle-batch errors on a clean fixture run');
+});
+
 test('resume: deleting only the stage-3 checkpoint + DONE re-runs just stage 3 (stages 1-2 skipped)', async () => {
   const s1Path = path.join(SHARED_DIR, 'tournament-s1.json');
   const s2Path = path.join(SHARED_DIR, 'tournament-s2.json');
