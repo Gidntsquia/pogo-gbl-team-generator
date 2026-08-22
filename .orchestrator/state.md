@@ -4,6 +4,14 @@
 Jaxon's directives after the 82-gen run: (1) sim over-favors neutral/consistent mons — add alignment/snowball dynamics (winning the lead → counter-pick advantage) to fitness; (2) shield-advantage "closers" should be valued (asymmetric-shield 1v1 scenarios s10/s21 → closerScore); (3) LOCKED LEADS — a team is (lead, back1, back2), identity includes the lead, no own-lead averaging, lead-rotation mutation, ~3x battle savings per matchup. Engine already models switching/shields (verified in T20b work) — this is a FITNESS/selection revision, vendor untouched. T27 (investigation: measure snowball/shield behavior as engine plays it, findings appended INTO T28/T29 tickets) gates the rest. Routine RE-ENABLED + fired 19:26Z (cse_01UbPim2…, T27); supervision cron a6255a62 (14,37 * * * *). Also landed meanwhile by the last fire (726f6d7): 4th leaked field (hasActed) fixed → threaded now EXACTLY equals serial (deepEqual incl. HP margins), serial-reference doctrine RETIRED, 220/220 green.
 When T30 done: report A/B (classic vs battle-reality) to Jaxon, propose disabling routine, await say-so.
 
+## RESUME AFTER CONTEXT CLEAR (written 2026-08-22 ~20:0xZ at Jaxon's request; weekly usage was 96%, resets Aug 23 10pm ET)
+A fresh session needs to know:
+1. **The cloud builds T27–T30 with or without you** — routine trig_01JfxVRAW8FQYvnGSpEdkFoG ENABLED, hourly :43, zero-memory fires driven entirely by GOALS.md + PLAN.md Rev 6 + PROGRESS.md. If weekly-cap bounces fires, the first :43 tick after reset resumes automatically. DO NOTHING and the queue still completes.
+2. **What died with the old session**: the supervision cron (session-only CronCreate). To restore minimum-downtime supervision, re-arm a session cron (off-minutes, ~2x/hour) with: fetch origin + check T27–T30 boxes; RemoteTrigger list_runs; active run → noop; idle + unchecked → action=run; verify claims vs git; no subagents; no vendor-pin pulls; on T30 done → deliver the A/B report + propose disabling the routine (never disable without Jaxon's say-so).
+3. **Jaxon's standing rules**: routines-first (never dispatch Agent-tool subagents for implementation); commit messages footer per harness; my-collection.csv is gitignored/local-only (has his planned 4/15/14 Tinkaton appended); `/orchestrate` resume reads this file.
+4. **Local artifacts of record**: out/evolve-overnight-1/ (82-gen run, extended; checkpoints were HAND-PATCHED — generations=90, curatedRatio 0.7, opponentsPerGen 60 from gen 38, synthesized gen59 nextPopulation — so do NOT resume that out-dir with other flags), out/evolve-test-1/, out/t22-ab-*.
+5. **Engine status**: battles are now bit-deterministic at ANY thread count (4 leaked bench fields fixed across T20/T20b + follow-up; doctrine retired; 220/220 green as of 726f6d7).
+
 # ARCHIVE — Sim throughput II (Session mode, started 2026-08-21 ~15:35Z)
 
 ## FINAL STATE (2026-08-22 ~01:30Z): all initiatives delivered; crons STOPPED per Jaxon
