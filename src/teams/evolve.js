@@ -28,7 +28,7 @@ const TEAM_SIZE = 3;
 // death was judged "too harsh" -- only a quarter of the population dies each
 // generation, and mutation is a probabilistic roll (not a deterministic
 // top-quartile entitlement) whose odds simply rise with fitness percentile.
-export const DEFAULT_DEATH_RATE = 0.25;
+export const DEFAULT_DEATH_RATE = 1 / 3; // Jaxon 2026-08-22: bottom third dies (was 0.25)
 export const DEFAULT_MUTATION_FLOOR = 0.05;
 export const DEFAULT_MUTATION_CEIL = 0.4;
 // "a floor of ~10% of P fresh IMMIGRANT teams is always reserved" (PLAN Rev 5).
