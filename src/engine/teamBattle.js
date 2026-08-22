@@ -249,7 +249,9 @@ function orderWithLead(team, leadIndex) {
  *     remainingA: number, remainingB: number,
  *     turns: number, duration: number,
  *     leadA: number, leadB: number, difficulty: number, seed: number,
- *     endedBy: 'ko'|'timeout'
+ *     endedBy: 'ko'|'timeout',
+ *     leadFaintTurnA: number|null, leadFaintTurnB: number|null,
+ *     shieldsRemainingA: number, shieldsRemainingB: number
  *   }
  * }}
  */
@@ -446,6 +448,18 @@ export function battleTeams(ctx, params) {
   p1.getAI().evaluateMatchup(battle.getTurns(), active[1], active[0], p0);
 
   // --- Turn loop -----------------------------------------------------------
+  // GOALS T27 (alignment/lead-exchange investigation): track the first turn
+  // each side's ORIGINAL LEAD (orderedA[0]/orderedB[0]) reaches 0 HP. A
+  // Pokemon's `.hp` is a plain instance field that only ever decreases (pvpoke
+  // never revives a fainted mon mid-battle), and it still reflects reality
+  // even while the mon is benched after switching out -- so polling it once
+  // per turn, for exactly these two instances, is enough to date each lead's
+  // faint without touching vendor code or reimplementing any battle logic.
+  const leadPokemonA = orderedA[0];
+  const leadPokemonB = orderedB[0];
+  let leadFaintTurnA = null;
+  let leadFaintTurnB = null;
+
   let guard = 0;
   while (
     p0.getRemainingPokemon() > 0 &&
@@ -458,6 +472,9 @@ export function battleTeams(ctx, params) {
     battle.step();
     // Resolve any charged-move / switch suspensions synchronously.
     scheduler.drain();
+    const turnNow = battle.getTurns() - 1;
+    if (leadFaintTurnA === null && leadPokemonA.hp <= 0) leadFaintTurnA = turnNow;
+    if (leadFaintTurnB === null && leadPokemonB.hp <= 0) leadFaintTurnB = turnNow;
   }
 
   const remainingA = p0.getRemainingPokemon();
@@ -490,6 +507,12 @@ export function battleTeams(ctx, params) {
       difficulty,
       seed: effectiveSeed,
       endedBy,
+      // GOALS T27: lead-exchange + shield-banking ground truth, read off
+      // pvpoke's own live objects (no vendor edits, no battle math added).
+      leadFaintTurnA,
+      leadFaintTurnB,
+      shieldsRemainingA: p0.getShields(),
+      shieldsRemainingB: p1.getShields(),
     },
   };
 }
