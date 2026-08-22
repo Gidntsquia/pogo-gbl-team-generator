@@ -58,8 +58,9 @@
 //                            and reuse it every generation, instead of a
 //                            fresh draw per generation                    (off)
 //   --elites N              how many of the final generation's top-fitness
-//                            teams get the full 9-lead-pairing evaluation +
-//                            bestLead/safeSwap for the report (a count PLAN
+//                            teams get the final evaluation pass (own lead
+//                            vs. the opponent's 3 leads, GOALS T29 part 2/N)
+//                            + bestLead/safeSwap for the report (a count PLAN
 //                            Rev 5 doesn't specify -- documented judgment
 //                            call, mirrors tournament.mjs's s3Top default)  (10)
 //   --score-meta S          1v1-pruning meta size (candidate-pool ranking
@@ -75,6 +76,15 @@
 //                            GOALS T25)              (<out-dir>/my-teams-evolve.html)
 //   --no-html                skip writing the HTML report                 (off)
 //   --out-dir DIR            checkpoints + DONE marker + default reports  ("out")
+//   --fitness classic|battle-reality  which metric selection/mutation/
+//                            convergence act on -- 'classic' is today's
+//                            plain win-rate; 'battle-reality' blends win rate
+//                            with a snowball term (this team's own lead
+//                            -exchange conversion, T27) and a closer term
+//                            (T28's species-level role priors), see
+//                            DEFAULT_FITNESS_WEIGHTS. Both are always
+//                            computed and reported regardless of which one
+//                            drives the GA.                                ("classic")
 //   --help                   print this help and exit
 //
 // LOCKED LEADS (PLAN Rev 6, GOALS T29 part 2/N): a population member's
@@ -165,6 +175,7 @@ import { dedupeBestPerSpecies } from '../src/teams/index.js';
 import { initPopulation, nextGeneration, hasConverged } from '../src/teams/evolve.js';
 import { rngFromSeed } from '../src/util/rng.js';
 import { leagueForCp } from '../src/util/leagues.js';
+import { loadRoleScores } from '../src/meta/roles.js';
 
 const DEFAULTS = Object.freeze({
   population: 100,
@@ -178,7 +189,10 @@ const DEFAULTS = Object.freeze({
   curatedRatio: 0.4,
   outDir: 'out',
   html: 'my-teams-evolve.html', // resolved against outDir unless --html/opts.html is absolute or explicit
+  fitness: 'classic', // GOALS T29 item 3 / PLAN Rev 6: 'classic' (today's plain win-rate metric) or 'battle-reality' (the new blend, see DEFAULT_FITNESS_WEIGHTS)
 });
+
+const FITNESS_MODES = ['classic', 'battle-reality'];
 
 // Used only if a generation somehow measures 0 battles (every battle errored)
 // -- keeps timing math finite. Mirrors tournament.mjs's own fallback figure.
@@ -266,6 +280,88 @@ function ownLeadPairing(seedPrefix, opp) {
   return [{ leadA: CANDIDATE_LEAD, leadB: opponentLeadIndex(seedPrefix, opp) }];
 }
 
+// ---------------------------------------------------------------------------
+// GOALS T29 item 3 (PLAN.md Rev 6): battle-reality fitness. `evaluateTeamsInOrder`
+// (below) already runs every generation's battles through `battleTeams`, whose
+// `summary` carries T27's own lead-exchange extraction (`leadFaintTurnA/B`) for
+// free -- no new battles. This section classifies each battle's exchange
+// outcome and blends it, plus T28's role priors, into an alternate fitness
+// metric alongside the plain win rate `--fitness classic` already computed.
+// ---------------------------------------------------------------------------
+
+/**
+ * Which side's ORIGINAL lead fainted first (lost the lead exchange), from
+ * `battleTeams`' summary -- verbatim copy of scripts/alignment-study.mjs's
+ * own `leadExchangeLoser` (GOALS T27's extraction logic; duplicated per this
+ * file's own established small-helper convention -- see the header comment
+ * above `pct`/`signed`/`formatDuration` -- rather than importing a script).
+ * @returns {'a'|'b'|'simultaneous'|'none'}
+ */
+function leadExchangeLoser(summary) {
+  const { leadFaintTurnA: ta, leadFaintTurnB: tb } = summary;
+  if (ta === null && tb === null) return 'none';
+  if (ta === null) return 'b';
+  if (tb === null) return 'a';
+  if (ta === tb) return 'simultaneous';
+  return ta < tb ? 'a' : 'b';
+}
+
+/**
+ * Blend weights for `--fitness battle-reality` (documented judgment call --
+ * PLAN Rev 6 asks for "a documented, tunable blend" without specifying
+ * numbers; not exposed as CLI flags, matching this file's own GA-TUNABLES
+ * precedent above). `winRate` stays the majority component since it is the
+ * only one measuring actual game outcomes; `snowball` is weighted
+ * meaningfully (not a token amount) because T27's real-battle measurement
+ * found winning the lead exchange roughly a 2.3-2.7x multiplier on win
+ * probability (P(win|won)~=0.69-0.73 vs P(win|lost)~=0.27-0.31, see T29's own
+ * condensed findings block in GOALS.md) -- a strong, real signal about which
+ * teams convert an early advantage, independent of whether their back line
+ * ultimately closes the game out; `closer` gets the smallest share because
+ * it is a SPECIES-level prior from pvpoke's own rankings (T28), not a fact
+ * about this collection's real battles the way the other two terms are.
+ */
+const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 0.6, snowball: 0.3, closer: 0.1 });
+
+/**
+ * Per-team snowball score: this team's OWN fraction of DECIDED lead exchanges
+ * (across its battles fought this generation) it won -- i.e. how often its
+ * lead outlasts the opponent's, independent of whether the game is ultimately
+ * won or lost. `exchangeWon`/`exchangeLost` exclude `'simultaneous'`/`'none'`
+ * battles (T27's own real-battle sample found ~15-21% of battles never see
+ * either lead faint -- not a meaningful exchange signal either way). Falls
+ * back to `winRate` (not 0 or 0.5) when a team had zero decided exchanges
+ * this generation (a tiny --opponents-per-gen, or a team that only ever
+ * fights to a stalemate) -- a neutral choice that doesn't bias the blend
+ * toward or away from a team the sample simply couldn't measure.
+ */
+function computeSnowballScore(exchangeWon, exchangeLost, winRate) {
+  const decided = exchangeWon + exchangeLost;
+  return decided > 0 ? exchangeWon / decided : winRate;
+}
+
+/**
+ * Per-team closer score: mean of T28's `loadRoleScores` `closer` prior across
+ * the team's two BACK members (`team[1]`/`team[2]`, i.e. `members.slice(1)`)
+ * -- documented judgment call: the closer role is specifically about being
+ * switched in with a shield advantage to close out a game (T27's shield
+ * -banking findings), which is a back-line job under the locked-lead
+ * convention, not the lead's. A species absent from the loader (never
+ * happens for a real gamemaster speciesId under the pinned vendor commit,
+ * per T28's own note, but guarded anyway) contributes 0, not a skip -- an
+ * unknown closer value is not evidence of a good one.
+ */
+function computeCloserScore(members, roleScores) {
+  const backs = members.slice(1);
+  if (backs.length === 0) return 0;
+  const sum = backs.reduce((s, m) => s + (roleScores?.get(m.speciesId)?.closer ?? 0), 0);
+  return sum / backs.length;
+}
+
+function computeBlendFitness({ winRate, snowballScore, closerScore }, weights = DEFAULT_FITNESS_WEIGHTS) {
+  return weights.winRate * winRate + weights.snowball * snowballScore + weights.closer * closerScore;
+}
+
 /**
  * Final elites pass: candidate's lead stays locked at team[0], but spreads
  * across the opponent's all 3 possible leads (not just its resolved "own"
@@ -306,6 +402,11 @@ function buildRunConfig(csvPath, opts) {
     generations: opts.generations ?? DEFAULTS.generations,
     fixedOpponents: !!opts.fixedOpponents,
     eliteCount: opts.eliteCount ?? DEFAULTS.elites,
+    // GOALS T29 item 3: part of the fingerprint -- resuming a 'classic' run's
+    // checkpoints under 'battle-reality' (or vice versa) would silently graft
+    // a different generation's fitness semantics onto a population that was
+    // selected/mutated under the other one.
+    fitness: opts.fitness ?? DEFAULTS.fitness,
   };
 }
 
@@ -466,7 +567,7 @@ async function evaluateTeamsInOrder(ctx, params) {
   // ownLeadPairing/ownLeadEliteSpread above), so leadWins[1]/leadWins[2] and
   // leadBattles[1]/leadBattles[2] stay at 0 and the max-by-winRate reduce
   // below trivially always resolves to index 0 (`team[0]`, the locked lead).
-  const { teams, matrix, opponents, pairingsFor, difficulty, trackLeads = false, executor, onLog } = params;
+  const { teams, matrix, opponents, pairingsFor, difficulty, trackLeads = false, executor, onLog, roleScores } = params;
   const threaded = !!executor;
   const startedAt = Date.now();
   let battleCount = 0;
@@ -514,6 +615,8 @@ async function evaluateTeamsInOrder(ctx, params) {
     let hpSum = 0;
     let battles = 0;
     let candidateErrors = 0;
+    let exchangeWon = 0; // GOALS T29 item 3: this candidate's lead fainted the opponent's lead first
+    let exchangeLost = 0; // ...opponent's lead fainted this candidate's lead first
     const perMeta = [];
     const leadWins = [0, 0, 0];
     const leadBattles = [0, 0, 0];
@@ -575,6 +678,14 @@ async function evaluateTeamsInOrder(ctx, params) {
           oppLosses += 1;
         }
 
+        // GOALS T29 item 3: unconditional (cheap -- reads r.summary, no new
+        // battles), regardless of trackLeads -- the per-generation fitness
+        // loop needs this and never sets trackLeads.
+        const exchange = leadExchangeLoser(r.summary);
+        if (exchange === 'a') exchangeLost += 1;
+        else if (exchange === 'b') exchangeWon += 1;
+        // 'simultaneous'/'none' -- excluded, not a decided exchange (see computeSnowballScore).
+
         if (trackLeads) {
           if (r.winner === 'a') leadWins[leadA] += 1;
           else if (r.winner === 'tie') leadWins[leadA] += 0.5;
@@ -607,12 +718,22 @@ async function evaluateTeamsInOrder(ctx, params) {
 
     const winRate = battles > 0 ? winPoints / battles : 0;
     const avgHpMargin = battles > 0 ? hpSum / battles : 0;
+    const snowballScore = computeSnowballScore(exchangeWon, exchangeLost, winRate);
+    const closerScore = computeCloserScore(members, roleScores);
     const entry = {
       members: members.map(({ key, speciesId, name }) => ({ key, speciesId, name })),
       winRate,
       avgHpMargin,
       battles,
       errors: candidateErrors,
+      // GOALS T29 item 3 (PLAN Rev 6): battle-reality fitness components,
+      // always computed (cheap) regardless of --fitness so the report can
+      // surface them even in classic mode.
+      exchangeWon,
+      exchangeLost,
+      snowballScore,
+      closerScore,
+      blendFitness: computeBlendFitness({ winRate, snowballScore, closerScore }),
     };
 
     if (trackLeads) {
@@ -686,6 +807,7 @@ function renderEvolveReport(result) {
       `elites=${config.eliteCount}${config.fixedOpponents ? ', fixed-opponents (one draw reused every generation)' : ''}`
   );
   out.push(`- score-meta=${config.scoreMeta}, pool=${config.pool}, curated-ratio=${config.curatedRatio}`);
+  out.push(`- fitness: ${config.fitness}${config.fitness === 'battle-reality' ? ` (weights: winRate=${DEFAULT_FITNESS_WEIGHTS.winRate}, snowball=${DEFAULT_FITNESS_WEIGHTS.snowball}, closer=${DEFAULT_FITNESS_WEIGHTS.closer})` : ''}`);
   const threadsLabel = (r) => (r.threadsUsed ? `${r.threadsUsed} (worker-pool executor)` : 'serial');
   out.push(`- threads: ${generationRecords.length ? threadsLabel(generationRecords[generationRecords.length - 1]) : 'n/a'}`);
   if (config.excludeSpecies.length) out.push(`- excluded species: ${config.excludeSpecies.join(', ')}`);
@@ -751,7 +873,7 @@ function renderEvolveReport(result) {
   }
   out.push('');
 
-  out.push(`## Top ${elites.length} teams (final-generation elites, full 9-lead-pairing evaluation)`);
+  out.push(`## Top ${elites.length} teams (final-generation elites, own lead vs. opponent's 3 leads)`);
   out.push('');
   if (elites.length === 0) {
     out.push('_No elite teams were produced._');
@@ -776,6 +898,10 @@ function renderEvolveReport(result) {
       out.push(`- **Safest first switch:** ${t.safeSwap.name} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)`);
     }
     out.push(`- **Avg surviving-HP margin:** ${signed(t.avgHpMargin)}`);
+    out.push(
+      `- **Snowball score:** ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) — ` +
+        `**Closer score:** ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)`
+    );
     out.push('');
     out.push('5 hardest opponents (by win%):');
     out.push('');
@@ -821,6 +947,7 @@ function renderEvolveReportHtml(result) {
     `score-meta=${config.scoreMeta}`,
     `pool=${config.pool}`,
     `curated-ratio=${config.curatedRatio}`,
+    `fitness=${config.fitness}${config.fitness === 'battle-reality' ? ` (weights: winRate=${DEFAULT_FITNESS_WEIGHTS.winRate}, snowball=${DEFAULT_FITNESS_WEIGHTS.snowball}, closer=${DEFAULT_FITNESS_WEIGHTS.closer})` : ''}`,
     `threads=${generationRecords.length ? threadsLabel(generationRecords[generationRecords.length - 1]) : 'n/a'}`,
     config.excludeSpecies.length ? `excluded species: ${config.excludeSpecies.map(escapeHtml).join(', ')}` : null,
     config.difficulty !== null ? `AI difficulty override: ${config.difficulty}` : null,
@@ -942,7 +1069,7 @@ function renderEvolveReportHtml(result) {
     out.push('</tbody></table>');
   }
 
-  out.push(`<h2>Top ${elites.length} teams (final-generation elites, full 9-lead-pairing evaluation)</h2>`);
+  out.push(`<h2>Top ${elites.length} teams (final-generation elites, own lead vs. opponent's 3 leads)</h2>`);
   if (elites.length === 0) {
     out.push('<p><em>No elite teams were produced.</em></p>');
   } else {
@@ -972,6 +1099,10 @@ function renderEvolveReportHtml(result) {
       );
     }
     out.push(`<li><strong>Avg surviving-HP margin:</strong> ${signed(t.avgHpMargin)}</li>`);
+    out.push(
+      `<li><strong>Snowball score:</strong> ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) -- ` +
+        `<strong>Closer score:</strong> ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)</li>`
+    );
     out.push('</ul>');
     out.push('<p>5 hardest opponents (by win%):</p>');
     out.push('<table>');
@@ -1053,6 +1184,9 @@ function renderDoneMarker(result) {
  * @returns {Promise<object>} the full run result; also written to disk.
  */
 export async function runEvolution(csvPath, opts = {}) {
+  if (opts.fitness !== undefined && !FITNESS_MODES.includes(opts.fitness)) {
+    throw new Error(`evolve: opts.fitness must be one of ${FITNESS_MODES.join('|')}, got "${opts.fitness}"`);
+  }
   const config = buildRunConfig(csvPath, opts);
   const outDir = opts.outDir ?? DEFAULTS.outDir;
   const reportPath = opts.out ?? path.join(outDir, 'my-teams-evolve.md');
@@ -1074,6 +1208,7 @@ export async function runEvolution(csvPath, opts = {}) {
   const deduped = dedupeBestPerSpecies(matrix);
   const weights = loadUsageWeights(ctx);
   const pool = buildSamplingPool(deduped, config.pool, config.excludeSpecies);
+  const roleScores = loadRoleScores(ctx); // GOALS T29 item 3: T28's lead/closer/switch priors, cheap local-file read
   log(`evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, league=${league.name}`);
 
   const threaded = typeof threads === 'number' && threads > 0;
@@ -1167,8 +1302,14 @@ export async function runEvolution(csvPath, opts = {}) {
         difficulty,
         executor,
         onLog: log,
+        roleScores,
       });
-      const fitness = run.results.map((r) => r.winRate);
+      // GOALS T29 item 3: 'classic' (default) keeps today's plain win-rate
+      // fitness; 'battle-reality' uses the blend (see computeBlendFitness) --
+      // both are always computed on every result (cheap), so switching modes
+      // never changes what a generation's battles measure, only which number
+      // selection/mutation/convergence act on.
+      const fitness = run.results.map((r) => (config.fitness === 'battle-reality' ? r.blendFitness : r.winRate));
 
       history.push({ population, fitness });
       const isLastAllowedGeneration = generation === config.generations - 1;
@@ -1260,6 +1401,7 @@ export async function runEvolution(csvPath, opts = {}) {
       trackLeads: true,
       executor,
       onLog: log,
+      roleScores,
     });
     const elites = eliteRun.results
       .map((r, i) => ({ ...r, sourceIndex: rankedIdx[i] }))
@@ -1328,8 +1470,9 @@ Options:
   --cp N                  CP cap / league                            (default ${DEFAULTS.cp})
   --fixed-opponents        reuse ONE opponent draw for every generation
                             instead of a fresh draw per generation     (default: off)
-  --elites N               final-generation teams given the full 9-lead-
-                            pairing evaluation for the report          (default ${DEFAULTS.elites})
+  --elites N               final-generation teams given the final evaluation
+                            pass (own lead vs. opponent's 3 leads) for the
+                            report                                     (default ${DEFAULTS.elites})
   --score-meta S           1v1-pruning meta size                      (default ${DEFAULTS.scoreMeta})
   --pool P                 sampling pool size                         (default ${DEFAULTS.pool})
   --curated-ratio R        curated-vs-sampled opponent mix             (default ${DEFAULTS.curatedRatio})
@@ -1339,6 +1482,10 @@ Options:
   --html PATH              final HTML report path                     (default <out-dir>/${DEFAULTS.html})
   --no-html                skip writing the HTML report
   --out-dir DIR            checkpoints + DONE marker + default reports (default "${DEFAULTS.outDir}")
+  --fitness classic|battle-reality  metric selection/mutation/convergence
+                            act on -- 'battle-reality' blends win rate with
+                            a snowball term (T27) and a closer term (T28)
+                            (default "${DEFAULTS.fitness}")
   --help                   print this help and exit
 `;
 
@@ -1362,6 +1509,14 @@ function fractionFlag(value, name, fallback) {
     throw new Error(`--${name} must be a number in [0,1], got "${value}"`);
   }
   return n;
+}
+
+function fitnessFlag(value) {
+  if (value === undefined) return DEFAULTS.fitness;
+  if (!FITNESS_MODES.includes(value)) {
+    throw new Error(`--fitness must be one of ${FITNESS_MODES.join('|')}, got "${value}"`);
+  }
+  return value;
 }
 
 async function main(argv) {
@@ -1389,6 +1544,7 @@ async function main(argv) {
         html: { type: 'string' },
         'no-html': { type: 'boolean' },
         'out-dir': { type: 'string' },
+        fitness: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -1425,6 +1581,7 @@ async function main(argv) {
     out: values.out,
     html: values.html,
     noHtml: !!values['no-html'],
+    fitness: fitnessFlag(values.fitness),
   };
 
   const realLog = console.log;

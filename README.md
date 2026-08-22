@@ -305,31 +305,71 @@ node scripts/evolve.mjs fixtures/sample-pokegenie.csv --population 8 --opponents
 ```
 
 **The selection scheme, in plain words** (see `PLAN.md` Rev 5 for the full
-design): every generation, every team in the population is battled against
-a fresh sample of opponent teams. The bottom 25% by win rate die. Each
+design, Rev 6 for the "locked leads" + battle-reality-fitness revisions
+below): every generation, every team in the population is battled against a
+fresh sample of opponent teams. The bottom third by win rate die. Each
 *surviving* team then rolls a chance to mutate — the better a team did
 relative to the rest of that generation, the more likely it mutates (from a
 5% floor for the weakest survivors up to a 40% ceiling for the top) — and a
-successful roll swaps exactly one team member for a different, meta-weighted
-pick from your collection. The dead slots are refilled by these mutants plus
-a small floor (~10% of the population) of brand-new random "immigrant"
+successful roll either swaps one team member for a different, meta-weighted
+pick from your collection, or (about 30% of successful rolls) promotes a
+bench member to lead instead. The dead slots are refilled by these mutants
+plus a small floor (~10% of the population) of brand-new random "immigrant"
 teams, so the population never fully closes off to new ideas. This repeats
 either until the top-10 team composition hasn't changed for 3 generations
 in a row (convergence), or a generation/time cap is hit — the report says
 which one stopped the run.
 
+**Locked leads (`PLAN.md` Rev 6):** a team isn't just 3 species — it's a
+*(lead, back, back)*, and which mon leads is part of what makes two teams
+different individuals in the population (evolution can promote a back to
+lead via the lead-rotation mutation above, same spirit as a member swap).
+Every generation's fitness battle battles a team ONLY at its own declared
+lead, against each opponent's own lead (curated/preset teams have no
+data-declared lead today, so their first listed member is used as a
+documented default; randomly-composed sampled opponents get a seeded lead
+keyed to their own id) — one battle per opponent instead of the pre-Rev-6
+scheme's three, freeing up ~3x the battle budget to spend on
+`--opponents-per-gen`/`--generations` instead. The final generation's
+`--elites` get a 3-pairing pass (their own lead against all 3 of the
+opponent's possible leads) for the report's bestLead/safe-swap detail.
+
+**Fitness: `--fitness classic|battle-reality` (`PLAN.md` Rev 6):** by
+default (`classic`) a team's fitness is its plain locked-lead win rate —
+today's metric, unchanged. `--fitness battle-reality` blends that win rate
+with two more signals, both computed for free from the same battles (no
+extra simulation): a **snowball score** (this team's own fraction of decided
+lead exchanges it won this generation — how often its lead outlasts the
+opponent's, independent of whether the game is ultimately won) and a
+**closer score** (the mean of its two back-line members' `closer` role prior
+from pvpoke's own rankings — see "Role priors" below). Real-battle
+measurement found winning the lead exchange is roughly a 2.3–2.7x multiplier
+on win probability, so the default blend weights it meaningfully
+(`winRate=0.6, snowball=0.3, closer=0.1`, documented in
+`scripts/evolve.mjs`). Both scores are always computed and shown in the
+report — even under `classic` fitness — so you can see how a team is winning,
+not just whether it is.
+
 **Flags** (`node scripts/evolve.mjs --help` for the full list with
 defaults): `--population`, `--opponents-per-gen`, and `--generations` size
-the search (battles per generation ≈ `population × opponents-per-gen × 3`);
-`--seed` controls reproducibility; `--threads` battles through the same
-persistent worker-pool executor `--threads` uses elsewhere in this repo
-(defaults to `max(1, cpus - 1)`); `--deadline-minutes` stops the run before
-starting another generation once past budget; `--fixed-opponents` reuses one
-opponent draw for every generation instead of a fresh one each time;
-`--elites` controls how many of the final generation's top teams get the
-full 9-lead-pairing report treatment (best lead, safe swap); `--cp`,
-`--score-meta`, `--pool`, `--curated-ratio`, and `--exclude` mean the same
-thing they do elsewhere in this repo.
+the search (battles per generation ≈ `population × opponents-per-gen`, one
+battle per pairing under the locked-lead scheme above); `--seed` controls
+reproducibility; `--threads` battles through the same persistent worker-pool
+executor `--threads` uses elsewhere in this repo (defaults to
+`max(1, cpus - 1)`); `--deadline-minutes` stops the run before starting
+another generation once past budget; `--fixed-opponents` reuses one opponent
+draw for every generation instead of a fresh one each time; `--elites`
+controls how many of the final generation's top teams get the final
+evaluation pass (best lead, safe swap); `--fitness` selects the fitness
+metric (above); `--cp`, `--score-meta`, `--pool`, `--curated-ratio`, and
+`--exclude` mean the same thing they do elsewhere in this repo.
+
+**Checkpoint format:** each `out/evolve-gen<N>.json` is tagged with a
+`formatVersion`. A checkpoint written under an incompatible population/
+battle scheme (e.g. from before the locked-lead change above) is refused
+with a clear error on resume rather than silently misread — delete the
+`out/evolve-gen*.json`/`out/evolve-DONE` files under your `--out-dir`, or
+pass a fresh `--out-dir`, to start over.
 
 **Reproducibility:** the same `--seed` (with everything else held equal)
 reproduces the *identical* population trajectory, generation by generation —

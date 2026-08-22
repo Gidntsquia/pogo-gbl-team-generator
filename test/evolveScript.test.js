@@ -263,6 +263,59 @@ test('GOALS T29 part 2: resuming refuses an old-format (pre-lock) checkpoint ins
   );
 });
 
+// GOALS T29 item 3 (PLAN.md Rev 6): battle-reality fitness blend (snowball +
+// closer terms), --fitness classic|battle-reality.
+test('battle-reality fitness components (snowball/closer/blendFitness) are always computed, even in classic mode', () => {
+  for (const t of shared.elites) {
+    assert.ok(Number.isInteger(t.exchangeWon) && t.exchangeWon >= 0, 'exchangeWon is a non-negative count');
+    assert.ok(Number.isInteger(t.exchangeLost) && t.exchangeLost >= 0, 'exchangeLost is a non-negative count');
+    assert.ok(t.exchangeWon + t.exchangeLost <= t.battles, 'decided exchanges cannot exceed battles fought');
+    assert.ok(t.snowballScore >= 0 && t.snowballScore <= 1, 'snowballScore in [0,1]');
+    assert.ok(t.closerScore >= 0 && t.closerScore <= 1, 'closerScore in [0,1]');
+    assert.ok(t.blendFitness >= 0 && t.blendFitness <= 1, 'blendFitness in [0,1]');
+  }
+  const md = readFileSync(SHARED_REPORT, 'utf8');
+  assert.match(md, /Snowball score:/, 'report surfaces the snowball score even under default (classic) fitness');
+  assert.match(md, /Closer score:/, 'report surfaces the closer score even under default (classic) fitness');
+  assert.match(md, /fitness: classic/, 'Settings line names the default fitness mode');
+});
+
+test('--fitness battle-reality: config fingerprint records the mode, run completes, and fitness values differ from classic winRate in general', async () => {
+  const outDir = tmpOutDir('gbl-evolve-blend-');
+  const blended = await runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r.md'), fitness: 'battle-reality' });
+
+  assert.equal(blended.config.fitness, 'battle-reality');
+  assert.equal(blended.generationRecords.length, TINY.generations);
+
+  const gen0 = JSON.parse(readFileSync(path.join(outDir, 'evolve-gen0.json'), 'utf8'));
+  assert.equal(gen0.config.fitness, 'battle-reality', 'checkpoint config fingerprint records the fitness mode');
+  // fitness[i] should equal blendFitness reconstructed from winRate/snowballScore/closerScore for every
+  // population member this generation -- i.e. the GA is actually consuming the blend, not silently
+  // falling back to winRate. (population/fitness are positional and parallel by construction.)
+  for (const t of blended.elites) {
+    const reconstructed = 0.6 * t.winRate + 0.3 * t.snowballScore + 0.1 * t.closerScore;
+    assert.ok(Math.abs(t.blendFitness - reconstructed) < 1e-9, 'blendFitness matches the documented weight formula');
+  }
+
+  const md = readFileSync(blended.reportPath, 'utf8');
+  assert.match(md, /fitness: battle-reality \(weights: winRate=0\.6, snowball=0\.3, closer=0\.1\)/);
+
+  // A checkpoint written under a different --fitness mode must NOT be silently
+  // resumed as if it were the requested mode (fitness is part of buildRunConfig,
+  // so configsMatch already diverges -- this just confirms the resume scan
+  // correctly starts fresh rather than reusing generation 0's population).
+  const classicOnSameDir = await runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r2.md') });
+  assert.equal(classicOnSameDir.config.fitness, 'classic');
+});
+
+test('--fitness with an unrecognized value throws a clear error', async () => {
+  const outDir = tmpOutDir('gbl-evolve-badfitness-');
+  await assert.rejects(
+    () => runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r.md'), fitness: 'nonsense' }),
+    /opts\.fitness must be one of/i
+  );
+});
+
 test('--fixed-opponents reuses the same opponent draw for every generation', async () => {
   const outDir = tmpOutDir('gbl-evolve-fixed-');
   const result = await runEvolution(FIXTURE, { ...TINY, fixedOpponents: true, outDir, out: path.join(outDir, 'r.md') });
