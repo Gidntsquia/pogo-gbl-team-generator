@@ -238,34 +238,35 @@ describe('T20: pre-battle team state is independent of leftover shared-battle-co
   });
 });
 
-// GOALS T20b -- investigated the second, independent order-dependence
-// mechanism (see src/engine/README.md's "Known limitation", mechanism 2):
-// vendor/pvpoke's TrainingAI#runScenario builds a throwaway single-battle
-// Battle to test a shield/bait scenario and calls that throwaway battle's
-// setNewPokemon() on the REAL pokemon/opponent it's given, which repoints
-// their private `battle` ref (via Pokemon#setBattle) at the throwaway --
-// and runScenario's own restore block never puts `.battle`, `.baitShields`,
-// or `.priority` back. wrapRunScenario (teamBattle.js) wraps runScenario on
-// both of a battle's TrainingAI instances so every call is transparent for
-// exactly those 4 fields, using pvpoke's own public getBattle()/setBattle().
-// This test proves the WRAPPING MECHANISM itself against fake stand-ins (no
-// engine boot needed -- pure function, like T23's evolve.js fake-fitness
-// tests) since every real vendor call site of runScenario only reads its
-// *return value*, never the mutated fields, once wrapped.
+// GOALS T20b, part 1 -- an earlier fire on this same ticket investigated the
+// second, independent order-dependence mechanism (see src/engine/README.md's
+// "Known limitation", mechanism 2): vendor/pvpoke's TrainingAI#runScenario
+// builds a throwaway single-battle Battle to test a shield/bait scenario and
+// calls that throwaway battle's setNewPokemon() on the REAL pokemon/opponent
+// it's given, which repoints their private `battle` ref (via
+// Pokemon#setBattle) at the throwaway -- and runScenario's own restore block
+// never puts `.battle`, `.baitShields`, or `.priority` back. wrapRunScenario
+// (teamBattle.js) wraps runScenario on both of a battle's TrainingAI
+// instances so every call is transparent for exactly those 4 fields, using
+// pvpoke's own public getBattle()/setBattle(). This test proves the WRAPPING
+// MECHANISM itself against fake stand-ins (no engine boot needed -- pure
+// function, like T23's evolve.js fake-fitness tests) since every real vendor
+// call site of runScenario only reads its *return value*, never the mutated
+// fields, once wrapped.
 //
-// IMPORTANT, and reported honestly rather than glossed over: landing this
-// wrap is a REAL fix for a genuinely leaky restore block (proven by this
-// test), and re-running scripts/variance-study.mjs after landing it shows
-// it is not a no-op -- one candidate's canonical (single fixed order) win
-// rate shifted slightly. But it does NOT eliminate the known 1-in-360
-// reversed-ordering flip in that same script's `--candidates 5 --opponents
-// 8 --shuffles 3 --seed variance-study` run -- that residual is therefore
-// evidence of a THIRD, still-unidentified mechanism, not explained by the
-// leak this ticket found and fixed. See PROGRESS.md for the numbers and
-// src/engine/README.md's Known limitation section for the standing doctrine
-// -- T20b's box stays unchecked; this is a real partial finding, not a full
-// resolution.
-describe('T20b: wrapRunScenario makes runScenario side-effect-transparent for battle/baitShields/farmEnergy/priority', () => {
+// That fire found this wrap to be a REAL fix for a genuinely leaky restore
+// block (proven by this test, and by a measurable canonical win-rate shift
+// in scripts/variance-study.mjs) -- but NOT sufficient on its own to
+// eliminate the ticket's own reproduced 1-in-360 reversed-ordering flip, so
+// it left T20b's box unchecked pending a third mechanism. The describe block
+// below this one ("T20b, part 2") found and fixed that third mechanism; see
+// its own comment and src/engine/README.md's Known limitation section for
+// the full, combined picture. Both fixes are real and both are kept: this
+// wrap makes runScenario itself side-effect-transparent (defense in depth
+// against a class of bug that could resurface if runScenario grows a new
+// caller), even though the actual reproduced flip turned out to have a
+// different root cause.
+describe('T20b, part 1: wrapRunScenario makes runScenario side-effect-transparent for battle/baitShields/farmEnergy/priority', () => {
   function makeFakeMon(label) {
     let battle = { label: `real-${label}` };
     return {
@@ -352,5 +353,126 @@ describe('T20b: wrapRunScenario makes runScenario side-effect-transparent for ba
 
     assert.equal(pokemon.baitShields, 1);
     assert.equal(pokemon.getBattle().label, 'real-pokemon');
+  });
+});
+
+// GOALS T20b, part 2 -- the third mechanism part 1 (above) left open,
+// root-caused and fixed. With mechanism 1 fully neutralized (T20 above) and
+// part 1's runScenario leak fixed (real, but proven insufficient by its own
+// test's PROGRESS notes), a reproduced knife-edge battle from
+// scripts/variance-study.mjs still flipped winner under reordering. Direct
+// instrumentation (pre-battle-state dump of every roster member, not just
+// the two leads T20 already covered) found the actual cause: pvpoke's own
+// fullReset()/setRoster() never touch a Pokemon's baitShields, farmEnergy,
+// or priority fields -- only setNewPokemon()/evaluateMatchup() do, and both
+// only ever run for whichever Pokemon is currently ACTIVE (the two leads at
+// battle start, or whoever switches in later). A bench member that stays
+// benched all battle -- or that was itself a LEAD in this same instance's
+// PREVIOUS battleTeams() call -- carries those three fields over from that
+// unrelated matchup: instrumenting the real "4|4|2|2" variance-study flip
+// found bench members sitting at baitShields=0/priority=1 (leftover AI
+// strategy state) versus pvpoke's own documented Pokemon.js constructor
+// defaults (baitShields=1, farmEnergy=false, priority=0) a fresh instance
+// starts with, while the two ACTIVE leads' pre-battle state (index,
+// bestChargedMove, every move's damage/dpe -- T20's own bar) was already
+// bit-identical in both runs. teamBattle.js now stamps those three fields to
+// pvpoke's own defaults on all six members before anything reads them.
+describe('T20b, part 2: bench members do not carry AI-decision state (baitShields/farmEnergy/priority) over from a previous battle', () => {
+  test('a mon that led a previous battle (finishing with non-default baitShields/priority) resets to pvpoke defaults when reused as a bench member', () => {
+    // Battle it as team B's ACTIVE LEAD first: pvpoke's own setNewPokemon
+    // deterministically sets a team-B lead's priority to 1 (players[1]'s own
+    // fixed player-index priority, not an AI strategy choice), so this sanity
+    // check never depends on which strategy the AI happens to pick.
+    const reusedMon = team(STRONG_IDS)[0]; // azumarill
+    const warmTeamB = team(WEAK_IDS);
+    warmTeamB[0] = reusedMon;
+    battleTeams(ctx, { teamA: team(WEAK_IDS), teamB: warmTeamB, leadB: 0, seed: 'T20b-warm' });
+
+    assert.equal(
+      reusedMon.priority,
+      1,
+      'sanity: leading a real battle as team B actually left non-default AI state to reset (otherwise this test proves nothing)'
+    );
+
+    // Reuse the SAME instance as a BENCH member (index 1, not the lead) of a
+    // brand new battle, and capture its state the instant fullReset() runs.
+    let snapshot = null;
+    const origFullReset = reusedMon.fullReset.bind(reusedMon);
+    reusedMon.fullReset = function (...args) {
+      const result = origFullReset(...args);
+      snapshot = {
+        baitShields: reusedMon.baitShields,
+        farmEnergy: reusedMon.farmEnergy,
+        priority: reusedMon.priority,
+      };
+      return result;
+    };
+
+    const teamA = team(WEAK_IDS);
+    teamA[1] = reusedMon; // bench slot, since leadA defaults to 0 below
+    battleTeams(ctx, { teamA, teamB: team(WEAK_IDS), leadA: 0, seed: 'T20b-bench' });
+
+    assert.deepEqual(
+      snapshot,
+      { baitShields: 1, farmEnergy: false, priority: 0 },
+      "pvpoke's own Pokemon.js defaults, not this instance's previous-battle leftover state"
+    );
+  });
+
+  test('the exact reproduced variance-study flip (candidate 4 vs opponent 4, lead 2v2, after 332 prior battles in canonical order) no longer differs from a fresh-instance run of the same matchup', async () => {
+    const { loadMetaTeams } = await import('../src/meta/teams.js');
+    const LEADS = [0, 1, 2];
+    const candidateCount = 5;
+    const opponentCount = 8;
+
+    function canonicalBattleList() {
+      const list = [];
+      for (let c = 0; c < candidateCount; c++) {
+        for (let o = 0; o < opponentCount; o++) {
+          for (const leadA of LEADS) {
+            for (const leadB of LEADS) {
+              list.push({ c, o, leadA, leadB, key: `${c}|${o}|${leadA}|${leadB}` });
+            }
+          }
+        }
+      }
+      return list;
+    }
+
+    const baseline = canonicalBattleList();
+    const targetIndex = baseline.findIndex((b) => b.key === '4|4|2|2');
+    assert.ok(targetIndex > 0, 'sanity: the known flip key exists in this battle plan');
+
+    const pool = loadMetaTeams(ctx);
+    const candidatePokemon = pool
+      .slice(0, candidateCount)
+      .map((t) => t.members.map((m) => m.pokemon));
+    const opponentPokemon = pool
+      .slice(candidateCount, candidateCount + opponentCount)
+      .map((t) => t.members.map((m) => m.pokemon));
+
+    let contaminatedResult = null;
+    for (let i = 0; i <= targetIndex; i++) {
+      const { c, o, leadA, leadB } = baseline[i];
+      const r = battleTeams(ctx, {
+        teamA: candidatePokemon[c],
+        teamB: opponentPokemon[o],
+        leadA,
+        leadB,
+      });
+      if (i === targetIndex) contaminatedResult = r;
+    }
+
+    const freshPool = loadMetaTeams(ctx);
+    const freshResult = battleTeams(ctx, {
+      teamA: freshPool[4].members.map((m) => m.pokemon),
+      teamB: freshPool[candidateCount + 4].members.map((m) => m.pokemon),
+      leadA: 2,
+      leadB: 2,
+    });
+
+    assert.equal(contaminatedResult.winner, freshResult.winner);
+    assert.deepEqual(contaminatedResult.survivorsHp, freshResult.survivorsHp);
+    assert.equal(contaminatedResult.summary.turns, freshResult.summary.turns);
   });
 });

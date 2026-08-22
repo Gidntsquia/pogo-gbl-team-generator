@@ -307,6 +307,29 @@ export function battleTeams(ctx, params) {
   p1.setRoster(orderedB);
   p1.setTeam(orderedB);
 
+  // GOALS T20b (determinism mechanism 2): baitShields/farmEnergy/priority are
+  // never touched by fullReset()/setRoster() -- only by pvpoke's own
+  // setNewPokemon()/evaluateMatchup(), which only run for whichever Pokemon
+  // is actually ACTIVE at some point. A bench member that stays benched the
+  // whole battle (or that was itself a lead in this instance's LAST battle)
+  // otherwise starts this battle still carrying those fields from an
+  // unrelated matchup -- proven directly: instrumenting a real reproduced
+  // flip (variance-study's "4|4|2|2" battle) showed the bench members'
+  // baitShields/priority differing (0/1 vs pvpoke's own documented defaults
+  // 1/0) between a battle run fresh vs. run after 332 prior battles, with
+  // active-lead pre-battle state (index/bestChargedMove/move damage/dpe --
+  // T20's own fix) confirmed bit-identical in both cases. Stamp pvpoke's own
+  // constructor defaults (Pokemon.js: baitShields=1, farmEnergy=false,
+  // priority=0) on all six members before anything reads them; the lead-only
+  // setNewPokemon calls below and evaluateMatchup's own unconditional reset
+  // correctly override these for whichever Pokemon actually leads or later
+  // switches in, so this only changes behavior for Pokemon that stay benched.
+  for (const mon of [...orderedA, ...orderedB]) {
+    mon.baitShields = 1;
+    mon.farmEnergy = false;
+    mon.priority = 0;
+  }
+
   battle.setBattleMode('emulate');
   battle.setTurns(1);
   battle.setPlayers([p0, p1]);
