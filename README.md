@@ -257,14 +257,12 @@ node scripts/tournament.mjs fixtures/sample-pokegenie.csv --threads 4
 - Either way, the *same* `(seed, threads)` reproduces the exact same battle
   results every run — worker assignment is a deterministic function of the
   battle list and thread count, not real-time scheduling.
-- A threaded run's rankings and win rates match a serial run's. On a very
-  small fraction of individual battles (a documented pvpoke engine
-  characteristic — see `src/engine/README.md`'s "Known limitation" —
-  independent of this project's own code), reused-instance move tie-breaks
-  can differ between a serial run and a threaded one, so **serial stays the
-  bit-exact reference mode**; `--threads` trades that last sliver of
-  cross-run exactness for real wall-clock speed with no change to which
-  teams the report recommends.
+- A threaded run's results are **bit-identical** to a serial run's, not just
+  rank-equivalent — several distinct reused-instance state-leak mechanisms
+  that used to cause rare cross-run drift (see `src/engine/README.md`'s
+  "Resolved: battle order and reused-instance state" section for the full
+  history) are all fixed. `--threads` trades nothing for its wall-clock
+  speed; it is not an approximation of the serial path.
 
 `scripts/bench.mjs` measures raw battle throughput if you want to compare
 serial vs. threaded speed on your own machine before committing to a large

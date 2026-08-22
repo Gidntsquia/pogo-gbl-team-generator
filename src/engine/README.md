@@ -95,11 +95,13 @@ boots its **own** headless pvpoke engine context exactly once
 then answers a stream of battle specs from the main thread. Results come back
 **in spec order**; `test/parallel.test.js` asserts they match a serial loop of
 `battleTeams(ctx, spec)` calls (plus edge cases at `threads=1` and
-`threads=4`) for that suite's battle plans. See **"Known limitation"** below,
-discovered during T15b: this holds for battle *winners* generally, but exact
-HP totals are not guaranteed bit-identical to a serial run when a Pokemon
-instance is reused across several battles, because pvpoke itself carries a
-subtle order-sensitivity across such reuse.
+`threads=4`) for that suite's battle plans. See **"Resolved: battle order and
+reused-instance state"** below: T15b originally found exact HP totals could
+drift from a serial run when a Pokemon instance was reused across several
+battles in a different order, because pvpoke itself carried a
+subtle order-sensitivity across such reuse -- GOALS T20-T20b later found and
+fixed the mechanisms behind that, and results are now bit-identical, not
+merely winner-equivalent.
 
 ### `createExecutor` vs `runBattles`
 
@@ -326,7 +328,20 @@ The spec-carrying plumbing T15b already added (`matrix.builtMons[key].spec`,
 every meta/sampled team member's `.spec`) covers everything `tournament.mjs`
 needs -- no additional plumbing was required.
 
-## Known limitation: battle order and reused-instance move selection
+## Resolved: battle order and reused-instance state (history; was "Known limitation")
+
+**Status (GOALS T20b, 2026-08-22): RESOLVED.** Every mechanism behind this
+section's history is fixed, INCLUDING the threaded-execution follow-up the
+"What this does NOT yet establish" paragraph below left open. Serial and
+threaded execution of the same battles are now bit-identical -- not merely
+winner-equivalent or rank-equivalent -- verified directly (`assert.deepEqual`
+on full result objects, `avgHpMargin` included, in both `test/teams.test.js`
+and `test/tournament.test.js`) and at scale (`scripts/variance-study.mjs`
+across several seeds/pool sizes, 0 flips throughout). **Serial is no longer
+the "reference" mode threaded execution merely approximates -- both are
+simply correct.** The rest of this section is kept as history: it explains
+the mechanisms, in the order they were found, for anyone touching
+`teamBattle.js`'s setup sequence or reused-instance handling in the future.
 
 Discovered during T15b's verification (executing real battles caught this --
 see the standing rule about verification, not code review, being what counts).
@@ -394,7 +409,11 @@ could use this as a starting point for.
 
 **Verification.** `test/teamBattle.test.js`'s new "T20b" describe block: (1) a direct unit test proves a mon that led one battle (deterministically finishing with `priority=1`, via `Player`'s own player-index-based priority, not AI strategy) resets to pvpoke's exact defaults when reused as a bench member of the next battle -- fails without the fix (asserted by reverting it locally), passes with it; (2) the literal reproduced `4|4|2|2` flip, replayed as an exact 332-prior-battles-then-the-flip-battle sequence, now produces a result bit-identical (winner, `survivorsHp`, turn count) to a fresh-instance run of that same matchup -- also fails without the fix. `scripts/variance-study.mjs --candidates 5 --opponents 8 --shuffles 3 --seed variance-study` now reports **0/360 flips across all 4 non-baseline orderings** (down from the 1/360-in-"reversed"-only baseline this section documented above) -- re-run a second time at a different scale/seed (`--candidates 6 --opponents 10 --shuffles 3 --seed t20b-verify`, 540 battles/ordering) for a total of **0 flips across 3,600 battle-comparisons** (2 seeds/scales combined), versus flips present pre-fix. `npm test` stayed **216/216 green** (214 prior + 2 new); no existing test's expected values needed to change, same as T20's own outcome.
 
-**What this does NOT yet establish, left as explicit follow-up (not attempted this fire -- see GOALS.md's T20b note for scope):** this fixes reordering within a single-threaded, sequential battle stream. It has NOT been re-verified against the specific SCALE and EXECUTION MODE that motivated T15c's own correction above (a real threaded `scripts/tournament.mjs` run, 144 stage-3 battles, worker-pool execution rather than list reordering) -- that flip could be this same bench-state mechanism (plausible, since threaded dispatch reorders which battles a given worker's cached instances see, exactly like list reordering does) or could be a third, distinct mechanism specific to cross-thread instance reuse. Until that is re-verified, `test/tournament.test.js`'s and `test/parallel.test.js`'s tolerance-based (not exact-equality) threaded-vs-serial assertions, and the "serial is the reference mode, threaded is statistically equivalent" doctrine in the T15b/T15c corrections above and PLAN Rev 4, are LEFT STANDING rather than retired -- retiring them on the strength of this fire's list-reordering evidence alone would overclaim what was actually tested.
+**Follow-up closed (same day, second routine fire, 2026-08-22): the threaded-execution gap the paragraph above left open is now verified fixed, and a fourth field was found in the process.** Reviewing the bench-state fix above (`baitShields`/`farmEnergy`/`priority`) against pvpoke's own `Pokemon` constructor found a fourth field with the exact same shape: `hasActed` also defaults to a constant (`false`, `Pokemon.js:109`), and is ALSO never touched by `reset()`/`fullReset()` -- `Battle#step()`'s own per-turn `poke.hasActed = false` (`Battle.js:300`) only clears it for the two currently-ACTIVE `pokemon[]` slots, never a bench member. A stale `hasActed=true` carried in from a previous battle can make `Battle#getTurnAction`'s `! poke.hasActed` gate (`Battle.js:749`) treat a just-switched-in mon as having already acted this turn -- a real, independent gap in the fix above, not yet covered by its own reset loop. Added to the same reset (`teamBattle.js`'s existing `baitShields`/`farmEnergy`/`priority` stamp loop now also sets `hasActed = false`), proven directly (`test/teamBattle.test.js`'s new "T20b, part 3" test: a `hasActed=true` sentinel does not survive being reused as a bench member -- fails without the fix, passes with it).
+
+With that gap closed, the SPECIFIC follow-up the paragraph above asked for -- re-verifying against real threaded (worker-pool) execution, not just single-threaded list reordering -- was run: `evaluateTeams(ctx, {..., opts:{threads:2}})` vs its serial equivalent on a real fixture collection now produce full-result-object-identical output (`avgHpMargin` included, not just win rates), and `test/tournament.test.js`'s own 144-stage-3-battle threaded-vs-serial test (the exact scale T15c originally found its flip at) now asserts exact `winRate` AND `avgHpMargin` equality per finalist team instead of the previous `3/36` tolerance band -- and passes. `scripts/variance-study.mjs` re-run across 4 different seeds/pool sizes with the complete fix (all 4 fields): **0 flips out of 1341+ battles combined**, on top of the 0/3,600 the bench-state fix alone already achieved for single-threaded reordering.
+
+**Net effect: the doctrine is retired.** `test/tournament.test.js`'s and `test/teams.test.js`'s threaded-vs-serial tests now assert bit-identity, not tolerance (`test/parallel.test.js`'s own serial-vs-parallel tests already asserted exact equality and needed no change -- its fixed battle plans apparently never happened to hit this class of bug). The "serial is the reference mode, threaded is statistically equivalent" language in the T15b/T15c corrections above, in `README.md`'s top-level `--threads` docs, and in `PLAN.md`'s Rev 4 is superseded -- same spec + seed → same result, full stop, regardless of execution order or thread count. See PROGRESS.md's T20b entries (2026-08-22) for the complete instrumentation trail and numbers.
 
 ## Why a `vm` sandbox instead of a browser
 

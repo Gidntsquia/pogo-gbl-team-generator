@@ -476,3 +476,39 @@ describe('T20b, part 2: bench members do not carry AI-decision state (baitShield
     assert.equal(contaminatedResult.summary.turns, freshResult.summary.turns);
   });
 });
+
+// GOALS T20b, part 3 (same fire as part 2, found while reviewing it) --
+// `hasActed` belongs in part 2's reset loop for the same reason as
+// baitShields/farmEnergy/priority: pvpoke's Pokemon constructor defaults it
+// to `false` (Pokemon.js:109), but neither reset()/fullReset() nor
+// Battle#step()'s own per-turn `poke.hasActed = false` (Battle.js:300, which
+// only clears it for the two currently-ACTIVE pokemon[] slots) ever resets
+// it for a bench member. A stale hasActed=true from a previous battle can
+// make Battle#getTurnAction's `! poke.hasActed` gate (Battle.js:749) treat a
+// just-switched-in mon as having already acted this turn.
+describe('T20b, part 3: bench members do not carry hasActed over from a previous battle', () => {
+  test('hasActed=true left over on a reused instance resets to false when it becomes a bench member', () => {
+    // Battle.js's own per-turn reset (Battle.js:300) only ever clears
+    // hasActed for the two currently-ACTIVE pokemon[] slots -- never a bench
+    // member -- so the condition this fix guards against is "whatever
+    // hasActed happened to be true at the moment this instance's last real
+    // battle ended." Set it directly rather than depending on which turn a
+    // real battle happens to end on, which would make this test flaky.
+    const reusedMon = team(STRONG_IDS)[0];
+    reusedMon.hasActed = true;
+
+    let snapshot = null;
+    const origFullReset = reusedMon.fullReset.bind(reusedMon);
+    reusedMon.fullReset = function (...args) {
+      const result = origFullReset(...args);
+      snapshot = reusedMon.hasActed;
+      return result;
+    };
+
+    const teamA = team(WEAK_IDS);
+    teamA[1] = reusedMon; // bench slot, leadA defaults to 0
+    battleTeams(ctx, { teamA, teamB: team(WEAK_IDS), leadA: 0, seed: 'T20b-hasActed-bench' });
+
+    assert.equal(snapshot, false, "pvpoke's own Pokemon.js default, not the true sentinel this test seeded");
+  });
+});

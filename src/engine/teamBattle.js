@@ -324,10 +324,22 @@ export function battleTeams(ctx, params) {
   // setNewPokemon calls below and evaluateMatchup's own unconditional reset
   // correctly override these for whichever Pokemon actually leads or later
   // switches in, so this only changes behavior for Pokemon that stay benched.
+  //
+  // Follow-up (same fire, routine 2026-08-22): `hasActed` belongs in this
+  // same reset for the same reason -- also constructor-defaulted (`false`,
+  // Pokemon.js:109), also never touched by reset()/fullReset(), and
+  // Battle#step()'s own per-turn `poke.hasActed = false` (Battle.js:300)
+  // only clears it for the two currently-ACTIVE `pokemon[]` slots, never a
+  // bench member. A stale `hasActed=true` carried in from a previous battle
+  // where this instance was active can make Battle#getTurnAction's
+  // `! poke.hasActed` gate (Battle.js:749) treat a just-switched-in mon as
+  // having already acted this turn -- an independent state leak from the 3
+  // fields above, same root shape, same fix.
   for (const mon of [...orderedA, ...orderedB]) {
     mon.baitShields = 1;
     mon.farmEnergy = false;
     mon.priority = 0;
+    mon.hasActed = false;
   }
 
   battle.setBattleMode('emulate');

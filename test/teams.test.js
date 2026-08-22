@@ -188,33 +188,25 @@ describe('evaluateTeams', () => {
     assert.equal(ranked.length, 2);
   });
 
-  // GOALS T15b: opts.threads runs the same battles through
-  // src/engine/parallel.js's worker-thread pool instead of the serial
-  // battleTeams loop. Per-battle results are deterministic given a fixed
-  // (teams, leads, seed) IN ISOLATION, but a discovered pvpoke engine
-  // characteristic (see src/engine/README.md's "Known limitation: battle
-  // order and reused-instance move selection") means a Pokemon INSTANCE's
-  // resetMoves()/bestChargedMove tie-break can be influenced by which
-  // opponent it most recently fought (battle.getOpponent(self.index) reads a
-  // stale index at fullReset() time, before setNewPokemon reassigns it for
-  // the current battle) -- so exact avgHpMargin can drift by a few HP when
-  // battle ORDER changes (serial's fixed nested-loop order vs the threaded
-  // pool's worker-distribution order), even though win/loss/winRate and team
-  // RANKING are unaffected (verified by hand against a real CLI run -- see
-  // PROGRESS.md GOALS T15b entry). This is pre-existing pvpoke behavior any
-  // time a Pokemon instance is reused across sequential battles (already true
-  // of today's serial evaluateTeams/tournament.mjs, just self-consistent
-  // there since the order never changes) -- not something threading itself
-  // gets wrong. Assert what's actually guaranteed: identical win rates and
-  // identical ranking (bestLead too, since it's also win-rate-derived).
-  test('opts.threads produces identical win rates and ranking to the serial path', async () => {
+  // GOALS T15b originally found opts.threads' battle-order changes could
+  // drift exact avgHpMargin (a discovered pvpoke engine characteristic --
+  // see src/engine/README.md's "Known limitation") even though win rates and
+  // ranking held. GOALS T20-T20b then found and fixed the distinct
+  // order-dependence mechanisms behind that (index/battle staleness; a
+  // runScenario restore-block leak; and finally stale
+  // hasActed/priority/baitShields/farmEnergy on bench members, which
+  // fullReset()/setRoster() never touch and which only the two active leads
+  // get freshly written each battle -- see src/engine/README.md and
+  // PROGRESS.md's T20b entries for the full history). With all of them
+  // fixed, serial and threaded execution of the same battles are
+  // bit-identical, not merely rank-equivalent -- verified directly by
+  // comparing the full result objects (avgHpMargin included), not just
+  // winRate/bestLead.
+  test('opts.threads produces results bit-identical to the serial path', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 2 });
     const serial = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4 } });
     const threaded = await evaluateTeams(ctx, { matrix, metaTeams, opts: { topK: 4, threads: 2 } });
-    assert.deepEqual(
-      serial.map((t) => [t.members.map((m) => m.key).sort().join('+'), t.winRate, t.bestLead.key]),
-      threaded.map((t) => [t.members.map((m) => m.key).sort().join('+'), t.winRate, t.bestLead.key])
-    );
+    assert.deepEqual(serial, threaded);
   });
 });

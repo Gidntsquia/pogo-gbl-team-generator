@@ -150,36 +150,31 @@ test('deterministic: two fresh runs with the same seed produce an identical stag
 // ranking, and finalist teams are compared by team signature (not position)
 // so a tie-break-driven reorder can't fail the assertion either.
 //
-// CORRECTION found while writing this test (executing the code, not reading
-// it, per the standing verification rule): T15b's README claim that "win/loss
-// outcomes and team win rates are unaffected" by threading does NOT hold in
-// general -- it held at T15b's smaller test scale (topK 4, 2 meta teams) but
-// at this test's larger scale (4 finalists x 4 opponents x 9 pairings = 144
-// stage-3 battles) a real run hit a case where ONE battle's verdict differed
-// between the serial and threaded execution of the exact same seed/spec (a
-// narrow win became a tie -- a 0.5/36 shift in that team's winRate). This is
-// the SAME root cause src/engine/README.md's "Known limitation" section
-// already documents (a reused Pokemon instance's resetMoves()/bestChargedMove
-// tie-break reads a stale battle-slot index, so it can differ depending on
-// which OTHER battles that instance's cache entry has already been through --
-// threaded execution reorders that per-worker, changing which battles are
-// "first use" of a cached instance) -- it just turns out that mechanism can
-// occasionally flip a marginal battle's OUTCOME, not only its HP margin. The
-// README's stronger claim is corrected there; here, WIN_RATE_TOLERANCE bounds
-// how much drift this test accepts per team (enough for a couple of such
-// single-battle reclassifications, not enough to hide a real spec-ordering
-// bug, which would misalign far more than one battle in 36).
-const WIN_RATE_TOLERANCE = 3 / 36;
+// HISTORY (superseded, kept for context): T15c originally found win/loss
+// outcomes and win rates were NOT always identical between serial and
+// threaded execution at this test's scale (a narrow win became a tie in one
+// real run), traced to a reused Pokemon instance's resetMoves()/
+// bestChargedMove tie-break reading stale state depending on battle order.
+// GOALS T20-T20b then found and fixed the distinct order-dependence
+// mechanisms behind that -- most recently, stale hasActed/priority/
+// baitShields/farmEnergy on bench members, which fullReset()/setRoster()
+// never touch and which only the two active leads get freshly written each
+// battle (see src/engine/README.md's "Known limitation" section for the full
+// history, and PROGRESS.md's T20b entries for the numbers). With all of them
+// fixed, serial and threaded execution of the same battles are provably
+// bit-identical (verified directly: this exact test's serial vs threaded
+// finalRankings now compare equal via assert.equal on both winRate and
+// avgHpMargin, not just within tolerance). The tolerance constant below is
+// retired.
 
 // GOALS T21 (supersedes T15c's per-candidate batching): opts.threads now
 // boots ONE persistent executor for the WHOLE run (see runTournament) and
 // each stage submits its entire battle set as a single continueOnError
 // run() call (see runFunnelStage) instead of one runBattles() call per
-// candidate. The win-rate-within-tolerance assertions below are unchanged
-// (same underlying correctness bar); this test also now checks the new
-// threadsUsed bookkeeping (report + checkpoints recording the actual thread
-// count per stage, per the ticket's explicit requirement).
-test('opts.threads (persistent worker-pool executor, batched per stage) produces win rates within tolerance of the serial path', async () => {
+// candidate. This test also checks the threadsUsed bookkeeping (report +
+// checkpoints recording the actual thread count per stage, per the ticket's
+// explicit requirement).
+test('opts.threads (persistent worker-pool executor, batched per stage) produces results bit-identical to the serial path', async () => {
   const THREADS_TINY = {
     scoreMeta: 4,
     pool: 8,
@@ -206,7 +201,7 @@ test('opts.threads (persistent worker-pool executor, batched per stage) produces
 
   const byTeam = (run) => {
     const map = new Map();
-    for (const t of run.finalRankings) map.set(teamSig(t), { winRate: t.winRate });
+    for (const t of run.finalRankings) map.set(teamSig(t), { winRate: t.winRate, avgHpMargin: t.avgHpMargin });
     return map;
   };
   const serialByTeam = byTeam(serial);
@@ -219,9 +214,15 @@ test('opts.threads (persistent worker-pool executor, batched per stage) produces
   );
   for (const [sig, s] of serialByTeam) {
     const t = threadedByTeam.get(sig);
-    assert.ok(
-      Math.abs(t.winRate - s.winRate) <= WIN_RATE_TOLERANCE,
-      `win rate for team ${sig} should match within tolerance (serial=${s.winRate}, threaded=${t.winRate})`
+    assert.equal(
+      t.winRate,
+      s.winRate,
+      `win rate for team ${sig} should match exactly (serial=${s.winRate}, threaded=${t.winRate})`
+    );
+    assert.equal(
+      t.avgHpMargin,
+      s.avgHpMargin,
+      `avgHpMargin for team ${sig} should match exactly (serial=${s.avgHpMargin}, threaded=${t.avgHpMargin})`
     );
   }
 
