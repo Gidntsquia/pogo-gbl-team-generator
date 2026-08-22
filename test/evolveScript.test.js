@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,7 +52,7 @@ test('completes and produces a well-formed report + all checkpoints + analytics 
   assert.equal(top.members.length, 3, 'a team has 3 members');
   assert.equal(new Set(top.members.map((m) => m.speciesId)).size, 3, 'team members are distinct species');
   assert.ok(top.winRate >= 0 && top.winRate <= 1, 'win rate in [0,1]');
-  assert.ok(top.bestLead && typeof top.bestLead.name === 'string', 'bestLead present (elites get full 9-pairing trackLeads)');
+  assert.ok(top.bestLead && typeof top.bestLead.name === 'string', 'bestLead present (locked-lead: always resolves to team[0])');
   assert.ok(Array.isArray(top.hardestOpponents) && top.hardestOpponents.length <= 5, 'up to 5 hardest opponents');
 
   for (let i = 1; i < shared.elites.length; i++) {
@@ -236,6 +236,31 @@ test('opts.noHtml skips writing the HTML report; opts.html sends it to a custom 
   });
   assert.equal(customResult.htmlPath, customHtmlPath);
   assert.ok(existsSync(customHtmlPath), 'HTML written to the custom path');
+});
+
+test('locked leads (GOALS T29): every elite team\'s bestLead is its team[0] (member order preserved end to end)', () => {
+  for (const t of shared.elites) {
+    assert.equal(t.bestLead.key, t.members[0].key, 'bestLead resolves to the first-listed member, the designated lead');
+  }
+});
+
+test('GOALS T29 part 2: resuming refuses an old-format (pre-lock) checkpoint instead of silently misreading it', async () => {
+  const outDir = tmpOutDir('gbl-evolve-oldformat-');
+  const out = path.join(outDir, 'r.md');
+  await runEvolution(FIXTURE, { ...TINY, outDir, out });
+
+  const gen0Path = path.join(outDir, 'evolve-gen0.json');
+  const cp = JSON.parse(readFileSync(gen0Path, 'utf8'));
+  assert.equal(cp.formatVersion, 2, 'sanity: a freshly-written checkpoint carries the current format version');
+  delete cp.formatVersion; // simulate a pre-T29 checkpoint (config schema is unchanged, so it would otherwise match)
+  writeFileSync(gen0Path, JSON.stringify(cp, null, 2), 'utf8');
+  rmSync(path.join(outDir, 'evolve-DONE'));
+
+  await assert.rejects(
+    () => runEvolution(FIXTURE, { ...TINY, outDir, out }),
+    /checkpoint format/i,
+    'resuming an unversioned/old-format checkpoint throws a clear error instead of silently resuming'
+  );
 });
 
 test('--fixed-opponents reuses the same opponent draw for every generation', async () => {

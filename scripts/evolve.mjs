@@ -77,20 +77,44 @@
 //   --out-dir DIR            checkpoints + DONE marker + default reports  ("out")
 //   --help                   print this help and exit
 //
-// BUDGET MATH (PLAN Rev 5's own example): battles/generation = population x
-// opponents-per-gen x 3 (seeded-random leadB, same scheme as tournament.mjs's
-// stages 1-2). At the flag defaults: 100 x 20 x 3 = 6,000 battles/generation;
-// 15 generations (if run to the cap, no early convergence) = 90,000 battles,
-// plus a final elites pass at 9 full lead pairings (elites x opponents-per-gen
-// x 9 = 10 x 20 x 9 = 1,800). Measured rates vary by machine (~172ms/battle in
-// the sandbox, ~73ms/battle on Jaxon's local Mac per PROGRESS.md's T14 note,
-// both MUCH faster threaded -- see T22's measured numbers) -- size
-// --population/--opponents-per-gen/--generations to your own time budget;
-// --deadline-minutes is a simple stop-before-the-next-generation safety net,
-// not a self-tuning scaler (unlike tournament.mjs's stage 2/3 tuning -- PLAN
-// Rev 5's own flag list never asks for that here, and per-generation
-// opponent/population counts don't have tournament's "narrowing funnel"
-// structure to tune against, so a flat stop is the honest, simple choice).
+// LOCKED LEADS (PLAN Rev 6, GOALS T29 part 2/N): a population member's
+// `team[0]` is its designated lead (src/teams/evolve.js's representation,
+// landed by the prior fire) -- so every per-generation battle now runs the
+// candidate at leadA=0 ONLY, never averaged over its own 3 members. Opponent
+// leads: no opponent-team source in this codebase encodes an explicit lead
+// (checked: pvpoke's vendored gobattleleague training presets and
+// data/meta-teams-community.json both just list 3 members with no ordering
+// semantics) -- the documented default is member index 0 for curated/preset
+// teams (label:'curated'), and a seeded-random pick keyed to the opponent's
+// OWN id (not the candidate facing it) for sampled teams (label:'sampled',
+// whose member order carries no intended meaning to begin with) -- see
+// opponentLeadIndex() below.
+//
+// BUDGET MATH (revised from PLAN Rev 5's original x3 estimate now that own
+// -lead averaging is gone): battles/generation = population x opponents-per
+// -gen x 1. At the flag defaults: 100 x 20 = 2,000 battles/generation (was
+// 6,000 pre-T29); 15 generations (if run to the cap, no early convergence) =
+// 30,000 battles (was 90,000), plus a final elites pass spread across the
+// opponent's 3 possible leads (elites x opponents-per-gen x 3 = 10 x 20 x 3
+// = 600; was a 9-pairing grid = 1,800 pre-T29, since the elite's OWN lead no
+// longer varies either). REINVESTMENT (ticket-mandated to document, not to
+// auto-apply): this is a ~3x battle-count reduction for the SAME
+// --population/--opponents-per-gen/--generations -- callers can raise
+// opponents-per-gen (more matchup coverage per generation) or generations
+// (deeper search) roughly 3x and land at the same wall-clock cost as before
+// this fire. DEFAULTS are deliberately left UNCHANGED here: a scale bump is
+// its own judgment call with its own acceptance run, not an automatic
+// consequence of a mechanical speedup -- a future ticket/fire can raise them
+// once there's a real run to point to. Measured rates vary by machine
+// (~172ms/battle in the sandbox, ~73ms/battle on Jaxon's local Mac per
+// PROGRESS.md's T14 note, both MUCH faster threaded -- see T22's measured
+// numbers) -- size --population/--opponents-per-gen/--generations to your
+// own time budget; --deadline-minutes is a simple stop-before-the-next
+// -generation safety net, not a self-tuning scaler (unlike tournament.mjs's
+// stage 2/3 tuning -- PLAN Rev 5's own flag list never asks for that here,
+// and per-generation opponent/population counts don't have tournament's
+// "narrowing funnel" structure to tune against, so a flat stop is the
+// honest, simple choice).
 //
 // GA TUNABLES (deathRate/mutationFloor/mutationCeil/immigrantFraction/alpha,
 // convergence window/topN): deliberately NOT exposed as CLI flags here --
@@ -108,7 +132,18 @@
 // config is accepted and the run continues from its stored `nextPopulation`
 // at generation+1 -- the first missing/mismatched checkpoint stops the scan
 // (mirrors scripts/tournament.mjs's per-stage resume, but sequential since
-// each generation depends on the last). Individual battle errors are caught,
+// each generation depends on the last). CHECKPOINT FORMAT VERSIONING (GOALS
+// T29, added when the prior fire's locked-lead representation change made
+// this a real risk, not a hypothetical one): a checkpoint's `config` schema
+// did NOT change when `team[0]` became a designated lead, so an old
+// (pre-T29) checkpoint could match a fresh run's config and be silently
+// resumed as if its population entries already had a defined lead-slot
+// convention -- they don't. Every checkpoint now carries a `formatVersion`;
+// a config-matching checkpoint whose formatVersion disagrees throws a clear
+// error instead of resuming (see CHECKPOINT_FORMAT_VERSION below) -- the
+// fix is to delete the stale out/evolve-gen*.json / evolve-generations.json
+// / evolve-DONE and re-run from scratch, never to silently reinterpret them.
+// Individual battle errors are caught,
 // logged, and counted (skip-and-continue) rather than aborting a generation.
 // out/evolve-generations.json (analytics only, no population/lineage detail)
 // is rewritten after every generation, so a killed run's analytics are never
@@ -154,6 +189,12 @@ const TRAJECTORY_SPECIES_CAP = 15;
 
 const LEADS = [0, 1, 2];
 
+// Bump whenever a checkpoint's on-disk SHAPE changes in a way `config`
+// -matching alone can't detect (see the ROBUSTNESS comment above). v2 = the
+// locked-lead population representation (GOALS T29, PLAN Rev 6): `team[0]`
+// is a designated lead, not an arbitrary array slot.
+const CHECKPOINT_FORMAT_VERSION = 2;
+
 // ---------------------------------------------------------------------------
 // Small pure formatting helpers (duplicated from scripts/tournament.mjs --
 // both files are small, standalone CLI scripts with no shared "funnel utils"
@@ -195,24 +236,46 @@ function formatDuration(ms) {
 }
 
 // ---------------------------------------------------------------------------
-// Lead-pairing schemes (same conventions as scripts/tournament.mjs).
+// Lead-pairing schemes -- LOCKED LEADS (PLAN Rev 6, GOALS T29 part 2/N): the
+// candidate's own lead is always `team[0]` (never averaged over its 3
+// members any more; see the header's LOCKED LEADS note). This intentionally
+// diverges from scripts/tournament.mjs, which is untouched by T29 and still
+// runs its own averaged-own-lead scheme.
 // ---------------------------------------------------------------------------
 
-function pickLeadB(stageSeed, candidateSig, opponentId, leadA) {
-  const rng = rngFromSeed(`${stageSeed}|leadB|${candidateSig}|${opponentId}|${leadA}`);
-  return Math.floor(rng() * LEADS.length);
-}
+const CANDIDATE_LEAD = 0;
 
-function threeRandomPairings(stageSeed, candidateSig, opponentId) {
-  return LEADS.map((leadA) => ({ leadA, leadB: pickLeadB(stageSeed, candidateSig, opponentId, leadA) }));
-}
-
-function ninePairings() {
-  const out = [];
-  for (const leadA of LEADS) {
-    for (const leadB of LEADS) out.push({ leadA, leadB });
+/**
+ * Resolve an opponent team's designated lead index -- see the header's
+ * LOCKED LEADS note for the full rationale. `opp.leadIndex` is a forward
+ * -compatible hook (honored if a future opponent-data source ever adds an
+ * explicit lead); today every real opponent falls through to the documented
+ * default below.
+ */
+function opponentLeadIndex(seedPrefix, opp) {
+  if (opp.leadIndex !== undefined) return opp.leadIndex;
+  if (opp.label === 'sampled') {
+    const rng = rngFromSeed(`${seedPrefix}|opponentLead|${opp.id}`);
+    return Math.floor(rng() * LEADS.length) % LEADS.length;
   }
-  return out;
+  return 0; // curated/preset: documented default, first-listed member.
+}
+
+/** Own-lead-locked single pairing: candidate's team[0] vs. the opponent's resolved lead. */
+function ownLeadPairing(seedPrefix, opp) {
+  return [{ leadA: CANDIDATE_LEAD, leadB: opponentLeadIndex(seedPrefix, opp) }];
+}
+
+/**
+ * Final elites pass: candidate's lead stays locked at team[0], but spreads
+ * across the opponent's all 3 possible leads (not just its resolved "own"
+ * one) for a more robust win-rate/avg-HP-margin/safe-swap read on the report
+ * -- 3 battles per (elite, opponent), a 3x reduction from the pre-Rev-6 full
+ * 9-pairing grid (which also varied the elite's OWN lead across 3 options,
+ * no longer meaningful once the lead is locked).
+ */
+function ownLeadEliteSpread() {
+  return LEADS.map((leadB) => ({ leadA: CANDIDATE_LEAD, leadB }));
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +458,14 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage }) {
 // ---------------------------------------------------------------------------
 
 async function evaluateTeamsInOrder(ctx, params) {
+  // trackLeads' bestLead computation (below) predates PLAN Rev 6's locked
+  // leads and still iterates all 3 of the team's OWN lead slots -- left
+  // as-is rather than redesigned this fire (T30 owns the report-level
+  // "Lead / Back / Back" redesign). It still resolves correctly without any
+  // code change: `pairingsFor` now only ever produces leadA=0 battles (see
+  // ownLeadPairing/ownLeadEliteSpread above), so leadWins[1]/leadWins[2] and
+  // leadBattles[1]/leadBattles[2] stay at 0 and the max-by-winRate reduce
+  // below trivially always resolves to index 0 (`team[0]`, the locked lead).
   const { teams, matrix, opponents, pairingsFor, difficulty, trackLeads = false, executor, onLog } = params;
   const threaded = !!executor;
   const startedAt = Date.now();
@@ -408,7 +479,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     });
     const teamASpec = members.map((m) => m.spec);
     const sig = [...keys].sort().join('|');
-    const oppPlans = opponents.map((opp) => ({ opp, pairings: pairingsFor(sig, opp.id) }));
+    const oppPlans = opponents.map((opp) => ({ opp, pairings: pairingsFor(sig, opp) }));
     return { members, teamASpec, oppPlans };
   });
 
@@ -1025,6 +1096,16 @@ export async function runEvolution(csvPath, opts = {}) {
     while (true) {
       const cp = readCheckpoint(outDir, generation);
       if (!cp || !configsMatch(cp.config, config)) break;
+      if (cp.formatVersion !== CHECKPOINT_FORMAT_VERSION) {
+        throw new Error(
+          `evolve: ${checkpointPath(outDir, generation)} is checkpoint format ` +
+            `${cp.formatVersion ?? '(unversioned, pre-T29)'} but this code expects format ` +
+            `${CHECKPOINT_FORMAT_VERSION} (locked-lead team representation, GOALS T29 / PLAN Rev 6). ` +
+            'Old-format checkpoints cannot be resumed -- their population entries have no defined ' +
+            'lead-slot convention. Delete out/evolve-gen*.json, out/evolve-generations.json, and ' +
+            'out/evolve-DONE, then re-run from scratch.'
+        );
+      }
       history.push({ population: cp.population, fitness: cp.fitness });
       generationRecords.push({ ...cp, resumed: true });
       if (generation === 0) runStartedAtMs = new Date(cp.runStartedAt).getTime();
@@ -1082,7 +1163,7 @@ export async function runEvolution(csvPath, opts = {}) {
         teams: population,
         matrix: deduped,
         opponents,
-        pairingsFor: (sig, oppId) => threeRandomPairings(`${config.seed}-gen${generation}`, sig, oppId),
+        pairingsFor: (sig, opp) => ownLeadPairing(`${config.seed}-gen${generation}`, opp),
         difficulty,
         executor,
         onLog: log,
@@ -1109,6 +1190,7 @@ export async function runEvolution(csvPath, opts = {}) {
       }
 
       const record = {
+        formatVersion: CHECKPOINT_FORMAT_VERSION,
         generation,
         config,
         runStartedAt: new Date(runStartedAtMs).toISOString(),
@@ -1156,7 +1238,7 @@ export async function runEvolution(csvPath, opts = {}) {
       throw new Error('evolve: no generation was ever evaluated (population sampling produced 0 teams from the start)');
     }
 
-    // ---- Final elites pass: top --elites of the LAST EVALUATED generation, full 9 lead pairings. ----
+    // ---- Final elites pass: top --elites of the LAST EVALUATED generation, own lead vs. the opponent's 3 leads. ----
     const rankedIdx = lastEvaluated.population
       .map((_, i) => i)
       .sort((a, b) => lastEvaluated.fitness[b] - lastEvaluated.fitness[a] || a - b);
@@ -1168,12 +1250,12 @@ export async function runEvolution(csvPath, opts = {}) {
       seed: `${config.seed}-elites`,
       curatedRatio: config.curatedRatio,
     });
-    log(`evolve: final elites pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents, full 9 lead pairings`);
+    log(`evolve: final elites pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents, own lead vs. opponent's 3 leads`);
     const eliteRun = await evaluateTeamsInOrder(ctx, {
       teams: eliteTeams,
       matrix: deduped,
       opponents: eliteOpponents,
-      pairingsFor: () => ninePairings(),
+      pairingsFor: () => ownLeadEliteSpread(),
       difficulty,
       trackLeads: true,
       executor,
