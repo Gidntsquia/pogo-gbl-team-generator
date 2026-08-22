@@ -1,12 +1,15 @@
-// Tests for src/teams/evolve.js -- the GA core module (GOALS T23). Pure
-// generational logic over FAKE fitness arrays and a fake scoreCollection
-// matrix (no engine boot, no vendor data, no battles) -- verifies:
-// determinism under seed, deathRate honored exactly, mutation probability
-// monotone in fitness percentile, mutants differ from their parent in
-// exactly one slot and never duplicate a species, population stays unique +
-// exactly at the target size with the immigrant floor respected, the
-// convergence detector fires exactly when specified, and excludeSpecies is
-// honored end to end (initPopulation + nextGeneration).
+// Tests for src/teams/evolve.js -- the GA core module (GOALS T23; locked
+// -lead representation GOALS T29, PLAN.md Rev 6). Pure generational logic
+// over FAKE fitness arrays and a fake scoreCollection matrix (no engine
+// boot, no vendor data, no battles) -- verifies: determinism under seed,
+// deathRate honored exactly, mutation probability monotone in fitness
+// percentile, member-swap mutants differ from their parent in exactly one
+// slot and never duplicate a species, lead-rotation mutants swap the lead
+// with a back and keep the same species-set, population stays unique
+// (LEAD-AWARE identity: same species-set + different lead = different
+// individual) + exactly at the target size with the immigrant floor
+// respected, the convergence detector fires exactly when specified, and
+// excludeSpecies is honored end to end (initPopulation + nextGeneration).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,8 +58,9 @@ const WIDE_POOL_MONS = makeMons(40); // plenty of room: C(40,3) = 9880 possible 
 const WIDE_MATRIX = fakeMatrix(WIDE_POOL_MONS);
 const WIDE_POOL = poolKeys(WIDE_POOL_MONS);
 
+/** Lead-aware identity signature, mirroring src/teams/evolve.js's own (PLAN Rev 6). */
 function teamSignature(team) {
-  return [...team].sort().join('|');
+  return `${team[0]}||${[...team.slice(1)].sort().join('|')}`;
 }
 
 function speciesOf(team) {
@@ -76,6 +80,55 @@ test('initPopulation delegates to sampleCandidateTeams: unique 3-distinct-specie
   for (const team of a) {
     assert.equal(team.length, 3);
     assert.equal(new Set(speciesOf(team)).size, 3);
+  }
+});
+
+test('initPopulation randomizes WHICH of a team\'s 3 species becomes the lead (team[0])', () => {
+  // A 3-mon pool has exactly one possible species-set (C(3,3)=1); requesting
+  // one team under many different seeds isolates lead assignment -- if it
+  // were a no-op (always the same underlying draw-order slot), team[0] would
+  // be the same species every time. Real randomization should hit all 3.
+  const tinyMons = makeMons(3);
+  const tinyMatrix = fakeMatrix(tinyMons);
+  const tinyPool = poolKeys(tinyMons);
+
+  const leadsSeen = new Set();
+  for (let i = 0; i < 60; i++) {
+    const [team] = initPopulation({ matrix: tinyMatrix, pool: tinyPool, count: 1, seed: `lead-assign-${i}` });
+    leadsSeen.add(tinyMatrix.builtMons[team[0]].speciesId);
+  }
+  assert.equal(leadsSeen.size, 3, `expected all 3 species to appear as lead across 60 seeds, got ${[...leadsSeen]}`);
+});
+
+test('a same species-set can appear twice in a population with two different leads (lead-aware identity)', () => {
+  // Force a lead-rotation mutant of every survivor, then confirm the mutant's
+  // species-set collides with its parent's (by design) while the two remain
+  // DISTINCT entries in the next population under the lead-aware signature.
+  const P = 10;
+  const population = samplePopulation(P, 'coexist-pop');
+  const fitness = population.map((_, i) => i);
+  const { population: next, lineage } = nextGeneration({
+    population,
+    fitness,
+    pool: WIDE_POOL,
+    matrix: WIDE_MATRIX,
+    seed: 'coexist-gen',
+    opts: { deathRate: 0.5, mutationFloor: 1, mutationCeil: 1, leadRotationRate: 1, immigrantFraction: 0 },
+  });
+
+  const rotations = lineage.entries
+    .map((entry, i) => ({ entry, team: next[i] }))
+    .filter(({ entry }) => entry.origin === 'mutant' && entry.mutationType === 'leadRotation');
+  assert.ok(rotations.length > 0, 'sanity: leadRotationRate=1 should force lead-rotation mutants');
+
+  for (const { entry, team } of rotations) {
+    const parentTeam = population[entry.parentIndex];
+    assert.deepEqual(new Set(speciesOf(team)), new Set(speciesOf(parentTeam)), 'same species-set as parent');
+    assert.notEqual(team[0], parentTeam[0], 'different lead than parent');
+    // Both the parent (if it survived) and the rotated mutant would carry the
+    // SAME species-set but different lead-aware signatures -- confirm they
+    // are not collapsed into one entry by the population's own uniqueness.
+    assert.notEqual(teamSignature(team), teamSignature(parentTeam));
   }
 });
 
@@ -162,7 +215,7 @@ test('mutation probability is monotone in fitness percentile among survivors', (
   assert.ok(topHalf > bottomHalf, `expected the top-percentile half (${topHalf}) to mutate more than the bottom half (${bottomHalf})`);
 });
 
-test('every mutant differs from its parent in exactly one slot and has 3 distinct species', () => {
+test('every member-swap mutant differs from its parent in exactly one slot and has 3 distinct species', () => {
   const P = 24;
   const population = samplePopulation(P, 'mutant-shape-pop');
   const fitness = population.map((_, i) => i);
@@ -175,21 +228,71 @@ test('every mutant differs from its parent in exactly one slot and has 3 distinc
     opts: { deathRate: 0.4, mutationCeil: 0.9, mutationFloor: 0.5 }, // force plenty of mutants
   });
 
-  let mutantCount = 0;
+  let memberSwapCount = 0;
+  let leadRotationCount = 0;
   lineage.entries.forEach((entry, i) => {
     if (entry.origin !== 'mutant') return;
-    mutantCount++;
     const parentTeam = population[entry.parentIndex];
     const mutantTeam = next[i];
-    let diffCount = 0;
-    for (let slot = 0; slot < 3; slot++) {
-      if (parentTeam[slot] !== mutantTeam[slot]) diffCount++;
-    }
-    assert.equal(diffCount, 1, `mutant should differ from parent in exactly one slot, got ${diffCount}`);
-    assert.equal(entry.swappedSlot, [0, 1, 2].find((slot) => parentTeam[slot] !== mutantTeam[slot]));
+    const diffSlots = [0, 1, 2].filter((slot) => parentTeam[slot] !== mutantTeam[slot]);
     assert.equal(new Set(speciesOf(mutantTeam)).size, 3, 'mutant must have 3 distinct species');
+
+    if (entry.mutationType === 'memberSwap') {
+      memberSwapCount++;
+      assert.equal(diffSlots.length, 1, `member-swap mutant should differ from parent in exactly one slot, got ${diffSlots.length}`);
+      assert.equal(entry.swappedSlot, diffSlots[0]);
+    } else if (entry.mutationType === 'leadRotation') {
+      leadRotationCount++;
+      // A rotation swaps the lead (slot 0) with one back slot -- exactly 2
+      // slots differ (the two that traded places) -- and the SPECIES SET is
+      // unchanged (same 3 species, just a different one designated lead).
+      assert.equal(diffSlots.length, 2, `lead-rotation mutant should differ from parent in exactly 2 slots, got ${diffSlots.length}`);
+      assert.ok(diffSlots.includes(0), 'lead-rotation must change the lead slot');
+      assert.equal(entry.promotedSlot, diffSlots.find((slot) => slot !== 0));
+      assert.deepEqual(new Set(speciesOf(mutantTeam)), new Set(speciesOf(parentTeam)), 'lead-rotation must keep the same species set');
+      assert.equal(mutantTeam[0], parentTeam[entry.promotedSlot], 'the promoted back should now be the lead');
+      assert.equal(mutantTeam[entry.promotedSlot], parentTeam[0], 'the old lead should now sit in the promoted slot');
+    } else {
+      assert.fail(`unexpected mutationType: ${entry.mutationType}`);
+    }
   });
-  assert.ok(mutantCount > 0, 'sanity: this config should actually produce mutants');
+  assert.ok(memberSwapCount > 0, 'sanity: this config should actually produce member-swap mutants');
+  assert.ok(leadRotationCount > 0, 'sanity: this config should actually produce lead-rotation mutants');
+});
+
+test('lead-rotation rate controls the mix of mutation types (statistical check over many seeded generations)', () => {
+  const P = 20;
+  const population = samplePopulation(P, 'rotation-rate-pop');
+  const fitness = population.map((_, i) => i);
+  const opts = { deathRate: 0.5, immigrantFraction: 0, mutationFloor: 0.9, mutationCeil: 0.9 }; // force ~every survivor to mutate
+
+  function countTypesOverTrials(leadRotationRate, trials) {
+    let memberSwap = 0;
+    let leadRotation = 0;
+    for (let t = 0; t < trials; t++) {
+      const { lineage } = nextGeneration({
+        population,
+        fitness,
+        pool: WIDE_POOL,
+        matrix: WIDE_MATRIX,
+        seed: `rotation-rate-${leadRotationRate}-${t}`,
+        opts: { ...opts, leadRotationRate },
+      });
+      for (const entry of lineage.entries) {
+        if (entry.origin !== 'mutant') continue;
+        if (entry.mutationType === 'leadRotation') leadRotation++;
+        else memberSwap++;
+      }
+    }
+    return { memberSwap, leadRotation };
+  }
+
+  const low = countTypesOverTrials(0.1, 30);
+  const high = countTypesOverTrials(0.8, 30);
+  assert.ok(low.leadRotation + low.memberSwap > 0 && high.leadRotation + high.memberSwap > 0, 'sanity: both trials produced mutants');
+  const lowRatio = low.leadRotation / (low.leadRotation + low.memberSwap);
+  const highRatio = high.leadRotation / (high.leadRotation + high.memberSwap);
+  assert.ok(highRatio > lowRatio, `expected a higher leadRotationRate to produce more lead-rotation mutants (low=${lowRatio}, high=${highRatio})`);
 });
 
 test('population stays unique and exactly at target size, with the immigrant floor respected', () => {

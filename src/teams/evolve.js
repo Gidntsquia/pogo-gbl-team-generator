@@ -1,11 +1,12 @@
 // JavaScript Document
 //
-// GA core module (GOALS T23, PLAN.md Rev 5 "survival of the fittest"). Pure
-// generational logic -- selection, mutation, immigration, convergence -- with
-// NO battles inside, so it is unit-testable against fake fitness arrays
-// without booting the pvpoke engine. `scripts/evolve.mjs` (T24) is the driver
-// that actually runs battles (via the Rev 4 executor) to produce each
-// generation's `fitness` array and feeds it back into `nextGeneration`.
+// GA core module (GOALS T23, PLAN.md Rev 5 "survival of the fittest"; locked
+// -lead representation added GOALS T29, PLAN.md Rev 6). Pure generational
+// logic -- selection, mutation, immigration, convergence -- with NO battles
+// inside, so it is unit-testable against fake fitness arrays without booting
+// the pvpoke engine. `scripts/evolve.mjs` (T24) is the driver that actually
+// runs battles (via the Rev 4 executor) to produce each generation's
+// `fitness` array and feeds it back into `nextGeneration`.
 //
 // A "team" here is the same shape used throughout src/teams/*: an array of 3
 // distinct userMonKeys (matrix.ratings/matrix.builtMons keys), no duplicate
@@ -13,6 +14,19 @@
 // src/teams/index.js's dedupeBestPerSpecies and src/teams/sample.js's
 // sampleCandidateTeams). GA code is sampling machinery, not battle math --
 // vendor stays untouched, no pvpoke import here at all.
+//
+// LOCKED LEADS (PLAN Rev 6, Jaxon): a team is (lead, back1, back2), not an
+// unordered trio -- by convention `team[0]` is the designated lead and
+// `team[1]`/`team[2]` are the backs (their relative order carries no
+// meaning). Individual IDENTITY for dedup/uniqueness purposes is therefore
+// (lead, {backs}) -- the SAME 3 species with a DIFFERENT lead is a DIFFERENT
+// individual (see `teamSignature`). `initPopulation` assigns each freshly
+// -sampled species-set a seeded-random lead; mutation gains a second type,
+// lead-rotation (promote a back to lead), alongside the pre-existing member
+// -swap type -- see `DEFAULT_LEAD_ROTATION_RATE`. Downstream battle-driving
+// code (scripts/evolve.mjs) deciding to evaluate a team ONLY at its own
+// `team[0]` lead (PLAN Rev 6's ~3x battle-count saving) is NOT this module's
+// concern -- this module only defines and evolves the representation.
 
 import { rngFromSeed, pickWeighted } from '../util/rng.js';
 import {
@@ -23,6 +37,7 @@ import {
 } from './sample.js';
 
 const TEAM_SIZE = 3;
+const BACK_SLOTS = [1, 2];
 
 // Selection defaults, revised 2026-08-21 by Jaxon (PLAN Rev 5): bottom-50%
 // death was judged "too harsh" -- only a quarter of the population dies each
@@ -31,6 +46,15 @@ const TEAM_SIZE = 3;
 export const DEFAULT_DEATH_RATE = 1 / 3; // Jaxon 2026-08-22: bottom third dies (was 0.25)
 export const DEFAULT_MUTATION_FLOOR = 0.05;
 export const DEFAULT_MUTATION_CEIL = 0.4;
+// Of the mutation successes rolled via mutationFloor/Ceil above, this share
+// become a LEAD-ROTATION (promote a back to lead, same species-set) instead
+// of a member-swap (replace one slot's species) -- PLAN Rev 6: "NEW lead
+// -rotation mutation ... alongside member-swap". 0.3 is a documented
+// judgment call (T29, no value specified upstream): common enough that lead
+// -assignment is genuinely explored by evolution, but member-swap (which
+// still explores species composition, including at the lead slot) stays the
+// majority of mutations, matching its pre-existing primacy.
+export const DEFAULT_LEAD_ROTATION_RATE = 0.3;
 // "a floor of ~10% of P fresh IMMIGRANT teams is always reserved" (PLAN Rev 5).
 export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 export const DEFAULT_CONVERGENCE_WINDOW = 3;
@@ -43,51 +67,93 @@ export const DEFAULT_CONVERGENCE_TOP_N = 10;
 const MAX_ATTEMPTS_MULTIPLIER = 20;
 const MAX_ATTEMPTS_FLOOR = 50;
 
-/** Sorted-key signature for a team, used to dedupe the population by composition. */
+/**
+ * Identity signature for a LOCKED-LEAD team: `team[0]` (the lead) plus the
+ * sorted set of `team[1]`/`team[2]` (the backs, unordered). Two teams with
+ * the same 3 species but a DIFFERENT lead produce DIFFERENT signatures --
+ * PLAN Rev 6's "same trio, different lead = different individual" -- so
+ * every uniqueness/dedup check in this module (population fill, mutant/
+ * immigrant collision checks, convergence's top-N set) is lead-aware for
+ * free by routing through this one function.
+ */
 function teamSignature(team) {
-  return [...team].sort().join('|');
+  return `${team[0]}||${[...team.slice(1)].sort().join('|')}`;
 }
 
 /**
- * Gen 0: delegate straight to `sampleCandidateTeams` (PLAN Rev 5's
- * `initPopulation` is explicitly a thin wrapper -- the weighted 1v1-score /
- * meta-usage blend that seeds candidate teams elsewhere in the app is
- * exactly what should seed generation zero too).
+ * Assign a seeded-random lead to an unordered 3-species team by rotating the
+ * chosen slot into index 0 (swap with whatever was already there). Used both
+ * by `initPopulation` (every freshly-sampled gen-0 team needs a lead) and by
+ * `nextGeneration`'s immigrant draw (fresh `sampleCandidateTeams` results are
+ * likewise unordered and need one assigned before they can be compared by
+ * `teamSignature`).
+ */
+function assignLead(team, rng) {
+  const leadSlot = Math.floor(rng() * TEAM_SIZE) % TEAM_SIZE;
+  if (leadSlot === 0) return team.slice();
+  const reordered = team.slice();
+  [reordered[0], reordered[leadSlot]] = [reordered[leadSlot], reordered[0]];
+  return reordered;
+}
+
+/**
+ * Gen 0: delegate straight to `sampleCandidateTeams` for WHICH 3 species
+ * make up each team (PLAN Rev 5's `initPopulation` is explicitly a thin
+ * wrapper -- the weighted 1v1-score / meta-usage blend that seeds candidate
+ * teams elsewhere in the app is exactly what should seed generation zero
+ * too), then assign each team a seeded-random lead (PLAN Rev 6 locked
+ * leads) -- `sampleCandidateTeams` already guarantees unique species-sets,
+ * and a single lead-assignment per gen-0 team can't collide with itself, so
+ * no retry loop is needed here.
  *
  * @param {{matrix:object, pool:string[], weights?:Map<string,number>,
  *   count:number, seed?:number|string, excludeSpecies?:string[]}} params
- * @returns {string[][]} up to `count` unique 3-userMonKey teams.
+ * @returns {string[][]} up to `count` unique 3-userMonKey teams, each with
+ *   `team[0]` as its designated lead.
  */
 export function initPopulation({ matrix, pool, weights, count, seed, excludeSpecies }) {
-  return sampleCandidateTeams({ matrix, pool, weights, count, seed, excludeSpecies });
+  const teams = sampleCandidateTeams({ matrix, pool, weights, count, seed, excludeSpecies });
+  const rng = rngFromSeed(seed, 'initPopulation-lead');
+  return teams.map((team) => assignLead(team, rng));
 }
 
 /**
  * Roll each survivor's mutation chance in a fixed, seed-derived order
  * (ascending fitness among survivors -- i.e. always the same order for the
  * same inputs) and return the ones that rolled a success, in that same
- * order, each tagged with its fitness percentile among survivors.
+ * order, each tagged with its fitness percentile among survivors and which
+ * mutation TYPE it rolled (a second, immediately-following rng() draw on
+ * success only, so the sequence stays fully deterministic under a fixed
+ * seed): `'leadRotation'` with probability `leadRotationRate`, else
+ * `'memberSwap'` (PLAN Rev 6's two mutation types).
  */
-function rollMutations(survivorIndicesByFitnessAsc, fitness, mutationFloor, mutationCeil, rng) {
+function rollMutations(survivorIndicesByFitnessAsc, fitness, mutationFloor, mutationCeil, leadRotationRate, rng) {
   const n = survivorIndicesByFitnessAsc.length;
   const successes = [];
   survivorIndicesByFitnessAsc.forEach((idx, rank) => {
     const percentile = n <= 1 ? 1 : rank / (n - 1);
     const chance = mutationFloor + (mutationCeil - mutationFloor) * percentile;
     const roll = rng();
-    if (roll < chance) successes.push({ idx, percentile });
+    if (roll < chance) {
+      const typeRoll = rng();
+      const type = typeRoll < leadRotationRate ? 'leadRotation' : 'memberSwap';
+      successes.push({ idx, percentile, type });
+    }
   });
   return successes;
 }
 
 /**
- * Attempt to build one mutant of `parentTeam`: pick a uniform-random slot,
- * replace it with a DIFFERENT eligible pool mon (P(new mon) proportional to
- * the Rev 3 score/usage blend), retrying a bounded number of times if the
- * result collides with an already-used team signature (`usedSignatures`) or
- * no eligible replacement exists for the chosen slot. Returns
- * `{team, swappedSlot}` or `null` if no valid mutant could be found within
- * the attempt budget.
+ * Attempt to build one member-swap mutant of `parentTeam`: pick a uniform
+ * -random slot (any of the 3, including the lead slot 0 -- replacing the
+ * lead's species still counts as a member swap; PLAN Rev 6's dedicated
+ * lead-ROTATION mutation below is the one that changes only WHO leads, not
+ * WHICH species are on the team), replace it with a DIFFERENT eligible pool
+ * mon (P(new mon) proportional to the Rev 3 score/usage blend), retrying a
+ * bounded number of times if the result collides with an already-used team
+ * signature (`usedSignatures`) or no eligible replacement exists for the
+ * chosen slot. Returns `{team, swappedSlot}` or `null` if no valid mutant
+ * could be found within the attempt budget.
  */
 function buildMutant(parentTeam, matrix, scoredPool, weightFn, usedSignatures, rng, maxAttempts) {
   const currentSpecies = new Set(parentTeam.map((key) => matrix.builtMons[key].speciesId));
@@ -104,6 +170,28 @@ function buildMutant(parentTeam, matrix, scoredPool, weightFn, usedSignatures, r
     if (usedSignatures.has(signature)) continue;
     usedSignatures.add(signature);
     return { team: mutantTeam, swappedSlot: slotIndex };
+  }
+  return null;
+}
+
+/**
+ * Attempt to build one lead-rotation mutant of `parentTeam` (PLAN Rev 6):
+ * promote a uniform-random BACK slot (index 1 or 2) into the lead slot
+ * (index 0), demoting the current lead into that back slot -- same 3
+ * species, a different designated lead, hence a different individual under
+ * `teamSignature`. Retries on a signature collision (there are only 2
+ * possible rotations of a 3-member team, so this exhausts quickly if both
+ * are already taken). Returns `{team, promotedSlot}` or `null`.
+ */
+function buildLeadRotation(parentTeam, usedSignatures, rng, maxAttempts) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const promotedSlot = BACK_SLOTS[Math.floor(rng() * BACK_SLOTS.length) % BACK_SLOTS.length];
+    const rotated = parentTeam.slice();
+    [rotated[0], rotated[promotedSlot]] = [rotated[promotedSlot], rotated[0]];
+    const signature = teamSignature(rotated);
+    if (usedSignatures.has(signature)) continue;
+    usedSignatures.add(signature);
+    return { team: rotated, promotedSlot };
   }
   return null;
 }
@@ -128,7 +216,8 @@ function buildMutant(parentTeam, matrix, scoredPool, weightFn, usedSignatures, r
  *   seed?: number|string,
  *   opts?: {
  *     deathRate?: number, mutationFloor?: number, mutationCeil?: number,
- *     immigrantFraction?: number, alpha?: number, excludeSpecies?: string[],
+ *     leadRotationRate?: number, immigrantFraction?: number, alpha?: number,
+ *     excludeSpecies?: string[],
  *   },
  * }} params
  * @returns {{
@@ -137,7 +226,8 @@ function buildMutant(parentTeam, matrix, scoredPool, weightFn, usedSignatures, r
  *     died: number[],
  *     entries: Array<
  *       {origin:'survived', parentIndex:number} |
- *       {origin:'mutant', parentIndex:number, swappedSlot:number} |
+ *       {origin:'mutant', parentIndex:number, mutationType:'memberSwap', swappedSlot:number} |
+ *       {origin:'mutant', parentIndex:number, mutationType:'leadRotation', promotedSlot:number} |
  *       {origin:'immigrant'}
  *     >,
  *   },
@@ -150,7 +240,9 @@ function buildMutant(parentTeam, matrix, scoredPool, weightFn, usedSignatures, r
  *   is parallel to the RETURNED `population` (same order, same length): each
  *   entry says whether that slot is an unchanged survivor (with its index in
  *   the OLD population), a mutant (with its OLD-population parent index and
- *   which slot got swapped), or a fresh immigrant.
+ *   which mutation it got -- a member-swap's changed slot, or a lead
+ *   -rotation's promoted slot), or a fresh immigrant. Every returned team
+ *   still has `team[0]` as its designated lead (PLAN Rev 6).
  */
 export function nextGeneration({ population, fitness, pool, matrix, weights, seed, opts = {} }) {
   const P = population.length;
@@ -159,6 +251,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const deathRate = opts.deathRate ?? DEFAULT_DEATH_RATE;
   const mutationFloor = opts.mutationFloor ?? DEFAULT_MUTATION_FLOOR;
   const mutationCeil = opts.mutationCeil ?? DEFAULT_MUTATION_CEIL;
+  const leadRotationRate = opts.leadRotationRate ?? DEFAULT_LEAD_ROTATION_RATE;
   const immigrantFraction = opts.immigrantFraction ?? DEFAULT_IMMIGRANT_FRACTION;
   const alpha = typeof opts.alpha === 'number' ? opts.alpha : DEFAULT_BLEND_ALPHA;
   const excludeSpecies = opts.excludeSpecies ?? [];
@@ -170,7 +263,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const died = rankedWorstFirst.slice(0, deathCount);
   const survivorIndicesAsc = rankedWorstFirst.slice(deathCount); // still worst-to-best among survivors
 
-  const mutationSuccesses = rollMutations(survivorIndicesAsc, fitness, mutationFloor, mutationCeil, rng);
+  const mutationSuccesses = rollMutations(survivorIndicesAsc, fitness, mutationFloor, mutationCeil, leadRotationRate, rng);
 
   const deadSlots = P - survivorIndicesAsc.length;
   const immigrantFloor = Math.min(deadSlots, Math.round(immigrantFraction * P));
@@ -204,16 +297,26 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const mutantMaxAttempts = Math.max(chosenMutants.length, 1) * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
 
   const mutantEntries = [];
-  for (const { idx } of chosenMutants) {
-    const built = buildMutant(population[idx], matrix, scoredPool, weightFn, usedSignatures, rng, mutantMaxAttempts);
-    if (!built) continue; // bounded retries exhausted -- drop this mutant, graceful shortfall
-    mutantEntries.push({ team: built.team, parentIndex: idx, swappedSlot: built.swappedSlot });
+  for (const { idx, type } of chosenMutants) {
+    if (type === 'leadRotation') {
+      const built = buildLeadRotation(population[idx], usedSignatures, rng, mutantMaxAttempts);
+      if (!built) continue; // bounded retries exhausted (both rotations already taken) -- drop, graceful shortfall
+      mutantEntries.push({ team: built.team, parentIndex: idx, mutationType: 'leadRotation', promotedSlot: built.promotedSlot });
+    } else {
+      const built = buildMutant(population[idx], matrix, scoredPool, weightFn, usedSignatures, rng, mutantMaxAttempts);
+      if (!built) continue; // bounded retries exhausted -- drop this mutant, graceful shortfall
+      mutantEntries.push({ team: built.team, parentIndex: idx, mutationType: 'memberSwap', swappedSlot: built.swappedSlot });
+    }
   }
 
   // Immigrants: fresh sampleCandidateTeams draw, over-requested so post-dedupe
   // filtering still has a shot at hitting the target count, seeded from this
   // function's own rng stream so the whole generation stays one deterministic
   // draw under `seed` (no wall-clock, no second independent seed to track).
+  // Each drawn (unordered) species-set gets a seeded lead assigned the same
+  // way initPopulation does BEFORE the signature check, since identity is
+  // now lead-aware -- an immigrant sharing an existing species-set but with
+  // a different lead is a legitimately distinct individual, not a collision.
   const immigrantEntries = [];
   if (immigrantCount > 0) {
     const requestCount = immigrantCount * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
@@ -229,10 +332,11 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
     });
     for (const team of drawn) {
       if (immigrantEntries.length >= immigrantCount) break;
-      const signature = teamSignature(team);
+      const withLead = assignLead(team, rng);
+      const signature = teamSignature(withLead);
       if (usedSignatures.has(signature)) continue;
       usedSignatures.add(signature);
-      immigrantEntries.push(team);
+      immigrantEntries.push(withLead);
     }
   }
 
@@ -247,7 +351,11 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
       .slice()
       .sort((a, b) => a - b)
       .map((idx) => ({ origin: 'survived', parentIndex: idx })),
-    ...mutantEntries.map((m) => ({ origin: 'mutant', parentIndex: m.parentIndex, swappedSlot: m.swappedSlot })),
+    ...mutantEntries.map((m) => (
+      m.mutationType === 'leadRotation'
+        ? { origin: 'mutant', parentIndex: m.parentIndex, mutationType: 'leadRotation', promotedSlot: m.promotedSlot }
+        : { origin: 'mutant', parentIndex: m.parentIndex, mutationType: 'memberSwap', swappedSlot: m.swappedSlot }
+    )),
     ...immigrantEntries.map(() => ({ origin: 'immigrant' })),
   ];
 
