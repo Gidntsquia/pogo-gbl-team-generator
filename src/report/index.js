@@ -24,6 +24,18 @@ function memberNames(team) {
   return team.members.map((m) => m.name).join(', ');
 }
 
+/**
+ * GOALS T28: format one role score ([0,1] from src/meta/roles.js) as a
+ * percentage for a report cell, or an em dash when the species has no entry
+ * in `roleScores` at all (never happens for a real gamemaster speciesId
+ * under the pinned vendor commit, but `roleScores` is caller-supplied and a
+ * missing species should render as "no data," not crash).
+ */
+function roleCell(roleScores, speciesId, role) {
+  const entry = roleScores?.get(speciesId);
+  return entry ? pct(entry[role]) : '—';
+}
+
 /** Escape text for safe interpolation into HTML (report data includes raw CSV/species strings). */
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -42,6 +54,12 @@ function escapeHtml(s) {
  * @property {import('../teams/index.js').TeamResult[]} rankedTeams
  * @property {Array<{speciesId:string, name:string, score:number, leadIn:string}>} monScores
  *   matrix.mons (per-mon 1v1 weighted scores + lead-in summary).
+ * @property {Map<string, {lead:number, closer:number, switch:number}>} [roleScores]
+ *   GOALS T28: per-species lead/closer/switch priors from
+ *   src/meta/roles.js's `loadRoleScores` (each in [0,1]), keyed by
+ *   speciesId. Optional -- when absent, the per-mon appendix renders
+ *   exactly as it did before T28 (no extra columns), so older callers/tests
+ *   that don't supply it are unaffected.
  * @property {Array<{id:string, name:string, label?:('curated'|'sampled'|null)}>} metaTeams
  *   opponent pool used. `label` is present (GOALS T12) when the opponent pool
  *   was sampled (src/meta/sampleTeams.js); null/absent for the exhaustive
@@ -155,7 +173,7 @@ function cpSetting(settings) {
  * @returns {string} Markdown text.
  */
 export function renderReport(input) {
-  const { rankedTeams, monScores, metaTeams, warnings, settings } = input;
+  const { rankedTeams, monScores, metaTeams, warnings, settings, roleScores } = input;
   const out = [];
 
   out.push(`# ${leagueLabel(settings)} Team Report`);
@@ -240,11 +258,24 @@ export function renderReport(input) {
       'collection down to the candidate pool; higher is better.'
   );
   out.push('');
-  out.push('| Pokemon | Score | 1v1 notes |');
-  out.push('| --- | ---: | --- |');
+  if (roleScores) {
+    out.push(
+      '_Lead/Closer/Switch columns (GOALS T28) are pvpoke\'s own published role-specific ' +
+        'priors (rankings/all/{leads,closers,switches}) under its recommended movesets -- ' +
+        'species-level context, not this collection\'s own instance/IV-specific 1v1 score._'
+    );
+    out.push('');
+  }
+  const roleHeader = roleScores ? ' Lead | Closer | Switch |' : '';
+  const roleDivider = roleScores ? ' ---: | ---: | ---: |' : '';
+  out.push(`| Pokemon | Score | 1v1 notes |${roleHeader}`);
+  out.push(`| --- | ---: | --- |${roleDivider}`);
   const sortedMons = [...monScores].sort((a, b) => b.score - a.score);
   for (const m of sortedMons) {
-    out.push(`| ${m.name} | ${m.score.toFixed(1)} | ${m.leadIn || ''} |`);
+    const roleCells = roleScores
+      ? ` ${roleCell(roleScores, m.speciesId, 'lead')} | ${roleCell(roleScores, m.speciesId, 'closer')} | ${roleCell(roleScores, m.speciesId, 'switch')} |`
+      : '';
+    out.push(`| ${m.name} | ${m.score.toFixed(1)} | ${m.leadIn || ''} |${roleCells}`);
   }
   out.push('');
 
@@ -309,7 +340,7 @@ function renderTeamSectionHtml(team, rank) {
  * @returns {string} HTML document text.
  */
 export function renderReportHtml(input) {
-  const { rankedTeams, monScores, metaTeams, warnings, settings } = input;
+  const { rankedTeams, monScores, metaTeams, warnings, settings, roleScores } = input;
   const s = settings;
   const modeParts =
     s.mode === 'sampled'
@@ -408,12 +439,29 @@ export function renderReportHtml(input) {
       'pvpoke 0-1000 scale, averaged over the scoring meta). Used to prune the ' +
       'collection down to the candidate pool; higher is better.</p>'
   );
+  if (roleScores) {
+    out.push(
+      '<p><em>Lead/Closer/Switch columns (GOALS T28) are pvpoke&rsquo;s own published ' +
+        'role-specific priors (rankings/all/{leads,closers,switches}) under its recommended ' +
+        'movesets -- species-level context, not this collection&rsquo;s own instance/IV-specific ' +
+        '1v1 score.</em></p>'
+    );
+  }
   out.push('<table>');
-  out.push('<thead><tr><th>Pokemon</th><th>Score</th><th>1v1 notes</th></tr></thead>');
+  out.push(
+    `<thead><tr><th>Pokemon</th><th>Score</th><th>1v1 notes</th>${
+      roleScores ? '<th>Lead</th><th>Closer</th><th>Switch</th>' : ''
+    }</tr></thead>`
+  );
   out.push('<tbody>');
   const sortedMons = [...monScores].sort((a, b) => b.score - a.score);
   for (const m of sortedMons) {
-    out.push(`<tr><td>${escapeHtml(m.name)}</td><td>${m.score.toFixed(1)}</td><td>${escapeHtml(m.leadIn || '')}</td></tr>`);
+    const roleCells = roleScores
+      ? `<td>${roleCell(roleScores, m.speciesId, 'lead')}</td><td>${roleCell(roleScores, m.speciesId, 'closer')}</td><td>${roleCell(roleScores, m.speciesId, 'switch')}</td>`
+      : '';
+    out.push(
+      `<tr><td>${escapeHtml(m.name)}</td><td>${m.score.toFixed(1)}</td><td>${escapeHtml(m.leadIn || '')}</td>${roleCells}</tr>`
+    );
   }
   out.push('</tbody></table>');
 

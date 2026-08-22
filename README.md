@@ -218,6 +218,23 @@ This fetches pvpoke's live Great League rankings JSON and writes
 loader falls back to the vendored rankings file whenever the snapshot is
 missing, unparseable, or malformed.
 
+### Role priors: Lead / Closer / Switch (`src/meta/roles.js`)
+
+The per-mon appendix table also shows **Lead**, **Closer**, and **Switch**
+columns — pvpoke's own published role-specific rankings
+(`vendor/pvpoke/src/data/rankings/all/{leads,closers,switches}`), each
+computed under its own scenario weighting (a lead starts a battle at full
+shields/energy; a closer is scored with no shields left to bait or bank; a
+switch scenario starts mid-energy, simulating a counter-pick). These are
+**species-level priors** under pvpoke's own recommended moveset — context
+for reading the appendix, not a replacement for this collection's own
+instance-specific 1v1 score or the real 3v3 battle results above it. They
+are cp-aware (follow `--cp`, same as everything else) and, like the usage
+weights above, prefer a committed freshness snapshot (`data/meta-roles.json`,
+same shape convention) over the vendored rankings when one is present and
+valid for the league being run — no live-refresh script ships for this yet;
+a snapshot would need to be hand-authored or added later.
+
 ### Tuning the search (speed vs. thoroughness)
 
 **Sampled (default) path:** total 3v3 battles run = `--candidates ×

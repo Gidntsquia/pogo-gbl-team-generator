@@ -90,6 +90,7 @@ import { initEngine } from './engine/harness.js';
 import { scoreCollection, computeWeightedScore } from './scoring/index.js';
 import { loadMetaTeams } from './meta/teams.js';
 import { loadUsageWeights } from './meta/usage.js';
+import { loadRoleScores } from './meta/roles.js';
 import { sampleOpponentTeams } from './meta/sampleTeams.js';
 import { sampleCandidateTeams } from './teams/sample.js';
 import { buildCandidates, evaluateTeams, dedupeBestPerSpecies } from './teams/index.js';
@@ -309,11 +310,17 @@ export async function runPipeline(csvPath, opts = {}) {
   const warnings = [...importWarnings, ...matrix.warnings];
   settings.candidateCount = candidates.length;
 
+  // GOALS T28: pvpoke's own vendored lead/closer/switch role priors, cp-aware.
+  // Local file reads only (no network) -- cheap enough to always compute and
+  // surface in the report appendix.
+  const roleScores = loadRoleScores(ctx);
+
   return {
     collectionPath: csvPath,
     monCount: matrix.mons.length,
     rankedTeams,
     monScores: matrix.mons,
+    roleScores,
     metaTeams: metaTeams.map((m) => ({ id: m.id, name: m.name, label: m.label ?? null })),
     warnings,
     settings,
