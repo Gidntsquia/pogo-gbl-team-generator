@@ -3,4 +3,5 @@ node_modules/
 out/
 .DS_Store
 my-collection.csv
-.claude/
+.claude/*
+!.claude/settings.json
