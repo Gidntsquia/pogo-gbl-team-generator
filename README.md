@@ -335,20 +335,43 @@ scheme's three, freeing up ~3x the battle budget to spend on
 opponent's possible leads) for the report's bestLead/safe-swap detail.
 
 **Fitness: `--fitness classic|battle-reality` (`PLAN.md` Rev 6):** by
-default (`classic`) a team's fitness is its plain locked-lead win rate —
-today's metric, unchanged. `--fitness battle-reality` blends that win rate
-with two more signals, both computed for free from the same battles (no
-extra simulation): a **snowball score** (this team's own fraction of decided
-lead exchanges it won this generation — how often its lead outlasts the
-opponent's, independent of whether the game is ultimately won) and a
-**closer score** (the mean of its two back-line members' `closer` role prior
-from pvpoke's own rankings — see "Role priors" below). Real-battle
+default (`battle-reality`, GOALS T30) a team's fitness blends its plain
+locked-lead win rate with two more signals, both computed for free from the
+same battles (no extra simulation): a **snowball score** (this team's own
+fraction of decided lead exchanges it won this generation — how often its
+lead outlasts the opponent's, independent of whether the game is ultimately
+won) and a **closer score** (the mean of its two back-line members' `closer`
+role prior from pvpoke's own rankings — see "Role priors" below). Real-battle
 measurement found winning the lead exchange is roughly a 2.3–2.7x multiplier
 on win probability, so the default blend weights it meaningfully
 (`winRate=0.6, snowball=0.3, closer=0.1`, documented in
-`scripts/evolve.mjs`). Both scores are always computed and shown in the
-report — even under `classic` fitness — so you can see how a team is winning,
-not just whether it is.
+`scripts/evolve.mjs`). `--fitness classic` restores the plain win-rate
+metric (today's original behavior, still fully supported) — both scores are
+always computed and shown in the report regardless of mode, so you can see
+how a team is winning, not just whether it is.
+
+`battle-reality` became the default on the strength of a real A/B (GOALS
+T30, same seed/collection/opponents, `--fitness classic` vs
+`--fitness battle-reality`, recorded in `PROGRESS.md`): battle-reality's
+top-10 showed the exact shift the whole Rev 6 initiative was built to
+produce — Stunfisk (Galarian)/Azumarill's share of the top 10 teams fell
+(5→2 and 7→5 team-appearances respectively) while Skarmory, absent from
+classic's top 10 entirely, entered twice as a back-line closer pick, and
+Medicham rose 2→5. The #1 team is the same three species in both runs, led
+by a different member (Medicham under classic, Sableye under battle-reality).
+
+**Two report metrics distinct from the fitness-blend components above**
+(GOALS T30, PLAN Rev 6's own original naming) — per elite team: a
+**snowball index**, P(win the game | won the lead exchange), and a
+**comeback index**, P(win the game | lost the lead exchange) — both `n/a`
+when a team had zero decided exchanges of that kind to measure from (not
+0%, which would imply a measured failure); and a **designated closer**, the
+higher-`closer`-prior of the team's two back members specifically (not the
+mean the closer score above uses). Teams are named `Lead / Back / Back` in
+every report table and heading. `out/evolve-generations.json` also carries
+each generation's top-10-by-fitness teams (`topTeams`) with these same
+fields, so they're trackable across generations, not just in the final
+elites pass.
 
 **Flags** (`node scripts/evolve.mjs --help` for the full list with
 defaults): `--population`, `--opponents-per-gen`, and `--generations` size

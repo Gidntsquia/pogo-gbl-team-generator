@@ -190,7 +190,17 @@ const DEFAULTS = Object.freeze({
   curatedRatio: 0.4,
   outDir: 'out',
   html: 'my-teams-evolve.html', // resolved against outDir unless --html/opts.html is absolute or explicit
-  fitness: 'classic', // GOALS T29 item 3 / PLAN Rev 6: 'classic' (today's plain win-rate metric) or 'battle-reality' (the new blend, see DEFAULT_FITNESS_WEIGHTS)
+  // GOALS T30 (PLAN Rev 6): flipped to 'battle-reality' as the DEFAULT, per this
+  // ticket's own "decide + document whether battle-reality becomes the evolve
+  // DEFAULT" deliverable -- backed by a real A/B (out/evolve-ab-classic vs
+  // out/evolve-ab-reality, same seed/collection/opponents, recorded in
+  // PROGRESS.md): battle-reality's top-10 showed the exact shift Jaxon's
+  // original directive asked for (Stunfisk (Galarian)/Azumarill's dominance
+  // fell from 5/7 of 10 top teams to 2/5; Skarmory -- absent from classic's
+  // top 10 entirely -- entered twice as a back-line closer pick; Medicham rose
+  // 2 -> 5). `--fitness classic` remains a fully-supported escape hatch
+  // (standing rule for this initiative).
+  fitness: 'battle-reality',
 });
 
 const FITNESS_MODES = ['classic', 'battle-reality'];
@@ -235,6 +245,23 @@ function escapeHtml(s) {
     '"': '&quot;',
     "'": '&#39;',
   }[c]));
+}
+
+/**
+ * "Lead / Back / Back" team-name formatting (GOALS T30, PLAN Rev 6 locked
+ * leads) -- `members[0]` is always the designated lead end-to-end (see the
+ * LOCKED LEADS note above and evaluateTeamsInOrder's own comment on why
+ * `bestLead` always resolves to index 0). Plain-text (Markdown) variant.
+ */
+function formatTeamMembers(members) {
+  const [lead, ...backs] = members;
+  return `${lead.name} (Lead) / ${backs.map((b) => b.name).join(' / ')}`;
+}
+
+/** HTML-escaped counterpart of {@link formatTeamMembers}. */
+function formatTeamMembersHtml(members) {
+  const [lead, ...backs] = members;
+  return `${escapeHtml(lead.name)} <em>(Lead)</em> / ${backs.map((b) => escapeHtml(b.name)).join(' / ')}`;
 }
 
 function formatDuration(ms) {
@@ -364,6 +391,51 @@ function computeBlendFitness({ winRate, snowballScore, closerScore }, weights = 
   return weights.winRate * winRate + weights.snowball * snowballScore + weights.closer * closerScore;
 }
 
+// ---------------------------------------------------------------------------
+// GOALS T30 (PLAN Rev 6's own originally-named metrics, distinct from the
+// fitness-blend components above): `snowballScore`/`closerScore` above answer
+// "how often does this team win the exchange" / "how good are its backs at
+// closing, per pvpoke's priors" -- inputs to the fitness blend. These three
+// answer the report-facing questions PLAN Rev 6 actually named: given the
+// exchange outcome, how often does the team go on to WIN THE GAME, and which
+// specific back member is the better closer (not just the mean of both).
+// Pure post-processing of data evaluateTeamsInOrder's battle loop already
+// collects -- no new battles.
+// ---------------------------------------------------------------------------
+
+/**
+ * P(win the game | won the lead exchange) -- `null` (not 0) when the team had
+ * zero decided-and-won exchanges this run: the sample can't measure it, which
+ * is different from measuring a 0% conversion rate.
+ */
+function computeSnowballIndex(winsGivenExchangeWon, exchangeWon) {
+  return exchangeWon > 0 ? winsGivenExchangeWon / exchangeWon : null;
+}
+
+/** P(win the game | lost the lead exchange) -- the "comeback" rate. `null` when never measured (same reasoning as {@link computeSnowballIndex}). */
+function computeComebackIndex(winsGivenExchangeLost, exchangeLost) {
+  return exchangeLost > 0 ? winsGivenExchangeLost / exchangeLost : null;
+}
+
+/**
+ * Designated closer: of the team's two BACK members, whichever carries the
+ * HIGHER T28 role-prior `closer` score (same "closing is a back-line job"
+ * rationale as {@link computeCloserScore}, but reporting the standout member
+ * rather than the pair's mean). `null` if the team has no back members. A
+ * missing role-score (never happens for a real gamemaster speciesId under
+ * the pinned vendor commit, per T28's own note, but guarded anyway) counts
+ * as 0, same convention as computeCloserScore.
+ * @returns {{key:string, speciesId:string, name:string, closer:number}|null}
+ */
+function pickDesignatedCloser(members, roleScores) {
+  const backs = members.slice(1);
+  if (backs.length === 0) return null;
+  return backs.reduce((best, m) => {
+    const closer = roleScores?.get(m.speciesId)?.closer ?? 0;
+    return !best || closer > best.closer ? { key: m.key, speciesId: m.speciesId, name: m.name, closer } : best;
+  }, null);
+}
+
 /**
  * Final elites pass: candidate's lead stays locked at team[0], but spreads
  * across the opponent's all 3 possible leads (not just its resolved "own"
@@ -476,11 +548,15 @@ function speciesOfTeam(matrix, team) {
 
 /**
  * @param {{matrix:object, population:string[][], fitness:number[],
- *   lineage:{died:number[], entries:Array<object>}|null}} params
+ *   lineage:{died:number[], entries:Array<object>}|null, results?:object[]}} params
  *   `lineage` is the OUTGOING transition (this generation -> the next);
  *   null for a generation that had no next generation (the run's very last).
+ *   `results` (GOALS T30, optional) is `evaluateTeamsInOrder`'s own positional
+ *   per-team output for THIS generation (same index as `population`/`fitness`)
+ *   -- used only to source `topTeams`' snowballIndex/comebackIndex/designatedCloser;
+ *   everything else here is unaffected if omitted.
  */
-function computeGenerationAnalytics({ matrix, population, fitness, lineage }) {
+function computeGenerationAnalytics({ matrix, population, fitness, lineage, results }) {
   const bySpecies = new Map();
   population.forEach((team, i) => {
     for (const s of new Set(speciesOfTeam(matrix, team))) {
@@ -520,7 +596,29 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage }) {
   }
 
   const rankedIdx = population.map((_, i) => i).sort((a, b) => fitness[b] - fitness[a] || a - b);
-  const eliteIdx = rankedIdx.slice(0, Math.min(10, population.length)); // fixed top-10 for core-pair stats, independent of --elites (report's final-ranking count)
+  const eliteIdx = rankedIdx.slice(0, Math.min(10, population.length)); // fixed top-10 for core-pair stats AND topTeams (below), independent of --elites (report's final-ranking count)
+
+  // GOALS T30: per-team battle-reality metrics for THIS generation's top-10,
+  // written into out/evolve-generations.json so they're trackable across
+  // generations (not just the final elites pass, which already surfaces them
+  // in the report). `results` is optional/positional; a caller that omits it
+  // (none do today) just gets `null`s here rather than an error.
+  const topTeams = eliteIdx.map((i, rank) => {
+    const r = results?.[i];
+    return {
+      rank: rank + 1,
+      members: population[i].map((key) => {
+        const b = matrix.builtMons[key];
+        return { key, speciesId: b.speciesId, name: b.name };
+      }),
+      fitness: fitness[i],
+      winRate: r?.winRate ?? null,
+      snowballIndex: r?.snowballIndex ?? null,
+      comebackIndex: r?.comebackIndex ?? null,
+      designatedCloser: r?.designatedCloser ?? null,
+    };
+  });
+
   const coreCounts = new Map();
   for (const i of eliteIdx) {
     const species = [...new Set(speciesOfTeam(matrix, population[i]))].sort();
@@ -548,6 +646,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage }) {
     originCounts,
     survivalBySpecies: survivalBySpecies ? survivalBySpecies.slice(0, SPECIES_STATS_CAP) : null,
     topCores,
+    topTeams, // GOALS T30: this generation's top-10 by fitness, with snowballIndex/comebackIndex/designatedCloser
   };
 }
 
@@ -619,6 +718,8 @@ async function evaluateTeamsInOrder(ctx, params) {
     let candidateErrors = 0;
     let exchangeWon = 0; // GOALS T29 item 3: this candidate's lead fainted the opponent's lead first
     let exchangeLost = 0; // ...opponent's lead fainted this candidate's lead first
+    let winsGivenExchangeWon = 0; // GOALS T30: of the exchangeWon battles, how many did this candidate go on to WIN
+    let winsGivenExchangeLost = 0; // ...of the exchangeLost battles, how many did it still win (a comeback)
     const perMeta = [];
     const leadWins = [0, 0, 0];
     const leadBattles = [0, 0, 0];
@@ -684,8 +785,13 @@ async function evaluateTeamsInOrder(ctx, params) {
         // battles), regardless of trackLeads -- the per-generation fitness
         // loop needs this and never sets trackLeads.
         const exchange = leadExchangeLoser(r.summary);
-        if (exchange === 'a') exchangeLost += 1;
-        else if (exchange === 'b') exchangeWon += 1;
+        if (exchange === 'a') {
+          exchangeLost += 1;
+          if (r.winner === 'a') winsGivenExchangeLost += 1; // GOALS T30: comeback -- lost the exchange, won the game
+        } else if (exchange === 'b') {
+          exchangeWon += 1;
+          if (r.winner === 'a') winsGivenExchangeWon += 1; // GOALS T30: converted the exchange into the win
+        }
         // 'simultaneous'/'none' -- excluded, not a decided exchange (see computeSnowballScore).
 
         if (trackLeads) {
@@ -736,6 +842,12 @@ async function evaluateTeamsInOrder(ctx, params) {
       snowballScore,
       closerScore,
       blendFitness: computeBlendFitness({ winRate, snowballScore, closerScore }),
+      // GOALS T30: PLAN Rev 6's originally-named report metrics -- see the
+      // comment above computeSnowballIndex for how these differ from
+      // snowballScore/closerScore above. Always computed too (cheap).
+      snowballIndex: computeSnowballIndex(winsGivenExchangeWon, exchangeWon),
+      comebackIndex: computeComebackIndex(winsGivenExchangeLost, exchangeLost),
+      designatedCloser: pickDesignatedCloser(members, roleScores),
     };
 
     if (trackLeads) {
@@ -881,10 +993,10 @@ function renderEvolveReport(result) {
     out.push('_No elite teams were produced._');
     out.push('');
   } else {
-    out.push('| Rank | Team | Win% | Best lead | Avg HP margin |');
+    out.push('| Rank | Team (Lead / Back / Back) | Win% | Best lead | Avg HP margin |');
     out.push('| --- | --- | ---: | --- | ---: |');
     elites.forEach((t, i) => {
-      out.push(`| ${i + 1} | ${t.members.map((m) => m.name).join(', ')} | ${pct(t.winRate)} | ${t.bestLead.name} | ${signed(t.avgHpMargin)} |`);
+      out.push(`| ${i + 1} | ${formatTeamMembers(t.members)} | ${pct(t.winRate)} | ${t.bestLead.name} | ${signed(t.avgHpMargin)} |`);
     });
     out.push('');
   }
@@ -892,7 +1004,7 @@ function renderEvolveReport(result) {
   out.push('## Elite team detail');
   out.push('');
   elites.forEach((t, i) => {
-    out.push(`### ${i + 1}. ${t.members.map((m) => m.name).join(', ')}`);
+    out.push(`### ${i + 1}. ${formatTeamMembers(t.members)}`);
     out.push('');
     out.push(`- **Win rate:** ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)`);
     out.push(`- **Best lead:** ${t.bestLead.name} (${pct(t.bestLead.winRate)} when leading)`);
@@ -903,6 +1015,13 @@ function renderEvolveReport(result) {
     out.push(
       `- **Snowball score:** ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) — ` +
         `**Closer score:** ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)`
+    );
+    out.push(
+      `- **Snowball index:** ${pct(t.snowballIndex)} (P(win the game | won the lead exchange)) — ` +
+        `**Comeback index:** ${pct(t.comebackIndex)} (P(win the game | lost the lead exchange))`
+    );
+    out.push(
+      `- **Designated closer:** ${t.designatedCloser ? `${t.designatedCloser.name} (closer score ${pct(t.designatedCloser.closer)})` : 'n/a'}`
     );
     out.push('');
     out.push('5 hardest opponents (by win%):');
@@ -1076,11 +1195,11 @@ function renderEvolveReportHtml(result) {
     out.push('<p><em>No elite teams were produced.</em></p>');
   } else {
     out.push('<table>');
-    out.push('<thead><tr><th>Rank</th><th>Team</th><th>Win%</th><th>Best lead</th><th>Avg HP margin</th></tr></thead>');
+    out.push('<thead><tr><th>Rank</th><th>Team (Lead / Back / Back)</th><th>Win%</th><th>Best lead</th><th>Avg HP margin</th></tr></thead>');
     out.push('<tbody>');
     elites.forEach((t, i) => {
       out.push(
-        `<tr><td>${i + 1}</td><td>${escapeHtml(t.members.map((m) => m.name).join(', '))}</td>` +
+        `<tr><td>${i + 1}</td><td>${formatTeamMembersHtml(t.members)}</td>` +
           `<td>${pct(t.winRate)}</td><td>${escapeHtml(t.bestLead.name)}</td><td>${signed(t.avgHpMargin)}</td></tr>`
       );
     });
@@ -1090,7 +1209,7 @@ function renderEvolveReportHtml(result) {
   out.push('<h2>Elite team detail</h2>');
   elites.forEach((t, i) => {
     out.push('<section class="team">');
-    out.push(`<h3>${i + 1}. ${escapeHtml(t.members.map((m) => m.name).join(', '))}</h3>`);
+    out.push(`<h3>${i + 1}. ${formatTeamMembersHtml(t.members)}</h3>`);
     out.push('<ul class="team-stats">');
     out.push(`<li><strong>Win rate:</strong> ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)</li>`);
     out.push(`<li><strong>Best lead:</strong> ${escapeHtml(t.bestLead.name)} (${pct(t.bestLead.winRate)} when leading)</li>`);
@@ -1104,6 +1223,13 @@ function renderEvolveReportHtml(result) {
     out.push(
       `<li><strong>Snowball score:</strong> ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) -- ` +
         `<strong>Closer score:</strong> ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)</li>`
+    );
+    out.push(
+      `<li><strong>Snowball index:</strong> ${pct(t.snowballIndex)} (P(win the game | won the lead exchange)) -- ` +
+        `<strong>Comeback index:</strong> ${pct(t.comebackIndex)} (P(win the game | lost the lead exchange))</li>`
+    );
+    out.push(
+      `<li><strong>Designated closer:</strong> ${t.designatedCloser ? `${escapeHtml(t.designatedCloser.name)} (closer score ${pct(t.designatedCloser.closer)})` : 'n/a'}</li>`
     );
     out.push('</ul>');
     out.push('<p>5 hardest opponents (by win%):</p>');
@@ -1141,7 +1267,7 @@ function renderDoneMarker(result) {
   lines.push(`Evolution complete: ${result.generationRecords.length} generation(s) run (${result.stopReason}).`);
   const top = result.elites[0];
   if (top) {
-    lines.push(`Top team: ${top.members.map((m) => m.name).join(', ')} (${pct(top.winRate)} win rate, best lead ${top.bestLead.name}).`);
+    lines.push(`Top team: ${formatTeamMembers(top.members)} (${pct(top.winRate)} win rate, best lead ${top.bestLead.name}).`);
   } else {
     lines.push('No elite teams were produced.');
   }
@@ -1351,7 +1477,7 @@ export async function runEvolution(csvPath, opts = {}) {
           errorCount: run.errorCount,
           msPerBattle: run.battleCount > 0 ? run.elapsedMs / run.battleCount : FALLBACK_MS_PER_BATTLE,
         },
-        analytics: computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage }),
+        analytics: computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),
         resumed: false,
       };
       writeCheckpoint(outDir, generation, record);
@@ -1605,7 +1731,7 @@ async function main(argv) {
   say(`Evolution complete. ${result.generationRecords.length} generation(s) run (${result.stopReason}).`);
   if (result.elites[0]) {
     const top = result.elites[0];
-    say(`Top team: ${top.members.map((m) => m.name).join(', ')} -- ${pct(top.winRate)} win rate.`);
+    say(`Top team: ${formatTeamMembers(top.members)} -- ${pct(top.winRate)} win rate.`);
   }
   say('');
   say(`Full report written to ${result.reportPath}`);

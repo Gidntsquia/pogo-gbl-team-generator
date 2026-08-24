@@ -264,8 +264,11 @@ test('GOALS T29 part 2: resuming refuses an old-format (pre-lock) checkpoint ins
 });
 
 // GOALS T29 item 3 (PLAN.md Rev 6): battle-reality fitness blend (snowball +
-// closer terms), --fitness classic|battle-reality.
-test('battle-reality fitness components (snowball/closer/blendFitness) are always computed, even in classic mode', () => {
+// closer terms), --fitness classic|battle-reality. GOALS T30 flipped the
+// DEFAULT to 'battle-reality' (see DEFAULTS.fitness's own comment + the A/B
+// in PROGRESS.md) -- `shared` (no explicit `fitness` in TINY) now runs
+// battle-reality by default; classic is tested explicitly below.
+test('battle-reality fitness components (snowball/closer/blendFitness) are always computed, regardless of --fitness mode', () => {
   for (const t of shared.elites) {
     assert.ok(Number.isInteger(t.exchangeWon) && t.exchangeWon >= 0, 'exchangeWon is a non-negative count');
     assert.ok(Number.isInteger(t.exchangeLost) && t.exchangeLost >= 0, 'exchangeLost is a non-negative count');
@@ -275,9 +278,23 @@ test('battle-reality fitness components (snowball/closer/blendFitness) are alway
     assert.ok(t.blendFitness >= 0 && t.blendFitness <= 1, 'blendFitness in [0,1]');
   }
   const md = readFileSync(SHARED_REPORT, 'utf8');
-  assert.match(md, /Snowball score:/, 'report surfaces the snowball score even under default (classic) fitness');
-  assert.match(md, /Closer score:/, 'report surfaces the closer score even under default (classic) fitness');
-  assert.match(md, /fitness: classic/, 'Settings line names the default fitness mode');
+  assert.match(md, /Snowball score:/, 'report surfaces the snowball score');
+  assert.match(md, /Closer score:/, 'report surfaces the closer score');
+  assert.match(md, /fitness: battle-reality/, 'Settings line names the default fitness mode (GOALS T30: flipped to battle-reality)');
+});
+
+test('--fitness classic still computes the battle-reality components (report-only; the GA itself consumes plain winRate)', async () => {
+  const outDir = tmpOutDir('gbl-evolve-classicdefault-');
+  const classic = await runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r.md'), fitness: 'classic' });
+  assert.equal(classic.config.fitness, 'classic');
+  for (const t of classic.elites) {
+    assert.ok(t.snowballScore >= 0 && t.snowballScore <= 1, 'snowballScore still computed under classic mode');
+    assert.ok(t.closerScore >= 0 && t.closerScore <= 1, 'closerScore still computed under classic mode');
+  }
+  const md = readFileSync(classic.reportPath, 'utf8');
+  assert.match(md, /Snowball score:/);
+  assert.match(md, /Closer score:/);
+  assert.match(md, /fitness: classic/);
 });
 
 test('--fitness battle-reality: config fingerprint records the mode, run completes, and fitness values differ from classic winRate in general', async () => {
@@ -304,7 +321,10 @@ test('--fitness battle-reality: config fingerprint records the mode, run complet
   // resumed as if it were the requested mode (fitness is part of buildRunConfig,
   // so configsMatch already diverges -- this just confirms the resume scan
   // correctly starts fresh rather than reusing generation 0's population).
-  const classicOnSameDir = await runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r2.md') });
+  // Explicit 'classic' here (GOALS T30 flipped TINY's implicit default to
+  // battle-reality, same as `blended` above -- an implicit-default second run
+  // would now MATCH and legitimately resume rather than exercise the mismatch).
+  const classicOnSameDir = await runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r2.md'), fitness: 'classic' });
   assert.equal(classicOnSameDir.config.fitness, 'classic');
 });
 
@@ -314,6 +334,68 @@ test('--fitness with an unrecognized value throws a clear error', async () => {
     () => runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r.md'), fitness: 'nonsense' }),
     /opts\.fitness must be one of/i
   );
+});
+
+// GOALS T30 (PLAN Rev 6): "Lead / Back / Back" report naming, plus the
+// snowballIndex/comebackIndex/designatedCloser metrics distinct from T29's
+// own snowballScore/closerScore fitness-blend components.
+test('T30: reports name teams "Lead / Back / Back" (member[0] first, marked as lead)', () => {
+  const top = shared.elites[0];
+  const [lead, ...backs] = top.members;
+
+  const md = readFileSync(SHARED_REPORT, 'utf8');
+  assert.ok(md.includes(`${lead.name} (Lead) / ${backs.map((b) => b.name).join(' / ')}`), 'Markdown report uses the Lead/Back/Back format for the top team');
+  assert.match(md, /Team \(Lead \/ Back \/ Back\)/, 'top-teams table header names the format');
+
+  const html = readFileSync(shared.htmlPath, 'utf8');
+  assert.ok(html.includes(`${lead.name} <em>(Lead)</em> / ${backs.map((b) => b.name).join(' / ')}`), 'HTML report uses the same Lead/Back/Back format');
+});
+
+test('T30: snowballIndex/comebackIndex/designatedCloser are present on every elite (null when unmeasured, else in [0,1])', () => {
+  for (const t of shared.elites) {
+    assert.ok(t.snowballIndex === null || (t.snowballIndex >= 0 && t.snowballIndex <= 1), 'snowballIndex is null or in [0,1]');
+    assert.ok(t.comebackIndex === null || (t.comebackIndex >= 0 && t.comebackIndex <= 1), 'comebackIndex is null or in [0,1]');
+    if (t.snowballIndex !== null) assert.ok(t.exchangeWon > 0, 'a non-null snowballIndex implies at least one won exchange');
+    if (t.comebackIndex !== null) assert.ok(t.exchangeLost > 0, 'a non-null comebackIndex implies at least one lost exchange');
+
+    assert.ok(t.designatedCloser === null || typeof t.designatedCloser.name === 'string', 'designatedCloser is null or a named member');
+    if (t.designatedCloser) {
+      const backKeys = t.members.slice(1).map((m) => m.key);
+      assert.ok(backKeys.includes(t.designatedCloser.key), 'designatedCloser is one of the two back members, never the lead');
+      assert.ok(t.designatedCloser.closer >= 0 && t.designatedCloser.closer <= 1, 'designatedCloser.closer is a normalized T28 role prior');
+    }
+  }
+
+  const md = readFileSync(SHARED_REPORT, 'utf8');
+  assert.match(md, /Snowball index:/, 'report surfaces the snowball index');
+  assert.match(md, /Comeback index:/, 'report surfaces the comeback index');
+  assert.match(md, /Designated closer:/, 'report surfaces the designated closer');
+  const html = readFileSync(shared.htmlPath, 'utf8');
+  assert.match(html, /Snowball index:/);
+  assert.match(html, /Comeback index:/);
+  assert.match(html, /Designated closer:/);
+});
+
+test('T30: out/evolve-generations.json carries per-generation topTeams with the new fields', () => {
+  const p = path.join(SHARED_DIR, 'evolve-generations.json');
+  const analytics = JSON.parse(readFileSync(p, 'utf8'));
+  for (const g of analytics) {
+    assert.ok(Array.isArray(g.topTeams) && g.topTeams.length > 0, 'topTeams present and non-empty');
+    assert.ok(g.topTeams.length <= 10, 'topTeams capped at 10, same as topCores\' eliteIdx');
+    g.topTeams.forEach((t, i) => {
+      assert.equal(t.rank, i + 1, 'rank is 1-based and matches array order');
+      assert.ok(Array.isArray(t.members) && t.members.length === 3, 'each topTeams entry names its 3 members');
+      assert.ok(typeof t.fitness === 'number', 'fitness recorded');
+      assert.ok(t.winRate === null || (t.winRate >= 0 && t.winRate <= 1));
+      assert.ok(t.snowballIndex === null || (t.snowballIndex >= 0 && t.snowballIndex <= 1));
+      assert.ok(t.comebackIndex === null || (t.comebackIndex >= 0 && t.comebackIndex <= 1));
+      assert.ok('designatedCloser' in t, 'designatedCloser key present even when null');
+    });
+    // Ranked best-fitness-first, matching how eliteIdx/rankedIdx was built.
+    for (let i = 1; i < g.topTeams.length; i++) {
+      assert.ok(g.topTeams[i - 1].fitness >= g.topTeams[i].fitness, 'topTeams sorted best-fitness-first');
+    }
+  }
 });
 
 test('--fixed-opponents reuses the same opponent draw for every generation', async () => {

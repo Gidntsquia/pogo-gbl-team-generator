@@ -638,3 +638,62 @@ T29's box stays unchecked. Next: land T29's fitness-blend half (the only remaini
 **Verified this fire (all FOREGROUND, standing rule 8):** `node --test test/metaTeams.test.js` → **15/15** (12 prior + 3 new). `npm test` (full suite, explicit long timeout) → **246/246 green** (243 prior + 3 net new), ~200s wall time — no existing test needed updating beyond the two hardcoded-count lines named above, and those were re-derived from a live loader run, not guessed. No engine/scoring/battle-math files touched (only meta/report-adjacent plumbing + data + docs); no dependencies added.
 
 **Next:** GOALS.md's queue has exactly one item left: **T30** (reports render "Lead / Back / Back" + snowballIndex/comebackIndex + designated closer in analytics JSON, and the ACCEPTANCE A/B Jaxon actually asked for — two small real evolve runs, `--fitness classic` vs `--fitness battle-reality`, side-by-side top-10 comparison + the evolve-DEFAULT decision). Now unblocked (T29 and T31 are both done). A future fire should start there; everything T30 needs (locked leads, battle-reality fitness, the full curated pool including real ladder opponents) is shipped and working end-to-end today.
+
+## 2026-08-24T03:14Z — routine fire (T30: reports + A/B validation + the evolve-DEFAULT decision; box checked; Rev 6 CLOSED)
+
+**Context:** Fresh zero-memory fire. `bash scripts/setup.sh` succeeded (vendor/pvpoke pinned at `ea601f0a61c548f9140e4605b94a31fa97fe6aba`, G0 gate confirmed). Local `main`/`origin/main` refs were again stale in this container's cache (pointing at the ancient `7e0b954`) while the detached HEAD the container started on was already the real remote tip `7de9cf8` — same caching artifact the 02:31Z fire documented, same zero-risk fix (`git fetch origin main && git checkout main && git reset --hard origin/main`; origin was never behind, nothing was lost). Baseline `npm test` on the clean checkout before starting: **246/246 green**, matching the previous entry exactly. Read GOALS.md in full, PROGRESS's tail, ROADMAP.md, CLAUDE.md, PLAN.md Rev 6 — **T30 was the only remaining unchecked item** (T2b is conditional-on-T2-being-infeasible and T2 landed, so it is permanently moot).
+
+**What was done — the reporting half:**
+- `scripts/evolve.mjs`: new `formatTeamMembers`/`formatTeamMembersHtml` render teams as `Lead (Lead) / Back / Back` — applied everywhere a team name appears (top-teams table + its column header, elite-detail `###` headings, the plain-text `evolve-DONE` marker, the CLI's own console summary line). `members[0]` is always the designated lead (T29's own invariant, already enforced end to end).
+- Three new per-team metrics, deliberately DISTINCT from T29's `snowballScore`/`closerScore` (which are fitness-blend *inputs*): **`snowballIndex`** = P(win the game | won the lead exchange), **`comebackIndex`** = P(win the game | lost the lead exchange), and **`designatedCloser`** = whichever of the two BACK members carries the higher T28 `closer` role prior (vs. `closerScore`, which is their mean). The two indices are `null` — not `0` — when a team had zero decided exchanges of that kind this run: "the sample couldn't measure it" is genuinely different from "measured a 0% conversion rate", and `pct(null)` already renders `n/a`. Sourced from two new counters (`winsGivenExchangeWon`/`winsGivenExchangeLost`) in `evaluateTeamsInOrder`'s existing battle loop — free, no new battles, computed unconditionally regardless of `--fitness` mode, surfaced in BOTH report renderers.
+- `computeGenerationAnalytics` gained an optional positional `results` param and a **`topTeams`** array (reusing the same top-10-by-fitness `eliteIdx` slice `topCores` already computes) carrying `{rank, members, fitness, winRate, snowballIndex, comebackIndex, designatedCloser}` per entry — flows into `out/evolve-generations.json` through the existing `...r.analytics` spread with no writer change, so the new metrics are trackable generation-over-generation, not only in the final elites pass. `results` is optional (a caller omitting it gets `null`s, not an error) though nothing omits it today.
+
+**What was done — the ACCEPTANCE A/B (real runs, not simulated):**
+```
+node scripts/evolve.mjs fixtures/sample-pokegenie.csv --population 30 --pool 12 --score-meta 10 \
+  --opponents-per-gen 10 --generations 6 --elites 10 --seed t30ab-classic \
+  --out-dir out/evolve-ab-{classic|reality} --fitness {classic|battle-reality}
+```
+Same seed ⇒ **identical per-generation opponent draws in both runs** (`sampleOpponentTeams`'s seed doesn't depend on `config.fitness`), confirmed by matching 300-battles-per-generation counts. Classic: 77s wall, 0 errors, 1,790 generation battles (generation 5 ran 29 teams, not 30, after a dedupe collision). Battle-reality: 72s wall, 0 errors, 1,800 generation battles. Both plus a final elites pass (10 teams × 10 opponents × the opponent's 3 leads). Artifacts left in place under `out/evolve-ab-classic/` and `out/evolve-ab-reality/` (this ticket's verify line explicitly asks for "both A/B run artifacts in out/", so unlike prior acceptance runs these were NOT deleted afterward; `out/` is gitignored either way).
+
+**Side-by-side top-10:**
+
+| # | `--fitness classic` | Win% | `--fitness battle-reality` | Win% |
+| --- | --- | ---: | --- | ---: |
+| 1 | Medicham (Lead) / Sableye / Stunfisk | 80% | Sableye (Lead) / Medicham / Stunfisk | 77% |
+| 2 | Stunfisk (Lead) / Azumarill / Sableye | 70% | Sableye (Lead) / Medicham / Marowak (Alolan) | 73% |
+| 3 | Stunfisk (Lead) / Sableye / Medicham | 70% | Medicham (Lead) / Stunfisk / Skarmory | 70% |
+| 4 | Swampert (Lead) / Azumarill / Stunfisk (Galarian) | 67% | Stunfisk (Galarian) (Lead) / Azumarill / Marowak (Alolan) | 63% |
+| 5 | Marowak (Alolan) (Lead) / Azumarill / Stunfisk (Galarian) | 60% | Trevenant (Lead) / Azumarill / Stunfisk (Galarian) | 53% |
+| 6 | Azumarill (Lead) / Marowak (Alolan) / Stunfisk (Galarian) | 57% | Talonflame (Lead) / Trevenant / Azumarill | 53% |
+| 7 | Trevenant (Lead) / Azumarill / Stunfisk (Galarian) | 53% | Trevenant (Lead) / Talonflame / Azumarill | 53% |
+| 8 | Trevenant (Lead) / Talonflame / Azumarill | 53% | Sableye (Lead) / Medicham / Skarmory | 53% |
+| 9 | Swampert (Lead) / Stunfisk (Galarian) / Talonflame | 53% | Marowak (Alolan) (Lead) / Swampert / Stunfisk | 50% |
+| 10 | Lanturn (Lead) / Mr. Mime / Azumarill | 47% | Talonflame (Lead) / Medicham / Azumarill | 43% |
+
+**Which species rose/fell** (appearances across each run's own top 10):
+
+| Species | classic | battle-reality | Δ |
+| --- | ---: | ---: | ---: |
+| Azumarill | 7 | 5 | −2 |
+| Stunfisk (Galarian) | 5 | 2 | **−3** |
+| Sableye | 3 | 3 | 0 |
+| Stunfisk | 3 | 3 | 0 |
+| Medicham | 2 | 5 | **+3** |
+| Marowak (Alolan) | 2 | 3 | +1 |
+| Trevenant | 2 | 3 | +1 |
+| Talonflame | 2 | 3 | +1 |
+| Swampert | 2 | 1 | −1 |
+| Skarmory | 0 | 2 | **+2** |
+| Lanturn | 1 | 0 | −1 |
+| Mr. Mime | 1 | 0 | −1 |
+
+This is precisely the shift PLAN Rev 6's own diagnosis predicted from Jaxon's original observation ("the sim favors consistent neutral-matchup mons — Stunfisk in 9/10 elites"): the two most "safely neutral" mons both fell (Stunfisk (Galarian) hardest, −3), while Skarmory — absent from classic's top 10 entirely — entered twice, both times as a BACK (a closer role), and Medicham, an aggressive lead that wins or loses exchanges decisively rather than trading evenly, more than doubled. The #1 team is the same three species in both runs but led by a different member (Medicham under classic, Sableye under battle-reality) — the lead-rotation mutation being selected differently under the blend. Top win rate slipped 80% → 77%: expected and accepted, since the blend deliberately optimizes for the win PLUS alignment/closer signal rather than raw win rate alone (a 60/30/10 weighting cannot maximize the 60% term in isolation).
+
+**DEFAULT DECISION — `DEFAULTS.fitness` flipped from `classic` to `battle-reality`.** GOALS T30's own text explicitly delegates this call to this ticket ("decide + document (with the A/B as evidence) whether battle-reality becomes the evolve DEFAULT"), and T29 deliberately deferred it here rather than preempting it — so this is a delegated judgment call, not a product fork needing Jaxon. The A/B above meets Rev 6's own stated validation bar with real evidence. `--fitness classic` remains fully supported and tested (this initiative's standing rule that it "must remain available in every ticket"). Rationale + numbers documented in `scripts/evolve.mjs`'s `DEFAULTS` comment, `PLAN.md`'s new 2026-08-24 Rev 6 amendment, and `README.md`'s evolve section.
+
+**Test changes** (`test/evolveScript.test.js`): 3 new T30 tests — Lead/Back/Back formatting asserted in both the Markdown and HTML reports against the actual top team's real member names; snowballIndex/comebackIndex/designatedCloser shape+bounds on every elite (including the null-implies-zero-exchanges invariant and that `designatedCloser` is always one of the two BACKS, never the lead); `topTeams` shape/cap/ordering in `evolve-generations.json`. Two pre-existing tests needed honest updating for the default flip, NOT loosening: the "components always computed even in classic mode" test was SPLIT into two (one against the now-default `shared` run, asserting the Settings line reads `fitness: battle-reality`; one running an explicit `fitness: 'classic'` to re-confirm T29's original claim under the non-default mode — so classic coverage did not shrink), and the resume-mismatch test's second run now passes `fitness: 'classic'` explicitly, because with the default flipped its previously-implicit second run would now MATCH the first run's config and legitimately resume rather than exercise the mismatch path it exists to test.
+
+**Verified this fire (all FOREGROUND, standing rule 8):** `node --test test/evolveScript.test.js` → **17/17**. `npm test` (full suite, explicit long timeout) → **250/250 green** (~299s wall; 246 baseline + 3 T30 tests + 1 net from the split). Both A/B runs completed with exit 0 and 0 battle errors. No engine/scoring/battle-math files touched (reporting + analytics + defaults only); `vendor/pvpoke` untouched; no dependencies added.
+
+**Next:** **GOALS.md's queue is now empty** — every ticket T1–T31 is checked except T2b, which is permanently moot (it was conditional on T2 concluding that pvpoke's Training/emulate mode was infeasible headless; T2 succeeded, so the fallback engine was never needed). PLAN Rev 6 is closed. ROADMAP.md's known-gaps list has exactly one live item left: **"Vendor refresh discipline"** — bump the pinned pvpoke commit on a cadence (the meta shifts each GBL season) and re-run T0 validation after any bump. That gap was explicitly FENCED OFF while the T19–T25/T20b determinism-and-perf work was in flight ("it would shift battle results under active perf baselines"); **that fence's stated reason no longer applies** — T20b closed 2026-08-22, and T19–T26 are all done — so a future fire may now legitimately pull it. Two cautions for whoever does: (1) it WILL shift battle results, so re-baseline rather than treating a diff as a regression, and expect several existing tests' hardcoded expected values (the exact-ratings engine tests especially) to need re-derivation against the new pin — verify each new value against a fresh build before updating it; (2) it is a genuinely multi-file, judgment-heavy ticket, so it deserves being split into scoped sub-tickets first (the same way `--cp 2500` was split into T18/T18b/T18c) rather than attempted whole in one fire. Beyond that, ROADMAP names two optional follow-ups from earlier work: an Ultra/Master community-teams file, and a `--cp`-aware `scripts/refresh-usage.mjs` (today it fetches Great League rankings only).
