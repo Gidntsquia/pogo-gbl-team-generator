@@ -68,6 +68,11 @@ const TEAM_SIZE = 3;
  * @property {string} name - human label (Title-Cased species names joined by
  *   " / "), e.g. "Azumarill / Registeel / Altaria".
  * @property {MetaMon[]} members - exactly 3 built MetaMon (battle-ready).
+ * @property {number} [leadIndex] - index into `members` naming this team's
+ *   established lead (GOALS T31); present (always 0) on community teams,
+ *   absent on vendor-preset teams (whose established lead is also member
+ *   index 0, by the same file-wide/vendor-preset doctrine, just not stamped
+ *   as a field -- see loadCommunityTeams' doc comment).
  */
 
 /**
@@ -106,7 +111,14 @@ function displayName(ctx, metaMon) {
   return data?.speciesName ?? titleCase(metaMon.speciesId);
 }
 
-/** Build the pvpoke-preset half of the curated pool (previously loadMetaTeams' whole body). */
+/**
+ * Build the pvpoke-preset half of the curated pool (previously loadMetaTeams'
+ * whole body). GOALS T31 / Jaxon 2026-08-23: pvpoke's own gobattleleague
+ * preset ordering is treated as lead-bearing too -- member index 0 IS the
+ * established lead, same file-wide doctrine as data/meta-teams-community.json
+ * -- no `leadIndex` field is stamped here since consumers already default to
+ * index 0 for any team lacking one (see loadCommunityTeams' doc comment).
+ */
 function buildVendorTeams(ctx, teamsFile) {
   const presets = readTeamPresets(ctx, teamsFile);
   const teams = [];
@@ -161,12 +173,21 @@ function readCommunityEntries(opts) {
  * two mons isn't a team. A data edit introducing a bad id therefore degrades
  * gracefully (warns to stderr, keeps running) instead of crashing a run.
  *
+ * GOALS T31 / Jaxon 2026-08-23: every entry in data/meta-teams-community.json
+ * treats `members[0]` as that team's established lead (the source images/
+ * screenshots' own ordering for the pre-T31 entries; Jaxon's directly
+ * -observed opponent lead for the 'jaxon-ladder-*' entries). Every returned
+ * team is stamped `leadIndex: 0` so a downstream driver's own opponent-lead
+ * -resolution hook (e.g. scripts/evolve.mjs's `opponentLeadIndex()`) reads it
+ * as explicit declared data instead of falling through to its own default.
+ *
  * @param {object} ctx - from initEngine (src/engine/harness.js)
  * @param {{ communityFile?: string, communityEntries?: CommunityTeamEntry[] }} [opts]
  *   `communityEntries` overrides reading the file entirely (testability,
  *   mirrors the `*Entries` pattern used elsewhere in this project).
  * @returns {MetaTeam[]} ids namespaced "community:<entry id>" so they can
- *   never collide with a vendor-preset id; `tier` is 'off-meta' or 'meta'.
+ *   never collide with a vendor-preset id; `tier` is 'off-meta' or 'meta';
+ *   `leadIndex` is always 0 (see above).
  */
 export function loadCommunityTeams(ctx, opts = {}) {
   const entries = readCommunityEntries(opts);
@@ -198,6 +219,7 @@ export function loadCommunityTeams(ctx, opts = {}) {
       id: `community:${entry.id}`,
       name: entry.name ?? members.map((m) => displayName(ctx, m)).join(' / '),
       tier: entry.tier ?? 'meta',
+      leadIndex: 0,
       members,
     });
   }

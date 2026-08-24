@@ -91,14 +91,15 @@
 // `team[0]` is its designated lead (src/teams/evolve.js's representation,
 // landed by the prior fire) -- so every per-generation battle now runs the
 // candidate at leadA=0 ONLY, never averaged over its own 3 members. Opponent
-// leads: no opponent-team source in this codebase encodes an explicit lead
-// (checked: pvpoke's vendored gobattleleague training presets and
-// data/meta-teams-community.json both just list 3 members with no ordering
-// semantics) -- the documented default is member index 0 for curated/preset
-// teams (label:'curated'), and a seeded-random pick keyed to the opponent's
-// OWN id (not the candidate facing it) for sampled teams (label:'sampled',
-// whose member order carries no intended meaning to begin with) -- see
-// opponentLeadIndex() below.
+// leads: per GOALS T31 / Jaxon 2026-08-23, member index 0 IS the established
+// lead for EVERY curated/preset opponent team -- both pvpoke's vendored
+// gobattleleague training presets and data/meta-teams-community.json (whose
+// loader, src/meta/teams.js's loadCommunityTeams, stamps an explicit
+// `leadIndex: 0` on every entry so this reads as declared data rather than a
+// fallback default). Sampled teams (label:'sampled', composed by weighted
+// random draw with no source ordering to begin with) still get a
+// seeded-random pick keyed to the opponent's OWN id -- see opponentLeadIndex()
+// below.
 //
 // BUDGET MATH (revised from PLAN Rev 5's original x3 estimate now that own
 // -lead averaging is gone): battles/generation = population x opponents-per
@@ -261,10 +262,11 @@ const CANDIDATE_LEAD = 0;
 
 /**
  * Resolve an opponent team's designated lead index -- see the header's
- * LOCKED LEADS note for the full rationale. `opp.leadIndex` is a forward
- * -compatible hook (honored if a future opponent-data source ever adds an
- * explicit lead); today every real opponent falls through to the documented
- * default below.
+ * LOCKED LEADS note for the full rationale. `opp.leadIndex` (GOALS T31: now
+ * stamped explicitly by src/meta/teams.js's loadCommunityTeams on every
+ * community-curated team) is honored first; a vendor-preset team has no
+ * `leadIndex` field but shares the same member-index-0-is-lead doctrine, so
+ * it falls through to the same default below.
  */
 function opponentLeadIndex(seedPrefix, opp) {
   if (opp.leadIndex !== undefined) return opp.leadIndex;

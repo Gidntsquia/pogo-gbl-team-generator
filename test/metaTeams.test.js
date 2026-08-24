@@ -89,13 +89,13 @@ test('limit caps how many teams are built', () => {
 
 // GOALS T10b: community-curated opponent teams (data/meta-teams-community.json).
 
-test('community file loads and its teams resolve fully battle-ready (>=39 of 46)', () => {
-  assert.equal(communityRaw.teams.length, 46, 'source file has 46 entries under the pinned data (33 + GOALS T26\'s 13 Yasser Aleed teams)');
+test('community file loads and its teams resolve fully battle-ready (>=46 of 53)', () => {
+  assert.equal(communityRaw.teams.length, 53, 'source file has 53 entries under the pinned data (33 + T26\'s 13 Yasser Aleed teams + T31\'s 7 Jaxon ladder teams)');
 
   const teams = loadCommunityTeams(ctx);
   assert.ok(
-    teams.length >= 39,
-    `expected >=39/46 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
+    teams.length >= 46,
+    `expected >=46/53 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
   );
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
@@ -190,6 +190,46 @@ test('a small limit on loadMetaTeams stays within the vendor pool (documented of
     small.every((t) => !t.id.startsWith('community:')),
     'a small limit should not reach into the community teams appended after the 25 vendor presets'
   );
+});
+
+// GOALS T31: Jaxon's 7 real-ladder opponent teams + the file-wide
+// "members[0] is the established lead" doctrine.
+
+test('every community team is stamped leadIndex: 0 (declared-lead doctrine)', () => {
+  const teams = loadCommunityTeams(ctx);
+  assert.ok(teams.length > 0);
+  for (const team of teams) {
+    assert.equal(team.leadIndex, 0, `${team.id} should carry leadIndex: 0`);
+  }
+});
+
+test('all 7 jaxon-ladder teams resolve fully battle-ready', () => {
+  const teams = loadCommunityTeams(ctx);
+  const ladder = teams.filter((t) => t.id.startsWith('community:jaxon-ladder-'));
+  assert.equal(ladder.length, 7, `expected all 7 jaxon-ladder teams to resolve, got ${ladder.length}`);
+  for (const team of ladder) {
+    assert.equal(team.members.length, 3);
+    assert.equal(team.tier, 'meta', `${team.id} should be untagged/full-weight (real ladder opponents)`);
+    assert.equal(team.leadIndex, 0);
+  }
+});
+
+test('a jaxon-ladder team and a legacy community team both battle with members[0] as lead', () => {
+  const teams = loadCommunityTeams(ctx);
+  const ladderTeam = teams.find((t) => t.id === 'community:jaxon-ladder-1');
+  const legacyTeam = teams.find((t) => t.id === 'community:omarchm10');
+  assert.ok(ladderTeam, 'jaxon-ladder-1 should resolve');
+  assert.ok(legacyTeam, 'the legacy omarchm10 team should still resolve');
+
+  const result = battleTeams(ctx, {
+    teamA: ladderTeam.members.map((m) => m.pokemon),
+    teamB: legacyTeam.members.map((m) => m.pokemon),
+    leadA: ladderTeam.leadIndex,
+    leadB: legacyTeam.leadIndex,
+  });
+  assert.ok(['a', 'b', 'tie'].includes(result.winner));
+  assert.equal(typeof result.summary.turns, 'number');
+  assert.ok(result.summary.turns > 0, 'a real battle ran (>0 turns) with both teams led by members[0]');
 });
 
 test('a loaded meta team is usable as a side of a real 3v3 battle', () => {
