@@ -15,11 +15,12 @@ import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
 import {
   battleTeams,
   beingFarmedDown,
+  canTankAndAnswer,
   initTeamBattle,
-  isCheapChip,
   setReactionTime,
   wrapRunScenario,
   wrapShieldBanking,
+  wrapSwitchCost,
 } from '../src/engine/teamBattle.js';
 
 // Rank-1 IVs (attack-weight rank 1 is close enough for these coarse tests).
@@ -694,59 +695,80 @@ describe('throw-and-go', () => {
   });
 });
 
-describe('isCheapChip', () => {
-  // Only the fields the function reads.
-  const mon = (hp, maxHp) => ({ hp, stats: { hp: maxHp } });
-  const move = (energy) => ({ energy });
+describe('canTankAndAnswer', () => {
+  // Only the fields the function reads. Energy/cooldown are pvpoke's units:
+  // energyGain per use, cooldown in ms (500 = one turn).
+  const mon = (hp, fast, chargedEnergies, energy = 0) => ({
+    hp,
+    energy,
+    fastMove: fast,
+    chargedMoves: chargedEnergies.map((e) => ({ energy: e })),
+  });
+  const fast = (energyGain, cooldown) => ({ energyGain, cooldown });
 
-  test('the Night Slash case: weak, cheap, and survivable, so no shield', () => {
-    // Real numbers off the traced battle at T14. Talonflame is on 86 of 135
-    // taking a 41-damage Night Slash (35 energy) with 7-damage Sucker Punches
-    // behind it: 41 + 14 = 55 < 86, and 41 is 30% of a health bar.
-    assert.equal(isCheapChip(mon(86, 135), move(35), 41, 7), true);
+  // The traced Thievul/Talonflame lead fight, at its real numbers.
+  // Talonflame: 135 HP, Incinerate (20 energy, 5 turns => 4 energy/turn),
+  // cheapest charged move Fly at 45 => a full cycle is 11.25 turns.
+  // Thievul: Sucker Punch does 7 per 2-turn use => 3.5 chip per turn, so
+  // Talonflame needs 39.4 HP left over to see another move of its own.
+  const talonflame = (hp) => mon(hp, fast(20, 2500), [45, 55]);
+  const thievul = (hp, energy = 0) => mon(hp, fast(7, 1000), [35, 45], energy);
+  const thievulAttacking = { fastMove: { cooldown: 1000 } };
+  const talonflameAttacking = { fastMove: { cooldown: 2500 } };
+
+  test('the traced T14 Night Slash: tanks it and still gets another move', () => {
+    // 86 - 41 = 45 left, and 45 > 11.25 turns * 3.5 chip = 39.4.
+    assert.equal(canTankAndAnswer(talonflame(86), thievulAttacking, 41, 7), true);
   });
 
-  test('the Bubble Beam case: 25 power off a 40-energy move is never worth a shield', () => {
-    assert.equal(isCheapChip(mon(106, 160), move(40), 16, 3), true);
+  test('the same move nine turns later is the shield that has to be spent', () => {
+    // T23: 50 - 41 = 9, well under the 39.4 it needs to come back.
+    assert.equal(canTankAndAnswer(talonflame(50), thievulAttacking, 41, 7), false);
   });
 
-  test('Fly is cheap but not weak', () => {
-    // 63 of Thievul's 130 is 48% of the bar -- above WEAK_MOVE_HP_FRACTION.
-    assert.equal(isCheapChip(mon(66, 130), move(45), 63, 3), false);
+  test('a move it cannot tank at all', () => {
+    assert.equal(canTankAndAnswer(talonflame(40), thievulAttacking, 41, 7), false);
+    assert.equal(canTankAndAnswer(talonflame(41), thievulAttacking, 41, 7), false);
   });
 
-  test('Brave Bird is neither', () => {
-    assert.equal(isCheapChip(mon(66, 130), move(55), 103, 3), false);
+  test('Fly on Thievul: survivable by 2 HP, and that is not enough', () => {
+    // 66 - 64 = 2. Thievul needs 35 energy at 3.5/turn = 10 turns, taking
+    // Incinerate at 8 per 5-turn use = 1.6/turn, so it needs 16 HP.
+    assert.equal(canTankAndAnswer(thievul(66), talonflameAttacking, 64, 8), false);
   });
 
-  test('an expensive move is worth a shield even when it hits softly', () => {
-    // Same 30%-of-bar hit as the Night Slash case, but at 60 energy the
-    // attacker does not simply have it again.
-    assert.equal(isCheapChip(mon(86, 135), move(60), 41, 7), false);
+  test('energy already in hand does not make it free', () => {
+    // The move in hand is not "another move of my own" -- the horizon is a
+    // full charge cycle either way, so holding 45 energy changes nothing.
+    const loaded = canTankAndAnswer(talonflame(50), thievulAttacking, 41, 7);
+    assert.equal(loaded, false);
+    const loadedMon = mon(50, fast(20, 2500), [45, 55], 45);
+    assert.equal(canTankAndAnswer(loadedMon, thievulAttacking, 41, 7), false);
   });
 
-  test('a weak cheap move still gets shielded when it would knock you out', () => {
-    // Talonflame at T23: 50 HP left, same 41-damage Night Slash. 41 + 14 = 55,
-    // which is more than 50, so this is the shield that has to be spent.
-    assert.equal(isCheapChip(mon(50, 135), move(35), 41, 7), false);
+  test('the weak/cheap thresholds are not needed: a big hit fails on its own', () => {
+    // Brave Bird, 103 on a 130 HP Thievul at 66 -- cannot be tanked.
+    assert.equal(canTankAndAnswer(thievul(66), talonflameAttacking, 103, 8), false);
   });
 
-  test('the fast-move chip counts: same move, same HP, harder fast move', () => {
-    assert.equal(isCheapChip(mon(60, 135), move(35), 41, 3), true);
-    assert.equal(isCheapChip(mon(60, 135), move(35), 41, 10), false);
+  test('nothing chipping it means any survivable hit is bankable', () => {
+    assert.equal(canTankAndAnswer(talonflame(50), thievulAttacking, 41, 0), true);
   });
 
-  test('a fast move is not a cheap chip candidate (no energy cost)', () => {
-    assert.equal(isCheapChip(mon(100, 135), move(0), 5, 5), false);
+  test('no charged move to come back to means the shield gets spent', () => {
+    const noAnswer = mon(120, fast(7, 1000), []);
+    assert.equal(canTankAndAnswer(noAnswer, thievulAttacking, 10, 7), false);
   });
 
-  test('0 damage is not a chip decision', () => {
-    assert.equal(isCheapChip(mon(100, 135), move(35), 0, 3), false);
+  test('a fast move that banks no energy is the same story', () => {
+    const noEnergy = mon(120, fast(0, 1000), [35]);
+    assert.equal(canTankAndAnswer(noEnergy, thievulAttacking, 10, 7), false);
   });
 
   test('missing inputs are safe', () => {
-    assert.equal(isCheapChip(null, move(35), 41, 7), false);
-    assert.equal(isCheapChip(mon(86, 135), null, 41, 7), false);
+    assert.equal(canTankAndAnswer(null, thievulAttacking, 41, 7), false);
+    assert.equal(canTankAndAnswer(talonflame(86), null, 41, 7), false);
+    assert.equal(canTankAndAnswer(talonflame(86), {}, 41, 7), false);
   });
 });
 
@@ -812,8 +834,14 @@ describe('shield banking', () => {
     // rule stands aside even on a textbook cheap chip. Driven through
     // wrapShieldBanking directly with a stub player, because the only way to
     // reach a real last-Pokemon shield decision is to script a whole battle.
-    const defender = { hp: 86, stats: { hp: 135 } };
-    const attacker = { fastMove: { energy: 0 } };
+    // The traced T14 board: Talonflame on 86 taking a 41-damage Night Slash.
+    const defender = {
+      hp: 86,
+      energy: 0,
+      fastMove: { energyGain: 20, cooldown: 2500 },
+      chargedMoves: [{ energy: 45 }, { energy: 55 }],
+    };
+    const attacker = { fastMove: { energy: 0, cooldown: 1000 } };
     const nightSlash = { energy: 35 };
     // 41 for the charged move, 7 for the fast move -- the traced numbers.
     const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 41 : 7) };
@@ -841,8 +869,13 @@ describe('shield banking', () => {
   });
 
   test('never turns a no into a yes', () => {
-    const defender = { hp: 200, stats: { hp: 300 } };
-    const attacker = { fastMove: { energy: 0 } };
+    const defender = {
+      hp: 200,
+      energy: 0,
+      fastMove: { energyGain: 8, cooldown: 500 },
+      chargedMoves: [{ energy: 35 }],
+    };
+    const attacker = { fastMove: { energy: 0, cooldown: 1000 } };
     const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 10 : 1) };
     const ai = { decideShield: () => false };
     const player = { getAI: () => ai, getIndex: () => 0, getRemainingPokemon: () => 3 };
@@ -856,5 +889,188 @@ describe('shield banking', () => {
     const r1 = battleTeams(ctx, { teamA: bankTeam('A'), teamB: bankTeam('B'), ...opts });
     const r2 = battleTeams(ctx, { teamA: bankTeam('A'), teamB: bankTeam('B'), ...opts });
     assert.deepEqual(r1, r2);
+  });
+});
+
+describe('switch turn cost', () => {
+  // A minimal stand-in for pvpoke's Battle: just the four things wrapSwitchCost
+  // touches. Driving it directly is the only way to hit each of the three
+  // free-switch cases deliberately rather than hoping a real battle produces
+  // one of each.
+  function fakeBattle() {
+    let turns = 1;
+    const active = [
+      { index: 0, hp: 100, cooldown: 0 },
+      { index: 1, hp: 100, cooldown: 0 },
+    ];
+    return {
+      getTurns: () => turns,
+      goToTurn(t) {
+        turns = t;
+      },
+      getPokemon: () => active,
+      useMove() {},
+      processAction(action, poke) {
+        active[poke.index] = action.incoming;
+      },
+    };
+  }
+  const bench = () => ({ index: 0, hp: 100, cooldown: 0 });
+  const switchAction = (incoming) => ({ type: 'switch', valid: true, incoming });
+
+  test('an ordinary switch costs the incoming Pokemon a turn', () => {
+    const battle = fakeBattle();
+    const counts = wrapSwitchCost(battle);
+    const outgoing = battle.getPokemon()[0];
+    const incoming = bench();
+
+    battle.processAction(switchAction(incoming), outgoing);
+
+    assert.equal(incoming.cooldown, 1000, 'one turn, charged before step decrements it');
+    assert.deepEqual(counts.costly, [1, 0]);
+    assert.deepEqual(counts.free, [0, 0]);
+  });
+
+  test('a switch on the turn a charged move resolved is free', () => {
+    const battle = fakeBattle();
+    const counts = wrapSwitchCost(battle);
+    const outgoing = battle.getPokemon()[0];
+    const incoming = bench();
+
+    battle.goToTurn(20);
+    battle.useMove(outgoing, battle.getPokemon()[1], { energy: 45 });
+    battle.processAction(switchAction(incoming), outgoing);
+
+    assert.equal(incoming.cooldown, 0);
+    assert.deepEqual(counts.free, [1, 0]);
+    assert.deepEqual(counts.costly, [0, 0]);
+  });
+
+  test("the opponent's charged move opens the window too", () => {
+    const battle = fakeBattle();
+    const counts = wrapSwitchCost(battle);
+    const [mine, theirs] = battle.getPokemon();
+    const incoming = bench();
+
+    battle.goToTurn(20);
+    battle.useMove(theirs, mine, { energy: 45 });
+    battle.processAction(switchAction(incoming), mine);
+
+    assert.equal(incoming.cooldown, 0);
+    assert.deepEqual(counts.free, [1, 0]);
+  });
+
+  test('a fast move does not open the window', () => {
+    const battle = fakeBattle();
+    wrapSwitchCost(battle);
+    const outgoing = battle.getPokemon()[0];
+    const incoming = bench();
+
+    battle.goToTurn(20);
+    battle.useMove(outgoing, battle.getPokemon()[1], { energy: 0, energyGain: 7 });
+    battle.processAction(switchAction(incoming), outgoing);
+
+    assert.equal(incoming.cooldown, 1000);
+  });
+
+  test('the window closes on the next turn', () => {
+    const battle = fakeBattle();
+    wrapSwitchCost(battle);
+    const outgoing = battle.getPokemon()[0];
+    const incoming = bench();
+
+    battle.goToTurn(20);
+    battle.useMove(outgoing, battle.getPokemon()[1], { energy: 45 });
+    battle.goToTurn(21);
+    battle.processAction(switchAction(incoming), outgoing);
+
+    assert.equal(incoming.cooldown, 1000);
+  });
+
+  test('a replacement after a faint is free', () => {
+    const battle = fakeBattle();
+    const counts = wrapSwitchCost(battle);
+    const outgoing = battle.getPokemon()[0];
+    outgoing.hp = 0;
+    const incoming = bench();
+
+    battle.goToTurn(20);
+    battle.processAction(switchAction(incoming), outgoing);
+
+    assert.equal(incoming.cooldown, 0);
+    assert.deepEqual(counts.free, [1, 0]);
+  });
+
+  test('disabled still counts, but never charges', () => {
+    const battle = fakeBattle();
+    const counts = wrapSwitchCost(battle, { enabled: false });
+    const outgoing = battle.getPokemon()[0];
+    const incoming = bench();
+
+    battle.processAction(switchAction(incoming), outgoing);
+
+    assert.equal(incoming.cooldown, 0);
+    assert.deepEqual(counts.costly, [1, 0], 'the switch is still classified');
+  });
+
+  test('a non-switch action is left alone', () => {
+    const battle = fakeBattle();
+    const counts = wrapSwitchCost(battle);
+    const poke = battle.getPokemon()[0];
+    battle.processAction({ type: 'fast', valid: true, incoming: poke }, poke);
+    assert.deepEqual(counts.costly, [0, 0]);
+    assert.deepEqual(counts.free, [0, 0]);
+  });
+
+  test('in a real battle: on by default, reported, and disableable', () => {
+    const A = [
+      ['thievul', { atk: 0, def: 6, hp: 14 }],
+      ['araquanid', { atk: 0, def: 12, hp: 5 }],
+      ['stunfisk', { atk: 2, def: 9, hp: 9 }],
+    ];
+    const B = [
+      ['talonflame', { atk: 4, def: 12, hp: 15 }],
+      ['greninja', { atk: 5, def: 12, hp: 12 }],
+      ['empoleon', { atk: 5, def: 15, hp: 13 }],
+    ];
+    const mk = (ids) => ids.map(([speciesId, ivs]) => buildPokemon(ctx, { speciesId, ivs }));
+
+    const on = battleTeams(ctx, { teamA: mk(A), teamB: mk(B) });
+    assert.equal(on.summary.switchTurnCost, true);
+    // Leads are placed with a direct setNewPokemon call, so they are never
+    // classified at all: every counted switch happened mid-battle.
+    const counted =
+      on.summary.costlySwitchesA +
+      on.summary.costlySwitchesB +
+      on.summary.freeSwitchesA +
+      on.summary.freeSwitchesB;
+    assert.ok(counted > 0);
+    assert.ok(on.summary.freeSwitchesA + on.summary.freeSwitchesB > 0, 'faints are free');
+
+    const off = battleTeams(ctx, { teamA: mk(A), teamB: mk(B), switchTurnCost: false });
+    assert.equal(off.summary.switchTurnCost, false);
+  });
+
+  test('costing the turn changes the battle, and stays deterministic', () => {
+    const A = [
+      ['thievul', { atk: 0, def: 6, hp: 14 }],
+      ['araquanid', { atk: 0, def: 12, hp: 5 }],
+      ['stunfisk', { atk: 2, def: 9, hp: 9 }],
+    ];
+    const B = [
+      ['talonflame', { atk: 4, def: 12, hp: 15 }],
+      ['greninja', { atk: 5, def: 12, hp: 12 }],
+      ['empoleon', { atk: 5, def: 15, hp: 13 }],
+    ];
+    const mk = (ids) => ids.map(([speciesId, ivs]) => buildPokemon(ctx, { speciesId, ivs }));
+    const opts = { seed: 5 };
+
+    const on1 = battleTeams(ctx, { teamA: mk(A), teamB: mk(B), ...opts });
+    const on2 = battleTeams(ctx, { teamA: mk(A), teamB: mk(B), ...opts });
+    assert.deepEqual(on1, on2);
+
+    const off = battleTeams(ctx, { teamA: mk(A), teamB: mk(B), ...opts, switchTurnCost: false });
+    assert.ok(on1.summary.costlySwitchesA + on1.summary.costlySwitchesB > 0);
+    assert.notDeepEqual(on1.summary.turns, off.summary.turns);
   });
 });

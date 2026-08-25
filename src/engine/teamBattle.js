@@ -39,6 +39,17 @@ const DEFAULT_REACTION_TIME_MS = 200;
 // GBL line -- throw twice, then leave on the switch. See wrapThrowAndGo.
 const DEFAULT_THROW_AND_GO_MOVES = 2;
 
+// The turn a switch costs the Pokemon coming in. pvpoke charges nothing: the
+// incoming Pokemon arrives on cooldown 0 (Pokemon.js:1836, startCooldown = 0)
+// and acts on the very next turn, so in pvpoke every switch is a free one. In
+// the real game an ordinary switch is a 1-turn disadvantage -- the Pokemon
+// coming in has to wait out the switch animation while the opponent keeps
+// attacking. 1000ms, not 500: Battle#step decrements every cooldown by one
+// turn (Battle.js:296) BEFORE reading it, so 500 would already be spent by the
+// time anything looks at it. See wrapSwitchCost for the three cases that are
+// genuinely free.
+const SWITCH_TURN_COST_MS = 1000;
+
 // Shield banking. A shield blocks exactly one hit, so it is worth whatever
 // that hit would have cost you -- and a shield you still hold when your
 // closer comes in is worth a whole extra matchup. pvpoke's TrainingAI has no
@@ -46,12 +57,7 @@ const DEFAULT_THROW_AND_GO_MOVES = 2;
 // else, and its one clause that could preserve a shield ("Preserve shield
 // advantage", TrainingAI.js:1310) is gated on `defender.battleStats.shieldsUsed
 // > 0`, so it can never stop the FIRST shield -- the one that actually gives
-// away the advantage. These two thresholds define the moves not worth a
-// shield: weak (takes at most this share of a full health bar) and cheap (low
-// enough energy that the attacker will simply have it again). Bubble Beam
-// (25p/40e) and Night Slash (50p/35e) are the archetypes. See isCheapChip.
-const WEAK_MOVE_HP_FRACTION = 0.35;
-const CHEAP_MOVE_ENERGY = 45;
+// away the advantage. See canTankAndAnswer.
 
 /**
  * Small deterministic mulberry32 PRNG. Given the same 32-bit seed it yields
@@ -384,6 +390,34 @@ export function setReactionTime(ctx, difficulty, ms) {
 }
 
 /**
+ * How many turns until `poke` can throw a charged move, starting from `energy`?
+ * Defaults to the energy it is holding now, so 0 if it is already loaded.
+ * Infinity if it has no charged move to reach, or no way to bank toward one.
+ *
+ * Pass `0` to ask a different question: how long a WHOLE charge cycle takes.
+ * That is the horizon canTankAndAnswer uses, because "can I still throw a move
+ * of my own" is only worth asking about a move that is not already in hand.
+ *
+ * Turns are pvpoke's 500ms turns and the energy-per-turn idiom is pvpoke's own
+ * (`energyGain / (cooldown / 500)`, TrainingAI.js:701). Cheapest move, not best
+ * move: the question is when it can answer at all, not how well.
+ *
+ * @param {object} poke
+ * @param {number} [energy] - energy to count up from (default: its current)
+ * @returns {number}
+ */
+function turnsToChargedMove(poke, energy = poke.energy) {
+  const charged = poke.chargedMoves || [];
+  if (!charged.length) return Infinity;
+  const cheapest = Math.min(...charged.map((m) => m.energy));
+
+  const energyPerTurn = poke.fastMove.energyGain / (poke.fastMove.cooldown / NORMAL_TURN_MS);
+  if (!(energyPerTurn > 0)) return Infinity;
+
+  return Math.max(cheapest - energy, 0) / energyPerTurn;
+}
+
+/**
  * Is this Pokemon being "farmed down"? That is: would the opponent's fast-move
  * chip damage finish it BEFORE its own fast moves could bank enough energy to
  * answer with another charged move?
@@ -418,18 +452,10 @@ export function beingFarmedDown(poke, opponent) {
   if (!(incomingDpt > 0)) return false; // a 0-damage fast move farms nobody down
   const turnsUntilFaint = poke.hp / incomingDpt;
 
-  const charged = poke.chargedMoves || [];
-  if (!charged.length) return true; // nothing to answer with, ever
-  const cheapest = Math.min(...charged.map((m) => m.energy));
-
-  const energyPerTurn = poke.fastMove.energyGain / (poke.fastMove.cooldown / NORMAL_TURN_MS);
-  if (!(energyPerTurn > 0)) return true;
-
-  // Already holding enough energy => zero turns to an answer => never farmed
-  // down, whatever its HP is.
-  const turnsUntilAnswer = Math.max(cheapest - poke.energy, 0) / energyPerTurn;
-
-  return turnsUntilFaint < turnsUntilAnswer;
+  // Infinity (no charged moves, or a fast move that banks no energy) means the
+  // answer never comes, so any finite time-to-faint is a farm-down. Zero
+  // (already holding the energy) means it never is, whatever the HP.
+  return turnsUntilFaint < turnsToChargedMove(poke);
 }
 
 /**
@@ -563,33 +589,39 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
 }
 
 /**
- * Is this charged move cheap chip -- weak enough, and cheap enough, that a
- * shield spent on it is wasted?
+ * Can `defender` afford to take this charged move on the chin -- tank it, and
+ * still be alive to throw a charged move of its own afterwards?
  *
- * Three things have to be true at once.
+ * This is the whole shield-banking rule. It deliberately says nothing about
+ * the incoming move being "weak" or "cheap": those were separate thresholds in
+ * the first version of this and they are redundant, because a move that is not
+ * weak fails the tank test and a move you cannot come back from fails the
+ * answer test. What is left is the question a player actually asks -- if I eat
+ * this, am I still in the fight? -- and it umbrellas the rest.
  *
- * WEAK: the move takes at most WEAK_MOVE_HP_FRACTION of a full health bar.
- * Measured against `stats.hp`, not current HP, deliberately: a shield's value
- * is the damage it blocks, which does not grow just because the defender is
- * already hurt. Against a 130 HP Thievul this splits Night Slash (41, 0.32)
- * from Fly (63, 0.48) and Brave Bird (103, 0.79) exactly where a player would.
+ * Two conditions:
  *
- * CHEAP: the move costs at most CHEAP_MOVE_ENERGY. This is what makes the
- * shield a bad trade rather than merely a small one -- block a 35-energy move
- * and the attacker is most of the way back to throwing it again, so the shield
- * bought a delay, not a matchup. An expensive move is a much bigger share of
- * the attacker's whole battle and is worth blocking even when it hits softly.
+ * TANK IT: `defender.hp - moveDamage > 0`. A shield you have to spend to
+ * survive is not a shield you were ever banking.
  *
- * AFFORDABLE: the defender survives the move plus the two fast hits that
- * follow it. That is pvpoke's own definition of a move being "hard hitting or
- * knockout" (`moveDamage + fastMoveDamage * 2 >= defender.hp`,
- * TrainingAI.js:1264), used here as its strict inverse -- a shield is only
- * declined on a move pvpoke itself would not class as dangerous. A stricter
- * test was tried first (survive TWO copies of the move, chip included) and is
- * wrong: it demands a full extra cycle of health, which nothing below about
- * 90% HP has against even a weak move, so it declined almost nothing. It kept
- * shielding the exact hit this rule exists to decline -- Talonflame at 86/135
- * putting a shield on a 41-damage Night Slash.
+ * STILL ANSWER: what is left outlives a full charge cycle at the attacker's
+ * fast-move chip rate -- `hpAfterHit > turnsToChargedMove(defender, 0) *
+ * incomingPerTurn`. Counting a whole cycle, rather than the wait from whatever
+ * energy the defender happens to be holding, is the load-bearing detail. The
+ * from-current-energy version reads 0 turns for anything already loaded, which
+ * makes "I can still throw" trivially true and licenses declining a shield
+ * that leaves 2 HP on the board -- measured, that was 349 of 786 declines
+ * across the pool, including a Thievul on 66 HP taking a 64-damage Fly. A move
+ * already in hand is not "another move of my own"; the honest horizon is the
+ * next one, and that is a full cycle whether or not one is loaded now.
+ * Infinity (nothing to reach) always fails: there is no later value to bank
+ * the shield for.
+ *
+ * This is the same shape as beingFarmedDown, and deliberately so: both ask
+ * whether a Pokemon reaches its own next move before the fast-move chip
+ * finishes it. beingFarmedDown asks it about right now, to decide whether to
+ * leave; this asks it about the HP you would have after eating one more hit,
+ * to decide whether to spend a shield. They share turnsToChargedMove.
  *
  * The caller also has to have something in the back -- see wrapShieldBanking.
  * Everything else (which move the attacker is even guessed to be holding, the
@@ -597,30 +629,39 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
  * ever turns a yes into a no.
  *
  * @param {object} defender - the Pokemon deciding whether to shield
- * @param {object} move - the charged move being thrown at it
- * @param {number} moveDamage - what that move would do right now
- * @param {number} fastDamage - the attacker's fast move damage per hit
+ * @param {object} attacker
+ * @param {number} moveDamage - what the incoming charged move would do now
+ * @param {number} fastDamage - the attacker's fast-move damage per hit (turned
+ *   into a per-turn rate here using that move's own cooldown)
  * @returns {boolean}
  */
-export function isCheapChip(defender, move, moveDamage, fastDamage) {
-  if (!defender || !move) return false;
-  if (!(moveDamage > 0)) return false;
-  if (!(move.energy > 0) || move.energy > CHEAP_MOVE_ENERGY) return false;
-  if (moveDamage > defender.stats.hp * WEAK_MOVE_HP_FRACTION) return false;
-  const chip = fastDamage > 0 ? fastDamage * 2 : 0;
-  return moveDamage + chip < defender.hp;
+export function canTankAndAnswer(defender, attacker, moveDamage, fastDamage) {
+  if (!defender || !attacker || !defender.fastMove || !attacker.fastMove) return false;
+  if (!(moveDamage >= 0)) return false;
+
+  const hpAfterHit = defender.hp - moveDamage;
+  if (hpAfterHit <= 0) return false; // cannot tank it
+
+  const turnsToAnswer = turnsToChargedMove(defender, 0);
+  if (!Number.isFinite(turnsToAnswer)) return false; // no answer to hold out for
+
+  const incomingPerTurn = fastDamage / (attacker.fastMove.cooldown / NORMAL_TURN_MS);
+  if (!(incomingPerTurn > 0)) return true; // nothing chipping it down
+
+  return hpAfterHit > turnsToAnswer * incomingPerTurn;
 }
 
 /**
- * Bank shields against weak, cheap moves, symmetrically for both players.
+ * Bank shields for both players: don't spend one on a hit you can take.
  *
- * Wraps each AI's decideShield and turns a yes into a no when the incoming
- * move is cheap chip (see isCheapChip) AND the player still has a Pokemon in
- * the back for the banked shield to be worth something to. A no is never
- * turned into a yes, and pvpoke's own decision is always computed first --
- * both so the last-Pokemon protection and matchup weighting still apply, and
- * so the seeded RNG is consumed in exactly the same order as stock, which
- * keeps an A/B against `bankShields: false` a comparison of this rule alone.
+ * Wraps each AI's decideShield and turns a yes into a no when the defender can
+ * tank the move and still answer with a charged move of its own (see
+ * canTankAndAnswer) AND that player still has a Pokemon in the back for the
+ * banked shield to be worth something to. A no is never turned into a yes, and
+ * pvpoke's own decision is always computed first -- both so the last-Pokemon
+ * protection and matchup weighting still apply, and so the seeded RNG is
+ * consumed in exactly the same order as stock, which keeps an A/B against
+ * `bankShields: false` a comparison of this rule alone.
  *
  * @param {object[]} players - [p0, p1]
  * @param {object} DamageCalculator - the sandbox's DamageCalculator class
@@ -649,7 +690,7 @@ export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
         ? DamageCalculator.damage(attacker, defender, attacker.fastMove, true)
         : 0;
 
-      if (isCheapChip(defender, move, moveDamage, fastDamage)) {
+      if (canTankAndAnswer(defender, attacker, moveDamage, fastDamage)) {
         declined[player.getIndex()] += 1;
         return false;
       }
@@ -658,6 +699,87 @@ export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
   }
 
   return declined;
+}
+
+/**
+ * Charge an ordinary switch the turn it costs in the real game, and don't
+ * charge the three switches that are genuinely free.
+ *
+ * pvpoke models no switch cost at all. The Pokemon coming in arrives on
+ * cooldown 0 and acts on the next turn exactly as the one it replaced would
+ * have, so switching only ever costs the single action spent on it. Real GBL
+ * charges more than that: the Pokemon coming in has to sit through the switch
+ * animation, so the opponent gets a free turn on top. That is the "1-turn
+ * switch", and it is why switching in neutral is a real concession.
+ *
+ * Three switches skip it, because they happen inside a window where nobody was
+ * going to act anyway:
+ *
+ *   1. Immediately after a charged move resolves. Tracked by stamping the turn
+ *      on every charged useMove: pvpoke re-steps the same turn index once a
+ *      charged move has resolved, so a switch processed on that same turn is
+ *      one taken inside the window. Either side's charged move opens it.
+ *   2. Immediately after a faint. pvpoke already routes these differently
+ *      (Battle.js:1005, the `poke.hp > 0` else-branch), and the replacement is
+ *      free in game.
+ *   3. At the start of the battle. Leads are placed with a direct
+ *      setNewPokemon call, never through processAction, so they never reach
+ *      this code at all.
+ *
+ * The AI is not told about any of this. TrainingAI has no switch-cost model
+ * and would need one to weigh the concession properly; what this changes is
+ * what a switch actually COSTS, not how either side decides to make one. The
+ * one place it feeds back is pvpoke's own switch validity check
+ * (`poke.cooldown == 0`, Battle.js:504), which now correctly stops a Pokemon
+ * from switching straight back out while it is still arriving.
+ *
+ * @param {object} battle - the pvpoke Battle for this match
+ * @param {{ enabled?: boolean }} [opts]
+ * @returns {{ costly: number[], free: number[] }} live per-player-index counts
+ */
+export function wrapSwitchCost(battle, opts = {}) {
+  const enabled = opts.enabled !== false;
+  const counts = { costly: [0, 0], free: [0, 0] };
+  // The turn a charged move last resolved on, either side. -1 so turn 0 (which
+  // pvpoke never uses; battles start at turn 1) cannot match by accident.
+  let lastChargedTurn = -1;
+
+  const realUseMove = battle.useMove;
+  battle.useMove = function (attacker, defender, move) {
+    const result = realUseMove.apply(this, arguments);
+    if (move && move.energy > 0) lastChargedTurn = battle.getTurns();
+    return result;
+  };
+
+  const realProcessAction = battle.processAction;
+  battle.processAction = function (action, poke, opponent) {
+    // Read this BEFORE the real call: processAction sets action.processed, and
+    // poke.hp is what tells a voluntary switch from a replacement after a
+    // faint (Battle.js:1005 branches on exactly this).
+    const isSwitch = !!action && action.type === 'switch' && action.valid && !action.processed;
+    const afterFaint = isSwitch && poke.hp < 1;
+    const index = isSwitch ? poke.index : -1;
+
+    const result = realProcessAction.apply(this, arguments);
+    if (!isSwitch) return result;
+
+    const free = afterFaint || battle.getTurns() === lastChargedTurn;
+    if (free) {
+      counts.free[index] += 1;
+      return result;
+    }
+    counts.costly[index] += 1;
+
+    if (enabled) {
+      const incoming = battle.getPokemon()[index];
+      // Guard against a switch pvpoke declined to carry out: only stamp the
+      // cooldown when the Pokemon on the field actually changed.
+      if (incoming && incoming !== poke) incoming.cooldown = SWITCH_TURN_COST_MS;
+    }
+    return result;
+  };
+
+  return counts;
 }
 
 /**
@@ -681,16 +803,21 @@ export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
  *     player may act on it. See setReactionTime.
  *   - throwAndGoMoves (default 2): land this many charged moves, then swap
  *     out. Pass 0 for pvpoke's stock behavior. See wrapThrowAndGo.
- *   - bankShields (default true): don't spend a shield on a weak, cheap move
+ *   - bankShields (default true): don't spend a shield on a hit you can take
  *     while there is still a Pokemon in the back. Pass false for pvpoke's
  *     stock shielding. See wrapShieldBanking.
+ *   - switchTurnCost (default true): an ordinary switch costs the incoming
+ *     Pokemon a turn; switches after a charged move, after a faint, and at
+ *     the start of the battle are free. Pass false for pvpoke's stock
+ *     always-free switching. See wrapSwitchCost.
  *
  * @param {object} ctx - from initEngine() (initTeamBattle is applied lazily)
  * @param {{
  *   teamA: object[], teamB: object[],
  *   leadA?: number, leadB?: number,
  *   difficulty?: number, seed?: number,
- *   reactionTimeMs?: number, throwAndGoMoves?: number, bankShields?: boolean
+ *   reactionTimeMs?: number, throwAndGoMoves?: number, bankShields?: boolean,
+ *   switchTurnCost?: boolean
  * }} params
  * @returns {{
  *   winner: 'a'|'b'|'tie',
@@ -700,8 +827,11 @@ export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
  *     turns: number, duration: number,
  *     leadA: number, leadB: number, difficulty: number, seed: number,
  *     reactionTimeMs: number, throwAndGoMoves: number, bankShields: boolean,
+ *     switchTurnCost: boolean,
  *     throwAndGoSwitchesA: number, throwAndGoSwitchesB: number,
  *     shieldsDeclinedA: number, shieldsDeclinedB: number,
+ *     costlySwitchesA: number, costlySwitchesB: number,
+ *     freeSwitchesA: number, freeSwitchesB: number,
  *     endedBy: 'ko'|'timeout',
  *     leadFaintTurnA: number|null, leadFaintTurnB: number|null,
  *     shieldsRemainingA: number, shieldsRemainingB: number
@@ -719,6 +849,7 @@ export function battleTeams(ctx, params) {
     reactionTimeMs = DEFAULT_REACTION_TIME_MS,
     throwAndGoMoves = DEFAULT_THROW_AND_GO_MOVES,
     bankShields = true,
+    switchTurnCost = true,
   } = params;
 
   if (!Array.isArray(teamA) || !Array.isArray(teamB) || !teamA.length || !teamB.length) {
@@ -776,6 +907,10 @@ export function battleTeams(ctx, params) {
   const shieldsDeclined = wrapShieldBanking([p0, p1], DamageCalculator, {
     enabled: bankShields,
   });
+  // Real switch timing (see wrapSwitchCost). Installed after wrapThrowAndGo so
+  // its own useMove wrapper sits outside that one -- the charged-move stamp
+  // has to land whichever wrapper counted the move first.
+  const switchCounts = wrapSwitchCost(battle, { enabled: switchTurnCost });
   p0.setRoster(orderedA);
   p0.setTeam(orderedA);
   p1.setRoster(orderedB);
@@ -990,6 +1125,11 @@ export function battleTeams(ctx, params) {
       throwAndGoSwitchesB: throwAndGoFired[1],
       shieldsDeclinedA: shieldsDeclined[0],
       shieldsDeclinedB: shieldsDeclined[1],
+      switchTurnCost,
+      costlySwitchesA: switchCounts.costly[0],
+      costlySwitchesB: switchCounts.costly[1],
+      freeSwitchesA: switchCounts.free[0],
+      freeSwitchesB: switchCounts.free[1],
       endedBy,
       // GOALS T27: lead-exchange + shield-banking ground truth, read off
       // pvpoke's own live objects (no vendor edits, no battle math added).

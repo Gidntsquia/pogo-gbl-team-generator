@@ -435,3 +435,109 @@ fast-move chip sensitivity, fast moves, zero damage, null safety) plus six on
 `wrapShieldBanking` (default on/reported/disable, the traced decline, shields
 left on the board, the last-Pokemon stand-aside, never-a-no-into-a-yes,
 determinism).
+
+### Same day, follow-up 2 — the shield rule collapses to one question, and real switch timing
+
+Two corrections from Jaxon in the same sitting.
+
+**1. "Someone should only decline a shield if they can tank the move and have
+enough health to still throw another move of their own. This will usually apply
+only to cheap and weak moves. Thus, this idea should umbrella in the 'weak' and
+'cheap' ideas — we don't need a specifically carve out for them."**
+
+`isCheapChip` is gone, and with it `WEAK_MOVE_HP_FRACTION` (0.35) and
+`CHEAP_MOVE_ENERGY` (45). Replaced by **`canTankAndAnswer(defender, attacker,
+moveDamage, fastDamage)`**, two conditions:
+
+- **tank it**: `defender.hp - moveDamage > 0`.
+- **still answer**: what is left outlives a full charge cycle at the attacker's
+  fast-move chip rate — `hpAfterHit > turnsToChargedMove(defender, 0) *
+  incomingPerTurn`.
+
+The thresholds really were redundant: a move that is not weak fails the tank
+test, and one you cannot come back from fails the answer test.
+
+Also extracted **`turnsToChargedMove(poke, energy = poke.energy)`**, now shared
+with `beingFarmedDown`. The two rules are the same shape — does this Pokemon
+reach its own next move before the fast-move chip finishes it — asked at
+different HP: `beingFarmedDown` asks about now (should I leave?),
+`canTankAndAnswer` asks about the HP left after eating one more hit (should I
+spend a shield?).
+
+**Rejected: counting from current energy.** The obvious reading of "throw
+another move" is `turnsToChargedMove(defender)`, the wait from whatever energy
+is in hand. That reads 0 turns for anything already loaded, which makes "I can
+still throw" trivially true and licenses declining a shield that leaves 2 HP on
+the board. Measured: 349 of 786 declines had `turnsToAnswer == 0`, including a
+Thievul on 66 HP declining against a 64-damage Fly, and a Stunfisk on 113
+declining a 111-damage Avalanche. Pool win rate fell to 57.7%. A move already
+in hand is not "another move of my own" — the horizon is the NEXT one, which is
+a full cycle whether or not one is loaded. That fix took the worst decline from
+1 HP left to 5 HP and the win rate back to 62.4%.
+
+**2. "If you switch immediately after a move resolves or immediately after a
+pokemon faints or when the game starts, you get a '0-turn' switch... you don't
+get the usual disadvantageous 1-turn switch in standard scenarios."**
+
+pvpoke charges nothing for any switch: the incoming Pokemon arrives on cooldown
+0 (`startCooldown = 0`, Pokemon.js:1836) and acts on the very next turn, so the
+only cost is the single action spent switching. **`wrapSwitchCost(battle,
+opts)`** adds the real cost — `incoming.cooldown = 1000` — and exempts the
+three free cases:
+
+1. **after a charged move**: every charged `useMove` stamps the turn; a switch
+   processed on that same turn index is inside the window. Either side's move
+   opens it. (pvpoke re-steps the same turn after a charged move resolves,
+   which is what makes the turn index a usable marker.)
+2. **after a faint**: `poke.hp < 1`, the branch pvpoke already routes
+   separately (Battle.js:1005).
+3. **at the start**: leads are placed with a direct `setNewPokemon` call and
+   never reach `processAction`, so they are never charged and never counted.
+
+1000ms, not 500: `Battle#step` decrements every cooldown by a turn
+(Battle.js:296) *before* reading it, so 500 is spent before anything sees it.
+
+Verified on the traced battle: with the cost on, Stunfisk's first Thunder Shock
+after switching in slides T27 -> T28. The throw-and-go switch is correctly free
+(it lands on the same turn as the charged move that triggered it), so
+`costlySwitchesB` is 0 in that battle.
+
+New knob `switchTurnCost` (default true), with `costlySwitchesA/B` and
+`freeSwitchesA/B` in the summary. The AI is not told about the cost — TrainingAI
+has no switch-cost model — so this changes what a switch COSTS, not how either
+side decides to make one. It does feed back into pvpoke's own switch validity
+check (`poke.cooldown == 0`, Battle.js:504), which now correctly stops a
+Pokemon from switching straight back out while it is still arriving.
+
+**Measured**, candidate vs the full 78-team pool x 3 mirrored lead pairings:
+
+| config | win rate | shields declined | switches costly/free | shields left A/B |
+|---|---|---|---|---|
+| pvpoke stock | 152/234 = 65.0% | 0 | 490 / 898 | 10 / 9 |
+| +rt200 +tag2 | 153/234 = 65.4% | 0 | 508 / 881 | 16 / 19 |
+| +bankShields | 146/234 = 62.4% | 628 | 485 / 906 | 89 / 81 |
+| +switchTurnCost (all on) | 151/234 = 64.5% | 662 | 494 / 892 | 75 / 74 |
+
+About 36% of mid-battle switches now cost a turn; the rest are post-faint or
+post-charged-move.
+
+**On the 62.4% dip, checked rather than assumed:** it is orientation, not weak
+play. Running the same candidate in the B slot against the same pool, shield
+banking *raises* its win rate 59.4% -> 64.1%. The rule is symmetric; this
+particular team's matchups are not.
+
+**Known gap, not fixed:** the survival window counts only fast-move chip, so it
+misses the attacker's next charged move landing inside it. That lets through
+e.g. Araquanid on 122/134 declining a 108-damage Meteor Beam — it survives 14
+turns of 1-damage chip, which is long enough to charge a Water Pulse, but not
+if a second charged move arrives. Closing it means re-deriving pvpoke's
+runScenario, so it is left as a known limitation.
+
+**Verified (FOREGROUND):** `node --test test/teamBattle.test.js` -> 52/52;
+`npm test` -> **288/288 green** (~162s). Ten unit tests of `canTankAndAnswer`
+(the traced T14 decline and the T23 spend, un-tankable hits, Fly surviving by
+2 HP, energy-in-hand not making it free, no charged move, a fast move that
+banks no energy, no chip, null safety) and ten of `wrapSwitchCost` (ordinary
+cost, both sides' charged moves opening the window, a fast move not opening it,
+the window closing next turn, post-faint, disabled-still-counts, non-switch
+actions, plus two integration tests).
