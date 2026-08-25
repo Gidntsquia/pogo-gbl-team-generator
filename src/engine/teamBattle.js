@@ -358,6 +358,55 @@ export function setReactionTime(ctx, difficulty, ms) {
 }
 
 /**
+ * Is this Pokemon being "farmed down"? That is: would the opponent's fast-move
+ * chip damage finish it BEFORE its own fast moves could bank enough energy to
+ * answer with another charged move?
+ *
+ * This is the precise sense of the term, and it is the whole reason a player
+ * throws and then leaves. A Pokemon that can still reach a charged move has an
+ * answer and should stay and use it. One that cannot is just standing there
+ * absorbing chip damage with nothing to give back -- so it leaves, having
+ * already spent its energy on the way out rather than taking it to the grave.
+ *
+ * Deliberately fast-move-only and energy-based, rather than "who wins the HP
+ * race": an HP race has no margin in it, so a Pokemon one point behind an even
+ * matchup reads as losing and bails out of a fight it is not actually losing.
+ * That failure is visible immediately in a mirror match, where both identical
+ * sides want to leave at once.
+ *
+ * Every input is pvpoke's own, computed against the CURRENT opponent and
+ * refreshed by resetMoves() for both actives on every switch-in
+ * (Battle.js:110-112): `fastMove.dps` is damage per 500ms turn (Pokemon.js:842
+ * -- pvpoke's own comment on the field reads "I guess this really damage per
+ * turn"), and energy per turn is `energyGain / (cooldown / 500)`, the same
+ * expression TrainingAI.js:701 uses.
+ *
+ * @param {object} poke - the active Pokemon deciding whether to stay
+ * @param {object} opponent - the Pokemon across from it
+ * @returns {boolean} true if it faints before it could throw again
+ */
+export function beingFarmedDown(poke, opponent) {
+  if (!poke || !opponent || !poke.fastMove || !opponent.fastMove) return false;
+
+  const incomingDpt = opponent.fastMove.dps;
+  if (!(incomingDpt > 0)) return false; // a 0-damage fast move farms nobody down
+  const turnsUntilFaint = poke.hp / incomingDpt;
+
+  const charged = poke.chargedMoves || [];
+  if (!charged.length) return true; // nothing to answer with, ever
+  const cheapest = Math.min(...charged.map((m) => m.energy));
+
+  const energyPerTurn = poke.fastMove.energyGain / (poke.fastMove.cooldown / NORMAL_TURN_MS);
+  if (!(energyPerTurn > 0)) return true;
+
+  // Already holding enough energy => zero turns to an answer => never farmed
+  // down, whatever its HP is.
+  const turnsUntilAnswer = Math.max(cheapest - poke.energy, 0) / energyPerTurn;
+
+  return turnsUntilFaint < turnsUntilAnswer;
+}
+
+/**
  * Teach both AIs the throw-and-go: land N charged moves, then immediately
  * swap out.
  *
@@ -376,8 +425,7 @@ export function setReactionTime(ctx, difficulty, ms) {
  * turn or more reacting, and keeps the mon that just spent its energy alive.
  *
  * Implemented entirely by wrapping, per pvpoke's read-only rule:
- *   - `battle.useMove` counts charged moves per attacker (`move.energy > 0`),
- *     stamping the turn the Nth one landed;
+ *   - `battle.useMove` counts charged moves per attacker (`move.energy > 0`);
  *   - `battle.setNewPokemon` zeroes that counter on every switch-in, so the
  *     count is always "charged moves thrown during THIS stint on the field"
  *     and a Pokemon that comes back later can throw-and-go again;
@@ -386,25 +434,47 @@ export function setReactionTime(ctx, difficulty, ms) {
  *     The switch target is pvpoke's own `ai.decideSwitch()`; we choose the
  *     TIMING, never the target.
  *
- * Preconditions mirror what a player can actually do, and what one would want
- * to do: the switch clock must be up (`getSwitchTimer() == 0`), there must be
- * a live bench mon, and the opponent must still be alive -- nobody swaps away
- * from a Pokemon they just knocked out, since the free turns are worth more.
- * The reaction-time gate applies here too: the swap lands no earlier than
- * `reactionTurns` after the Nth charged move.
+ * Spending the energy is only half of it -- the other half is having a REASON
+ * to leave. A Pokemon that can still answer with another charged move should
+ * stay in and answer; only one that would be FARMED DOWN first has to go. So
+ * the swap additionally requires `beingFarmedDown(poke, opponent)`. That gate
+ * is the whole difference between a throw-and-go and simply abandoning a
+ * matchup, and it is what keeps a fast-charging attacker from throwing twice
+ * and then walking away from a lead it was winning.
+ *
+ * The remaining preconditions mirror what a player can actually do: the switch
+ * clock must be up (`getSwitchTimer() == 0`), there must be a live bench mon,
+ * and the opponent must still be alive -- nobody swaps away from a Pokemon
+ * they just knocked out, since the free turns are worth more.
+ *
+ * Reaction time deliberately does NOT gate this. It models how long it takes
+ * to react to something the OPPONENT did; the throw-and-go is self-initiated,
+ * already decided before the charged move was thrown. Gating it anyway is not
+ * a harmless conservatism -- it actively breaks the behavior. pvpoke re-steps
+ * the same turn index after a charged move resolves, so `turn - readyTurn` is
+ * still 0 on the step where the swap should happen. Blocking that step hands
+ * the AI straight to its fast-move fallback, and a long fast move (Incinerate,
+ * 5 turns) then locks it out of deciding anything until it has been farmed
+ * down several more turns -- observed on the Talonflame line this was built
+ * for: eligible at T29, blocked, locked into Incinerate, next decision at T34
+ * on 4 HP.
  *
  * @param {object} battle - the pvpoke Battle for this match
  * @param {object[]} players - [p0, p1]
  * @param {Function} TimelineAction - the sandbox's TimelineAction constructor
- * @param {{ moves?: number, reactionTurns?: number }} [opts]
+ * @param {{ moves?: number }} [opts]
  *   moves: charged moves before swapping (default 2; 0 disables entirely)
  * @returns {number[]} a live per-player-index count of throw-and-go switches
- *   actually issued, for auditing how often the behavior fires
+ *   that were actually carried out, for auditing how often the behavior fires
  */
 export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
   const moves = opts.moves ?? DEFAULT_THROW_AND_GO_MOVES;
-  const reactionTurns = opts.reactionTurns ?? DEFAULT_REACTION_TIME_MS / NORMAL_TURN_MS;
   const fired = players.map(() => 0);
+  // Per-player "we returned a throw-and-go switch and it has not been carried
+  // out yet". pvpoke can still reject the action (Battle.js:504-508), and a
+  // Pokemon that faints on the same turn switches out for a different reason,
+  // so `fired` must count switches that actually HAPPENED, not intentions.
+  const pending = players.map(() => false);
   if (!moves || moves < 1) return fired;
 
   const realUseMove = battle.useMove;
@@ -414,19 +484,21 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
     // still counts, but the opponent-alive gate below then declines the swap.
     if (attacker && move && move.energy > 0) {
       attacker.chargedSinceSwitchIn = (attacker.chargedSinceSwitchIn || 0) + 1;
-      if (attacker.chargedSinceSwitchIn === moves) {
-        attacker.throwAndGoReadyTurn = battle.getTurns();
-      }
     }
     return result;
   };
 
   const realSetNewPokemon = battle.setNewPokemon;
-  battle.setNewPokemon = function (pokemon) {
-    if (pokemon) {
-      pokemon.chargedSinceSwitchIn = 0;
-      pokemon.throwAndGoReadyTurn = null;
+  battle.setNewPokemon = function (pokemon, index) {
+    // Count the swap only if the Pokemon leaving the field is the one that
+    // asked to leave AND is walking off alive -- a faint on the same turn is
+    // pvpoke's forced switch, not a throw-and-go.
+    if (pending[index]) {
+      const outgoing = battle.getPokemon()[index];
+      if (outgoing && outgoing.hp > 0) fired[index] += 1;
+      pending[index] = false;
     }
+    if (pokemon) pokemon.chargedSinceSwitchIn = 0;
     return realSetNewPokemon.apply(this, arguments);
   };
 
@@ -436,22 +508,23 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
     const realDecideAction = ai.decideAction;
 
     ai.decideAction = function (turn, poke, opponent) {
+      const index = player.getIndex();
+      pending[index] = false;
+
       if (
         poke &&
         poke.hp > 0 &&
         (poke.chargedSinceSwitchIn || 0) >= moves &&
-        poke.throwAndGoReadyTurn !== null &&
-        poke.throwAndGoReadyTurn !== undefined &&
-        turn - poke.throwAndGoReadyTurn >= reactionTurns &&
         player.getSwitchTimer() === 0 &&
         player.getRemainingPokemon() > 1 &&
         opponent &&
-        opponent.hp > 0
+        opponent.hp > 0 &&
+        beingFarmedDown(poke, opponent)
       ) {
         const choice = ai.decideSwitch();
         if (choice !== null && choice !== undefined) {
-          fired[player.getIndex()] += 1;
-          return new TimelineAction('switch', player.getIndex(), turn, choice, {
+          pending[index] = true;
+          return new TimelineAction('switch', index, turn, choice, {
             priority: poke.priority,
           });
         }
@@ -557,7 +630,7 @@ export function battleTeams(ctx, params) {
 
   // Retune the shared archetype BEFORE the Players (and their AIs) are built,
   // so both sides read the same reaction time. See setReactionTime.
-  const reactionTurns = setReactionTime(ctx, difficulty, reactionTimeMs);
+  setReactionTime(ctx, difficulty, reactionTimeMs);
 
   const p0 = new Player(0, difficulty, battle);
   const p1 = new Player(1, difficulty, battle);
@@ -569,7 +642,6 @@ export function battleTeams(ctx, params) {
   // setNewPokemon wrapper zeroes their counters too (see wrapThrowAndGo).
   const throwAndGoFired = wrapThrowAndGo(battle, [p0, p1], TimelineAction, {
     moves: throwAndGoMoves,
-    reactionTurns,
   });
   p0.setRoster(orderedA);
   p0.setTeam(orderedA);
@@ -610,11 +682,10 @@ export function battleTeams(ctx, params) {
     mon.priority = 0;
     mon.hasActed = false;
     // Same cross-battle leak shape as the four fields above: wrapThrowAndGo's
-    // counters live on the Pokemon instance and nothing in pvpoke's own
-    // reset()/fullReset() clears them, so a bench member could otherwise start
+    // counter lives on the Pokemon instance and nothing in pvpoke's own
+    // reset()/fullReset() clears it, so a bench member could otherwise start
     // this battle already "ready" to throw-and-go from a previous one.
     mon.chargedSinceSwitchIn = 0;
-    mon.throwAndGoReadyTurn = null;
   }
 
   battle.setBattleMode('emulate');

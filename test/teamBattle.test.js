@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
 import {
   battleTeams,
+  beingFarmedDown,
   initTeamBattle,
   setReactionTime,
   wrapRunScenario,
@@ -556,11 +557,90 @@ describe('reaction time (both players)', () => {
   });
 });
 
+describe('beingFarmedDown', () => {
+  // Synthetic move/Pokemon shapes -- only the fields the function reads.
+  const mon = (hp, energy, fast, chargedEnergies) => ({
+    hp,
+    energy,
+    fastMove: fast,
+    chargedMoves: chargedEnergies.map((e) => ({ energy: e })),
+  });
+  // dps is damage per 500ms turn; energyPerTurn is energyGain / (cooldown/500).
+  const move = (dps, energyGain, cooldown) => ({ dps, energyGain, cooldown });
+
+  test('the Talonflame case: faints before it can bank another charged move', () => {
+    // Real numbers off the traced battle at T29. Talonflame is on 28 HP taking
+    // 6 damage/turn (Thievul's Sucker Punch, boosted by Brave Bird's own -3
+    // defense debuff) -> gone in 4.7 turns. Incinerate is 20 energy on a
+    // 5-turn cooldown = 4 energy/turn, and its cheapest charged move (Fly) is
+    // 45, so from 20 energy it needs 6.25 turns. It cannot answer.
+    const talonflame = mon(28, 20, move(3.2, 20, 2500), [45, 55]);
+    const thievul = mon(32, 49, move(6, 7, 1000), [35, 45]);
+    assert.equal(beingFarmedDown(talonflame, thievul), true);
+  });
+
+  test('the Thievul case: can still answer, so it stays in', () => {
+    // Same battle, the other side. Thievul on 49 HP taking 3.2/turn survives
+    // ~15 turns; Sucker Punch banks 3.5 energy/turn, so from 21 it reaches
+    // Night Slash (35) in 4. Winning or losing on HP is not the question --
+    // having an answer is.
+    const thievul = mon(49, 21, move(3.5, 7, 1000), [35, 45]);
+    const talonflame = mon(42, 55, move(3.2, 20, 2500), [45, 55]);
+    assert.equal(beingFarmedDown(thievul, talonflame), false);
+  });
+
+  test('already holding enough energy is never farmed down, however low its HP', () => {
+    const almostDead = mon(1, 40, move(1, 3, 500), [35, 50]);
+    const attacker = mon(100, 0, move(20, 3, 500), [40]);
+    assert.equal(beingFarmedDown(almostDead, attacker), false);
+  });
+
+  test('an even matchup is not a farm-down (mirror safety)', () => {
+    const fast = move(3, 8, 1000);
+    const one = mon(100, 0, fast, [40]);
+    const two = mon(100, 0, fast, [40]);
+    assert.equal(beingFarmedDown(one, two), false);
+    assert.equal(beingFarmedDown(two, one), false);
+    // Nor does a one-point HP deficit flip it -- an HP race has no margin, and
+    // that is exactly why this is measured in energy instead.
+    assert.equal(beingFarmedDown(mon(99, 0, fast, [40]), two), false);
+  });
+
+  test('a zero-damage fast move farms nobody down; no charged move means never an answer', () => {
+    const harmless = move(0, 10, 500);
+    assert.equal(beingFarmedDown(mon(10, 0, move(3, 5, 500), [50]), mon(100, 0, harmless, [40])), false);
+    assert.equal(beingFarmedDown(mon(10, 0, move(3, 5, 500), []), mon(100, 0, move(3, 5, 500), [40])), true);
+  });
+
+  test('returns false rather than throwing on missing pokemon or moves', () => {
+    assert.equal(beingFarmedDown(null, null), false);
+    assert.equal(beingFarmedDown({ hp: 10 }, { hp: 10 }), false);
+  });
+});
+
 describe('throw-and-go', () => {
-  // Two even, switch-happy teams: joke mons never build charged-move energy,
-  // so the behavior needs real Pokemon on both sides to fire at all.
-  const TAG_A = ['azumarill', 'registeel', 'altaria'];
-  const TAG_B = ['medicham', 'skarmory', 'swampert'];
+
+  // The real matchup this behavior was built from (Jaxon's own team and an
+  // opponent he actually fought), at his actual IVs -- Talonflame is the
+  // canonical farm-down victim: a 5-turn fast move and two expensive charged
+  // moves, so once it has thrown both it cannot bank a third before Thievul's
+  // Sucker Punch finishes it.
+  // Team A at Jaxon's own collection IVs; team B at the gamemaster default GL
+  // IVs the sim builds curated opponents with.
+  const TAG_A_IDS = [
+    ['thievul', { atk: 0, def: 6, hp: 14 }],
+    ['araquanid', { atk: 0, def: 12, hp: 5 }],
+    ['stunfisk', { atk: 2, def: 9, hp: 9 }],
+  ];
+  const TAG_B_IDS = [
+    ['talonflame', { atk: 4, def: 12, hp: 15 }],
+    ['greninja', { atk: 5, def: 12, hp: 12 }],
+    ['empoleon', { atk: 5, def: 15, hp: 13 }],
+  ];
+  const tagTeam = (ids) => ids.map(([speciesId, ivs]) => buildPokemon(ctx, { speciesId, ivs }));
+  const TAG_A = 'A';
+  const TAG_B = 'B';
+  const team = (which) => tagTeam(which === 'A' ? TAG_A_IDS : TAG_B_IDS);
 
   test('is on by default at 2 moves, is reported, and can be disabled with 0', () => {
     const on = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed: 3 });
@@ -579,35 +659,22 @@ describe('throw-and-go', () => {
     assert.equal(off.summary.throwAndGoSwitchesB, 0);
   });
 
-  test('actually fires across a seed sweep, and never fires when disabled', () => {
-    let firedOn = 0;
-    let firedOff = 0;
-    for (let seed = 0; seed < 12; seed++) {
-      const on = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed });
-      firedOn += on.summary.throwAndGoSwitchesA + on.summary.throwAndGoSwitchesB;
-
-      const off = battleTeams(ctx, {
-        teamA: team(TAG_A),
-        teamB: team(TAG_B),
-        seed,
-        throwAndGoMoves: 0,
-      });
-      firedOff += off.summary.throwAndGoSwitchesA + off.summary.throwAndGoSwitchesB;
-    }
-    assert.ok(firedOn > 0, `throw-and-go never fired in 12 battles (got ${firedOn})`);
-    assert.equal(firedOff, 0);
+  test('Talonflame throws twice and leaves; Thievul, which can still answer, stays', () => {
+    const r = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B) });
+    assert.equal(r.summary.throwAndGoSwitchesB, 1, 'Talonflame throws Fly + Brave Bird, then goes');
+    assert.equal(
+      r.summary.throwAndGoSwitchesA,
+      0,
+      'Thievul banks Night Slash faster than it is chipped, so it never throw-and-goes'
+    );
   });
 
-  test('a higher move threshold fires strictly less often than a lower one', () => {
-    let two = 0;
-    let five = 0;
-    for (let seed = 0; seed < 12; seed++) {
-      const a = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed, throwAndGoMoves: 2 });
-      const b = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed, throwAndGoMoves: 5 });
-      two += a.summary.throwAndGoSwitchesA + a.summary.throwAndGoSwitchesB;
-      five += b.summary.throwAndGoSwitchesA + b.summary.throwAndGoSwitchesB;
-    }
-    assert.ok(two > five, `expected 2-move throw-and-go (${two}) to fire more than 5-move (${five})`);
+  test('a threshold of 5 charged moves never fires where 2 does', () => {
+    const two = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), throwAndGoMoves: 2 });
+    const five = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), throwAndGoMoves: 5 });
+    const total = (r) => r.summary.throwAndGoSwitchesA + r.summary.throwAndGoSwitchesB;
+    assert.ok(total(two) > 0);
+    assert.equal(total(five), 0, 'nothing in this battle lands 5 charged moves in one stint');
   });
 
   test('stays deterministic: same seed and settings reproduce the same battle', () => {

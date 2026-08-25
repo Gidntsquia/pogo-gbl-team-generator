@@ -291,3 +291,69 @@ not done here, since Jaxon asked for the behavior itself first.
 covering the ms→turns conversion, the null restore, both defaults being
 reported, disable-with-0, that the behavior actually fires over a seed sweep,
 that a higher threshold fires strictly less, and that determinism survives.
+
+### Same day, follow-up — throw-and-go gated on being farmed down
+Jaxon reviewed the trace and rejected the unconditional version: "Thievul
+should not throw and switch; it should stay in. Only Talonflame should throw
+and go, and its only because it would be 'farmed down' with fast move damage
+if it stays in."
+
+**New gate, `beingFarmedDown(poke, opponent)` (exported).** A Pokemon is being
+farmed down when the opponent's fast-move chip finishes it BEFORE its own fast
+moves could bank enough energy for another charged move — `poke.hp /
+opponent.fastMove.dps  <  max(cheapestChargedEnergy - poke.energy, 0) /
+(poke.fastMove.energyGain / (poke.fastMove.cooldown / 500))`. Both expressions
+are pvpoke's own (`fastMove.dps` is per-turn damage vs the CURRENT opponent,
+Pokemon.js:842, refreshed by resetMoves() for both actives on every switch-in,
+Battle.js:110-112; the energy-per-turn form is TrainingAI.js:701's).
+
+Two earlier formulations were tried and rejected against real numbers:
+- *Unconditional* (the first version): Thievul, which builds Snarl energy fast,
+  threw twice and walked out of a lead it was winning. Wrong per Jaxon.
+- *HP race* (`turnsUntilIFaint <= turnsUntilTheyFaint`): an HP race has no
+  margin, so a Pokemon one point behind an even matchup reads as losing. In a
+  MIRROR both identical sides wanted to leave at once — caught immediately by
+  the pre-existing "identical teams split the 9 pairings near evenly" test
+  (a=2 b=7). Switching to strict `<` did not fix it; the model was wrong, not
+  the comparison. The energy formulation has margin built in and the mirror
+  test passes untouched. **That test was NOT loosened.**
+
+**Reaction time no longer gates the throw-and-go.** It models reacting to what
+the OPPONENT did; a throw-and-go is self-initiated and already decided. Gating
+it was not harmless: pvpoke re-steps the same turn index after a charged move
+resolves, so `turn - readyTurn` is still 0 on the step where the swap belongs.
+Blocking that step dropped the AI into its fast-move fallback, and a 5-turn
+Incinerate then locked Talonflame out of deciding anything until T34 on 4 HP —
+observed directly on the line this was built for. `throwAndGoReadyTurn` is gone
+with it. Reaction time still does its real job on pvpoke's own SWITCH_BASIC
+path (TrainingAI.js:1062).
+
+**`throwAndGoSwitchesA/B` now count switches that actually HAPPENED**, not
+intentions. pvpoke can reject the action (Battle.js:504-508), and a Pokemon
+that faints the same turn switches out for a different reason — the old counter
+credited Talonflame's T34 attempt even though it died that turn.
+
+**The traced line now matches Jaxon's read exactly:** Talonflame throws Fly
+(T20) and Brave Bird (T29), forcing both of Thievul's shields, then leaves at
+T29 on 28 HP (it needs 6.25 turns to reach Fly again and has 4.7 turns to
+live). Thievul never throw-and-goes — Sucker Punch banks Night Slash in 4
+turns while it is chipped at 3.2/turn — and it wins the lead fight. A takes it
+2-0 in 72 turns.
+
+**Re-measured**, same 234-battle pool sweep as above:
+
+| config | win rate | throw-and-go switches | timeouts |
+|---|---|---|---|
+| stock (rt=0, tag off) | 123/234 = 52.6% | 0 | 2 |
+| rt=200 only | 120/234 = 51.3% | 0 | 2 |
+| rt=200 + tag=2 (gated) | 123/234 = 52.6% | 67 (0.29/battle) | 2 |
+
+Firing rate drops 0.99 -> 0.29 per battle: situational, which is the point.
+13.2% of outcomes still flip vs stock (was 25.2% unconditional).
+
+**Verified (FOREGROUND):** `node --test test/teamBattle.test.js` -> 26/26;
+`npm test` -> **262/262 green** (~350s). Six new tests are direct unit tests of
+`beingFarmedDown` (the Talonflame case and the Thievul case at their real
+traced numbers, already-has-energy, mirror safety incl. the 1-HP-deficit case,
+zero-damage fast move / no charged moves, null safety) plus two integration
+tests asserting Talonflame goes and Thievul stays in the real matchup.
