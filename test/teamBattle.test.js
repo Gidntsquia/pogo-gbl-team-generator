@@ -16,8 +16,10 @@ import {
   battleTeams,
   beingFarmedDown,
   initTeamBattle,
+  isCheapChip,
   setReactionTime,
   wrapRunScenario,
+  wrapShieldBanking,
 } from '../src/engine/teamBattle.js';
 
 // Rank-1 IVs (attack-weight rank 1 is close enough for these coarse tests).
@@ -659,8 +661,14 @@ describe('throw-and-go', () => {
     assert.equal(off.summary.throwAndGoSwitchesB, 0);
   });
 
+  // bankShields is pinned off in the two tests below. They assert a specific
+  // traced battle, and that trace was taken before shield banking existed;
+  // with banking on, Talonflame declines the first Night Slash and is dead by
+  // T23, so it never reaches the throw-and-go it is here to demonstrate.
+  // Isolating wrapThrowAndGo is the point -- see the shield-banking suite for
+  // the combined default.
   test('Talonflame throws twice and leaves; Thievul, which can still answer, stays', () => {
-    const r = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B) });
+    const r = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), bankShields: false });
     assert.equal(r.summary.throwAndGoSwitchesB, 1, 'Talonflame throws Fly + Brave Bird, then goes');
     assert.equal(
       r.summary.throwAndGoSwitchesA,
@@ -670,8 +678,9 @@ describe('throw-and-go', () => {
   });
 
   test('a threshold of 5 charged moves never fires where 2 does', () => {
-    const two = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), throwAndGoMoves: 2 });
-    const five = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), throwAndGoMoves: 5 });
+    const opts = { bankShields: false };
+    const two = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), throwAndGoMoves: 2, ...opts });
+    const five = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), throwAndGoMoves: 5, ...opts });
     const total = (r) => r.summary.throwAndGoSwitchesA + r.summary.throwAndGoSwitchesB;
     assert.ok(total(two) > 0);
     assert.equal(total(five), 0, 'nothing in this battle lands 5 charged moves in one stint');
@@ -681,6 +690,171 @@ describe('throw-and-go', () => {
     const opts = { seed: 11, reactionTimeMs: 200, throwAndGoMoves: 2 };
     const r1 = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), ...opts });
     const r2 = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), ...opts });
+    assert.deepEqual(r1, r2);
+  });
+});
+
+describe('isCheapChip', () => {
+  // Only the fields the function reads.
+  const mon = (hp, maxHp) => ({ hp, stats: { hp: maxHp } });
+  const move = (energy) => ({ energy });
+
+  test('the Night Slash case: weak, cheap, and survivable, so no shield', () => {
+    // Real numbers off the traced battle at T14. Talonflame is on 86 of 135
+    // taking a 41-damage Night Slash (35 energy) with 7-damage Sucker Punches
+    // behind it: 41 + 14 = 55 < 86, and 41 is 30% of a health bar.
+    assert.equal(isCheapChip(mon(86, 135), move(35), 41, 7), true);
+  });
+
+  test('the Bubble Beam case: 25 power off a 40-energy move is never worth a shield', () => {
+    assert.equal(isCheapChip(mon(106, 160), move(40), 16, 3), true);
+  });
+
+  test('Fly is cheap but not weak', () => {
+    // 63 of Thievul's 130 is 48% of the bar -- above WEAK_MOVE_HP_FRACTION.
+    assert.equal(isCheapChip(mon(66, 130), move(45), 63, 3), false);
+  });
+
+  test('Brave Bird is neither', () => {
+    assert.equal(isCheapChip(mon(66, 130), move(55), 103, 3), false);
+  });
+
+  test('an expensive move is worth a shield even when it hits softly', () => {
+    // Same 30%-of-bar hit as the Night Slash case, but at 60 energy the
+    // attacker does not simply have it again.
+    assert.equal(isCheapChip(mon(86, 135), move(60), 41, 7), false);
+  });
+
+  test('a weak cheap move still gets shielded when it would knock you out', () => {
+    // Talonflame at T23: 50 HP left, same 41-damage Night Slash. 41 + 14 = 55,
+    // which is more than 50, so this is the shield that has to be spent.
+    assert.equal(isCheapChip(mon(50, 135), move(35), 41, 7), false);
+  });
+
+  test('the fast-move chip counts: same move, same HP, harder fast move', () => {
+    assert.equal(isCheapChip(mon(60, 135), move(35), 41, 3), true);
+    assert.equal(isCheapChip(mon(60, 135), move(35), 41, 10), false);
+  });
+
+  test('a fast move is not a cheap chip candidate (no energy cost)', () => {
+    assert.equal(isCheapChip(mon(100, 135), move(0), 5, 5), false);
+  });
+
+  test('0 damage is not a chip decision', () => {
+    assert.equal(isCheapChip(mon(100, 135), move(35), 0, 3), false);
+  });
+
+  test('missing inputs are safe', () => {
+    assert.equal(isCheapChip(null, move(35), 41, 7), false);
+    assert.equal(isCheapChip(mon(86, 135), null, 41, 7), false);
+  });
+});
+
+describe('shield banking', () => {
+  const BANK_A_IDS = [
+    ['thievul', { atk: 0, def: 6, hp: 14 }],
+    ['araquanid', { atk: 0, def: 12, hp: 5 }],
+    ['stunfisk', { atk: 2, def: 9, hp: 9 }],
+  ];
+  const BANK_B_IDS = [
+    ['talonflame', { atk: 4, def: 12, hp: 15 }],
+    ['greninja', { atk: 5, def: 12, hp: 12 }],
+    ['empoleon', { atk: 5, def: 15, hp: 13 }],
+  ];
+  const bankTeam = (which) =>
+    (which === 'A' ? BANK_A_IDS : BANK_B_IDS).map(([speciesId, ivs]) =>
+      buildPokemon(ctx, { speciesId, ivs })
+    );
+
+  test('is on by default, is reported, and can be disabled', () => {
+    const on = battleTeams(ctx, { teamA: bankTeam('A'), teamB: bankTeam('B'), seed: 3 });
+    assert.equal(on.summary.bankShields, true);
+    assert.ok(Number.isInteger(on.summary.shieldsDeclinedA));
+    assert.ok(Number.isInteger(on.summary.shieldsDeclinedB));
+
+    const off = battleTeams(ctx, {
+      teamA: bankTeam('A'),
+      teamB: bankTeam('B'),
+      seed: 3,
+      bankShields: false,
+    });
+    assert.equal(off.summary.bankShields, false);
+    assert.equal(off.summary.shieldsDeclinedA, 0, 'disabled means never declines');
+    assert.equal(off.summary.shieldsDeclinedB, 0);
+  });
+
+  test('Talonflame declines the first Night Slash', () => {
+    // The traced case: pvpoke shields a 41-damage, 35-energy Night Slash at
+    // 86 of 135 HP with two Pokemon still in the back. With banking on it
+    // takes the hit instead.
+    const r = battleTeams(ctx, { teamA: bankTeam('A'), teamB: bankTeam('B') });
+    assert.ok(r.summary.shieldsDeclinedB > 0, 'B keeps a shield it would have spent');
+  });
+
+  test('declining shields leaves more of them on the board', () => {
+    const opts = { teamA: bankTeam('A'), teamB: bankTeam('B'), seed: 7 };
+    const on = battleTeams(ctx, { ...opts, teamA: bankTeam('A'), teamB: bankTeam('B') });
+    const off = battleTeams(ctx, {
+      teamA: bankTeam('A'),
+      teamB: bankTeam('B'),
+      seed: 7,
+      bankShields: false,
+    });
+    const left = (r) => r.summary.shieldsRemainingA + r.summary.shieldsRemainingB;
+    assert.ok(
+      left(on) >= left(off),
+      `banking should not spend more shields (on=${left(on)} off=${left(off)})`
+    );
+  });
+
+  test('a shield is never declined by the last Pokemon standing', () => {
+    // Nothing in the back means the banked shield has no later value, so the
+    // rule stands aside even on a textbook cheap chip. Driven through
+    // wrapShieldBanking directly with a stub player, because the only way to
+    // reach a real last-Pokemon shield decision is to script a whole battle.
+    const defender = { hp: 86, stats: { hp: 135 } };
+    const attacker = { fastMove: { energy: 0 } };
+    const nightSlash = { energy: 35 };
+    // 41 for the charged move, 7 for the fast move -- the traced numbers.
+    const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 41 : 7) };
+
+    const stubPlayer = (remaining) => {
+      const ai = { decideShield: () => true };
+      return { getAI: () => ai, getIndex: () => 0, getRemainingPokemon: () => remaining };
+    };
+
+    const withBench = stubPlayer(2);
+    wrapShieldBanking([withBench], DamageCalculator);
+    assert.equal(
+      withBench.getAI().decideShield(attacker, defender, nightSlash),
+      false,
+      'with a Pokemon in the back the cheap chip is taken'
+    );
+
+    const lastOne = stubPlayer(1);
+    wrapShieldBanking([lastOne], DamageCalculator);
+    assert.equal(
+      lastOne.getAI().decideShield(attacker, defender, nightSlash),
+      true,
+      'as the last Pokemon it shields exactly as pvpoke decided'
+    );
+  });
+
+  test('never turns a no into a yes', () => {
+    const defender = { hp: 200, stats: { hp: 300 } };
+    const attacker = { fastMove: { energy: 0 } };
+    const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 10 : 1) };
+    const ai = { decideShield: () => false };
+    const player = { getAI: () => ai, getIndex: () => 0, getRemainingPokemon: () => 3 };
+    const declined = wrapShieldBanking([player], DamageCalculator);
+    assert.equal(player.getAI().decideShield(attacker, defender, { energy: 35 }), false);
+    assert.equal(declined[0], 0, 'a shield pvpoke already declined is not counted');
+  });
+
+  test('stays deterministic: same seed and settings reproduce the same battle', () => {
+    const opts = { seed: 13, bankShields: true };
+    const r1 = battleTeams(ctx, { teamA: bankTeam('A'), teamB: bankTeam('B'), ...opts });
+    const r2 = battleTeams(ctx, { teamA: bankTeam('A'), teamB: bankTeam('B'), ...opts });
     assert.deepEqual(r1, r2);
   });
 });

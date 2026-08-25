@@ -39,6 +39,20 @@ const DEFAULT_REACTION_TIME_MS = 200;
 // GBL line -- throw twice, then leave on the switch. See wrapThrowAndGo.
 const DEFAULT_THROW_AND_GO_MOVES = 2;
 
+// Shield banking. A shield blocks exactly one hit, so it is worth whatever
+// that hit would have cost you -- and a shield you still hold when your
+// closer comes in is worth a whole extra matchup. pvpoke's TrainingAI has no
+// model of either: decideShield weighs the move in front of it and nothing
+// else, and its one clause that could preserve a shield ("Preserve shield
+// advantage", TrainingAI.js:1310) is gated on `defender.battleStats.shieldsUsed
+// > 0`, so it can never stop the FIRST shield -- the one that actually gives
+// away the advantage. These two thresholds define the moves not worth a
+// shield: weak (takes at most this share of a full health bar) and cheap (low
+// enough energy that the attacker will simply have it again). Bubble Beam
+// (25p/40e) and Night Slash (50p/35e) are the archetypes. See isCheapChip.
+const WEAK_MOVE_HP_FRACTION = 0.35;
+const CHEAP_MOVE_ENERGY = 45;
+
 /**
  * Small deterministic mulberry32 PRNG. Given the same 32-bit seed it yields
  * the same sequence, which is what makes a whole team battle reproducible.
@@ -166,6 +180,11 @@ export function initTeamBattle(ctx) {
   // it is not an own-property of the context object -- read it back through
   // the vm. wrapThrowAndGo constructs switch actions with it.
   const TimelineAction = vm.runInContext('TimelineAction', ctx.context);
+  // Same story for DamageCalculator (a `class` declaration in the sandbox):
+  // not an own-property of the context. wrapShieldBanking asks it what a move
+  // would actually do right now, the same call decideShield itself makes
+  // (TrainingAI.js:1205), so buffs and shadow forms are pvpoke's problem.
+  const DamageCalculator = vm.runInContext('DamageCalculator', ctx.context);
 
   // TrainingAI captures `props = aiData[level]` BY REFERENCE at construction
   // (TrainingAI.js:20), so mutating a field on the archetype object retunes
@@ -174,7 +193,14 @@ export function initTeamBattle(ctx) {
   const aiData = ctx.context.aiData;
   const baseReactionTimes = aiData.map((a) => a.reactionTime);
 
-  ctx.__teamBattle = { scheduler, vmMath, TimelineAction, aiData, baseReactionTimes };
+  ctx.__teamBattle = {
+    scheduler,
+    vmMath,
+    TimelineAction,
+    DamageCalculator,
+    aiData,
+    baseReactionTimes,
+  };
   return ctx;
 }
 
@@ -537,6 +563,104 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
 }
 
 /**
+ * Is this charged move cheap chip -- weak enough, and cheap enough, that a
+ * shield spent on it is wasted?
+ *
+ * Three things have to be true at once.
+ *
+ * WEAK: the move takes at most WEAK_MOVE_HP_FRACTION of a full health bar.
+ * Measured against `stats.hp`, not current HP, deliberately: a shield's value
+ * is the damage it blocks, which does not grow just because the defender is
+ * already hurt. Against a 130 HP Thievul this splits Night Slash (41, 0.32)
+ * from Fly (63, 0.48) and Brave Bird (103, 0.79) exactly where a player would.
+ *
+ * CHEAP: the move costs at most CHEAP_MOVE_ENERGY. This is what makes the
+ * shield a bad trade rather than merely a small one -- block a 35-energy move
+ * and the attacker is most of the way back to throwing it again, so the shield
+ * bought a delay, not a matchup. An expensive move is a much bigger share of
+ * the attacker's whole battle and is worth blocking even when it hits softly.
+ *
+ * AFFORDABLE: the defender survives the move plus the two fast hits that
+ * follow it. That is pvpoke's own definition of a move being "hard hitting or
+ * knockout" (`moveDamage + fastMoveDamage * 2 >= defender.hp`,
+ * TrainingAI.js:1264), used here as its strict inverse -- a shield is only
+ * declined on a move pvpoke itself would not class as dangerous. A stricter
+ * test was tried first (survive TWO copies of the move, chip included) and is
+ * wrong: it demands a full extra cycle of health, which nothing below about
+ * 90% HP has against even a weak move, so it declined almost nothing. It kept
+ * shielding the exact hit this rule exists to decline -- Talonflame at 86/135
+ * putting a shield on a 41-damage Night Slash.
+ *
+ * The caller also has to have something in the back -- see wrapShieldBanking.
+ * Everything else (which move the attacker is even guessed to be holding, the
+ * matchup rating, last-Pokemon protection) stays pvpoke's decision; this only
+ * ever turns a yes into a no.
+ *
+ * @param {object} defender - the Pokemon deciding whether to shield
+ * @param {object} move - the charged move being thrown at it
+ * @param {number} moveDamage - what that move would do right now
+ * @param {number} fastDamage - the attacker's fast move damage per hit
+ * @returns {boolean}
+ */
+export function isCheapChip(defender, move, moveDamage, fastDamage) {
+  if (!defender || !move) return false;
+  if (!(moveDamage > 0)) return false;
+  if (!(move.energy > 0) || move.energy > CHEAP_MOVE_ENERGY) return false;
+  if (moveDamage > defender.stats.hp * WEAK_MOVE_HP_FRACTION) return false;
+  const chip = fastDamage > 0 ? fastDamage * 2 : 0;
+  return moveDamage + chip < defender.hp;
+}
+
+/**
+ * Bank shields against weak, cheap moves, symmetrically for both players.
+ *
+ * Wraps each AI's decideShield and turns a yes into a no when the incoming
+ * move is cheap chip (see isCheapChip) AND the player still has a Pokemon in
+ * the back for the banked shield to be worth something to. A no is never
+ * turned into a yes, and pvpoke's own decision is always computed first --
+ * both so the last-Pokemon protection and matchup weighting still apply, and
+ * so the seeded RNG is consumed in exactly the same order as stock, which
+ * keeps an A/B against `bankShields: false` a comparison of this rule alone.
+ *
+ * @param {object[]} players - [p0, p1]
+ * @param {object} DamageCalculator - the sandbox's DamageCalculator class
+ * @param {{ enabled?: boolean }} [opts]
+ * @returns {number[]} a live per-player-index count of shields declined
+ */
+export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
+  const declined = players.map(() => 0);
+  if (opts.enabled === false) return declined;
+
+  for (const player of players) {
+    const ai = player.getAI();
+    if (!ai) continue;
+    const realDecideShield = ai.decideShield;
+
+    ai.decideShield = function (attacker, defender, move) {
+      const decision = realDecideShield.apply(this, arguments);
+      if (!decision) return decision;
+      // Nothing behind this Pokemon means the shield has no later value; that
+      // is the whole reason to hold it, so stand aside and let pvpoke shield.
+      if (player.getRemainingPokemon() <= 1) return decision;
+      if (!attacker || !defender || !move) return decision;
+
+      const moveDamage = DamageCalculator.damage(attacker, defender, move, true);
+      const fastDamage = attacker.fastMove
+        ? DamageCalculator.damage(attacker, defender, attacker.fastMove, true)
+        : 0;
+
+      if (isCheapChip(defender, move, moveDamage, fastDamage)) {
+        declined[player.getIndex()] += 1;
+        return false;
+      }
+      return decision;
+    };
+  }
+
+  return declined;
+}
+
+/**
  * Run one full 3v3 team battle using pvpoke's emulate engine, headless.
  *
  * teamA and teamB are arrays of battle-ready pvpoke Pokemon (from
@@ -551,19 +675,22 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
  * given (teams, leads, difficulty, seed); when seed is omitted it is derived
  * from the matchup so repeated calls with the same inputs still agree.
  *
- * Two behaviors are layered on top of pvpoke's AI, symmetrically for both
+ * Three behaviors are layered on top of pvpoke's AI, symmetrically for both
  * players, because pvpoke's Training AI does not model them:
  *   - reactionTimeMs (default 200): how long after the board changes either
  *     player may act on it. See setReactionTime.
  *   - throwAndGoMoves (default 2): land this many charged moves, then swap
  *     out. Pass 0 for pvpoke's stock behavior. See wrapThrowAndGo.
+ *   - bankShields (default true): don't spend a shield on a weak, cheap move
+ *     while there is still a Pokemon in the back. Pass false for pvpoke's
+ *     stock shielding. See wrapShieldBanking.
  *
  * @param {object} ctx - from initEngine() (initTeamBattle is applied lazily)
  * @param {{
  *   teamA: object[], teamB: object[],
  *   leadA?: number, leadB?: number,
  *   difficulty?: number, seed?: number,
- *   reactionTimeMs?: number, throwAndGoMoves?: number
+ *   reactionTimeMs?: number, throwAndGoMoves?: number, bankShields?: boolean
  * }} params
  * @returns {{
  *   winner: 'a'|'b'|'tie',
@@ -572,8 +699,9 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
  *     remainingA: number, remainingB: number,
  *     turns: number, duration: number,
  *     leadA: number, leadB: number, difficulty: number, seed: number,
- *     reactionTimeMs: number, throwAndGoMoves: number,
+ *     reactionTimeMs: number, throwAndGoMoves: number, bankShields: boolean,
  *     throwAndGoSwitchesA: number, throwAndGoSwitchesB: number,
+ *     shieldsDeclinedA: number, shieldsDeclinedB: number,
  *     endedBy: 'ko'|'timeout',
  *     leadFaintTurnA: number|null, leadFaintTurnB: number|null,
  *     shieldsRemainingA: number, shieldsRemainingB: number
@@ -590,6 +718,7 @@ export function battleTeams(ctx, params) {
     seed,
     reactionTimeMs = DEFAULT_REACTION_TIME_MS,
     throwAndGoMoves = DEFAULT_THROW_AND_GO_MOVES,
+    bankShields = true,
   } = params;
 
   if (!Array.isArray(teamA) || !Array.isArray(teamB) || !teamA.length || !teamB.length) {
@@ -598,7 +727,7 @@ export function battleTeams(ctx, params) {
 
   initTeamBattle(ctx);
   const { Player, Battle } = ctx;
-  const { scheduler, vmMath, TimelineAction } = ctx.__teamBattle;
+  const { scheduler, vmMath, TimelineAction, DamageCalculator } = ctx.__teamBattle;
 
   // Deterministic RNG for this battle (seeds every TrainingAI random choice).
   const effectiveSeed =
@@ -642,6 +771,10 @@ export function battleTeams(ctx, params) {
   // setNewPokemon wrapper zeroes their counters too (see wrapThrowAndGo).
   const throwAndGoFired = wrapThrowAndGo(battle, [p0, p1], TimelineAction, {
     moves: throwAndGoMoves,
+  });
+  // Shield banking for both sides (see wrapShieldBanking).
+  const shieldsDeclined = wrapShieldBanking([p0, p1], DamageCalculator, {
+    enabled: bankShields,
   });
   p0.setRoster(orderedA);
   p0.setTeam(orderedA);
@@ -852,8 +985,11 @@ export function battleTeams(ctx, params) {
       seed: effectiveSeed,
       reactionTimeMs,
       throwAndGoMoves,
+      bankShields,
       throwAndGoSwitchesA: throwAndGoFired[0],
       throwAndGoSwitchesB: throwAndGoFired[1],
+      shieldsDeclinedA: shieldsDeclined[0],
+      shieldsDeclinedB: shieldsDeclined[1],
       endedBy,
       // GOALS T27: lead-exchange + shield-banking ground truth, read off
       // pvpoke's own live objects (no vendor edits, no battle math added).

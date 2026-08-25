@@ -357,3 +357,81 @@ Firing rate drops 0.99 -> 0.29 per battle: situational, which is the point.
 traced numbers, already-has-energy, mirror safety incl. the 1-HP-deficit case,
 zero-damage fast move / no charged moves, null safety) plus two integration
 tests asserting Talonflame goes and Thievul stays in the real matchup.
+
+### Same day, follow-up — bank shields against weak, cheap moves
+
+Jaxon: "Teams should avoid shielding weak, cheap moves such as bubble beam and
+night slash; this is because you will likely get more value from the shields
+later and also because getting a shield advantage can give your closer in the
+back a winning advantage."
+
+pvpoke's `decideShield` weighs the move in front of it and nothing else. Its
+one clause that could preserve a shield — "Preserve shield advantage"
+(TrainingAI.js:1310) — is gated on `defender.battleStats.shieldsUsed > 0`, so
+it can never stop the FIRST shield, which is the one that gives the advantage
+away. Its advanced-shielding block (TrainingAI.js:1326-1358) is commented out
+in the vendor source.
+
+**New: `isCheapChip(defender, move, moveDamage, fastDamage)`** — a move is not
+worth a shield when all three hold:
+
+- **weak**: `moveDamage <= defender.stats.hp * 0.35`. Measured against MAX HP,
+  not current: a shield's value is the damage it blocks, which does not grow
+  because the defender is already hurt. Against a 135 HP Talonflame this splits
+  Night Slash (41, 0.30) from Fly (63/130 on Thievul, 0.48) and Brave Bird
+  (103/130, 0.79) exactly where a player would.
+- **cheap**: `move.energy <= 45`. This is what makes it a bad trade rather than
+  a small one — block a 35-energy move and the attacker is most of the way back
+  to throwing it again.
+- **affordable**: `moveDamage + fastDamage*2 < defender.hp`. This is pvpoke's
+  own "hard hitting or knockout" test (TrainingAI.js:1264) used as its strict
+  inverse.
+
+**`wrapShieldBanking(players, DamageCalculator, opts)`** installs it for both
+players. It computes pvpoke's decision FIRST and only ever turns a yes into a
+no — so last-Pokemon protection and matchup weighting still apply, and the
+seeded RNG is consumed in the same order as stock, which makes an A/B against
+`bankShields: false` a test of this rule alone. It also declines to fire when
+`getRemainingPokemon() <= 1`: with nothing in the back the banked shield has no
+later value, which is the second half of Jaxon's reasoning.
+
+**Rejected first formulation:** affordability as "survive TWO copies of the
+move, chip included". Too strict — it demands a full extra cycle of health,
+which nothing below ~90% HP has against even a weak move. It declined 271
+shields but kept shielding the exact hit the rule exists to decline: Talonflame
+at 86/135 spending a shield on a 41-damage Night Slash.
+
+**New engine knob** `bankShields` (default true), reported in the summary
+alongside `shieldsDeclinedA/B`.
+
+**Measured**, candidate team vs the full 78-team pool x 3 mirrored lead
+pairings (234 battles):
+
+| config | win rate | shields declined | shields left on board (A/B) |
+|---|---|---|---|
+| stock (rt=0, tag=0, bank=off) | 152/234 = 65.0% | 0 | 10 / 9 |
+| rt=200 + tag=2, bank=off | 153/234 = 65.4% | 0 | 16 / 19 |
+| rt=200 + tag=2, bank=on | 157/234 = 67.1% | 472 (2.0/battle) | 52 / 71 |
+
+Shields surviving the battle more than triple. 25.6% of outcomes flip vs the
+previous default; 33.8% vs stock. Spot-checking the declines: Bulldoze (45e,
+0.23 of the bar) on Stunfisk, Bubble Beam (40e, 0.10) on Tinkaton, Icy Wind
+(45e, 0.07) on Araquanid, Body Slam (35e, 0.30) on Thievul — all moves nobody
+shields.
+
+**Interaction with throw-and-go, reported not hidden:** on the traced
+Thievul/Talonflame line the two behaviors now collide. Talonflame declines the
+T14 Night Slash, is dead by T23, and never reaches the T29 throw-and-go the
+previous entry documents; B wins 1-0 instead of losing 0-2. The two
+throw-and-go tests that assert that traced line are pinned to
+`bankShields: false` so they still isolate `wrapThrowAndGo`; the comment in the
+test says why.
+
+**Verified (FOREGROUND):** `node --test test/teamBattle.test.js` -> 42/42;
+`npm test` -> **278/278 green** (~341s). Ten new unit tests of `isCheapChip`
+(Night Slash and Bubble Beam at their real traced numbers, Fly = cheap but not
+weak, Brave Bird = neither, a soft 60-energy move, the T23 Talonflame KO case,
+fast-move chip sensitivity, fast moves, zero damage, null safety) plus six on
+`wrapShieldBanking` (default on/reported/disable, the traced decline, shields
+left on the board, the last-Pokemon stand-aside, never-a-no-into-a-yes,
+determinism).
