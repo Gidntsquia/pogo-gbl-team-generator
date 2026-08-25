@@ -451,3 +451,46 @@ Queue is empty and the routine trigger is disabled per Jaxon's commit.
 Per the standing guardrail, noting idle and stopping — not inventing
 busywork, not re-enabling the trigger, not re-attempting T32 in any form
 without a fresh explicit go-ahead.
+
+## 2026-08-25T12:00Z — Overnight best-team run on PURE WIN RATE (Jaxon's ask)
+
+Jaxon: "run an overnight-length sim to find the best team, with the new and
+improved sim", then mid-run: "remove the snowball and closer thing — I just
+want to know which teams win the most."
+
+First launch (05:33Z, `--fitness` defaulted to battle-reality) was killed and
+its out-dir deleted before gen 0 finished; relaunched 05:38Z with
+`--fitness classic` so selection/mutation/convergence act on win rate alone.
+Both metrics are still COMPUTED and printed by the report renderer (they are
+inert — nothing selects on them); not stripped from the renderer, flagged to
+Jaxon as an offer.
+
+Run: `evolve.mjs my-collection.csv --population 200 --opponents-per-gen 66
+--generations 130 --deadline-minutes 450 --pool 70 --curated-ratio 0.7
+--fitness classic --seed jaxon-winrate-1 --out-dir out/evolve-winrate-1`.
+130/130 gens (cap; 450-min deadline never invoked), 1,119,228 battles,
+0 errors, 6h 22m 15s.
+
+**Winner: Thievul (Lead) / Mantine / Stunfisk (UNOVAN) — 67%** (198-battle
+elites pass). #2 Stunfisk/Thievul/Tinkaton 66%; #3 Thievul/Stunfisk/Araquanid
+65%. stunfisk+thievul core in 8/10 elites.
+
+Killed once at 07:27Z ~1h49m in (mechanical, same class as the Aug 24 kill;
+0 errors, checkpoints intact). Resumed from gen 26, config fingerprint matched.
+A detached `nohup` babysitter (scratchpad/babysit.sh) relaunch-on-death covered
+the rest — NOTE: macOS has no `setsid`, first babysitter never started (~7 min
+idle before the plain-nohup retry worked).
+
+Verification beyond the report (scratch scripts, not committed): candidate vs
+the FULL 83-team meta pool x 3 opponent leads = 162W-85L-2T (65.5%);
+1v1 shield grid; per-opposing-lead aggregation. Two findings worth keeping:
+Galarian Stunfisk in that slot scores 56.6% vs Unovan's 65.5%; Mantine's
+pvpoke-recommended Wing Attack/Twister/Water Pulse (65.5%) beats the
+conventional Bubble/Ice Beam (56.0%).
+
+**Unverified/caveat:** population decayed 200 -> 67 by gen 129 (battles/gen
+13,200 -> 4,422) — the final elite set came from a much narrower field than
+the run started with. Not investigated; flagged to Jaxon and in the report.
+
+Gates: `bash scripts/setup.sh` clean, vendor at pinned ea601f0a, `npm test`
+271/271 green before launch. Delivered as an Artifact dossier.
