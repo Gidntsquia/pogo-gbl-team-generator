@@ -430,3 +430,24 @@ tank and answer") and is not implemented; noted for later if he wants it.
 
 **Verified (FOREGROUND):** `node --test test/teamBattle.test.js` -> 53/53;
 `npm test` -> 289/289 green.
+
+## 2026-08-25T05:00Z — T32 fire caught the withdrawal mid-flight; work discarded, uncommitted
+
+This routine fire (started ~04:43Z) built T32 per the ticket's own spec —
+`winningDpsRace` helper + `wrapShieldBanking` OR-branch + required tests —
+and had both `node --test test/teamBattle.test.js` (59/59) and
+`npm run test:full` (295/295) green, ready to commit. Before pushing,
+`git fetch` surfaced `d87c639` (Jaxon, 00:50Z): T32 is withdrawn as
+unsound, exactly the "if a fire lands a commit, revert it" scenario that
+commit anticipated.
+
+Nothing was ever committed or pushed, so there is nothing to revert —
+the implementation and its tests were discarded from the working tree,
+and local `main` (a stale, never-fast-forwarded ref in this container)
+was hard-reset to `origin/main` to pick up the real, current history
+including the withdrawal commit. No code or test changes landed.
+
+Queue is empty and the routine trigger is disabled per Jaxon's commit.
+Per the standing guardrail, noting idle and stopping — not inventing
+busywork, not re-enabling the trigger, not re-attempting T32 in any form
+without a fresh explicit go-ahead.
