@@ -231,3 +231,63 @@ This is precisely the shift PLAN Rev 6's own diagnosis predicted from Jaxon's or
   (every 4h) and a prompt with the state-hygiene orientation discipline
   (offset-tail PROGRESS reads, rotation duties, quiet reporters, take the
   next small item when budget remains). Trigger remains DISABLED.
+
+## 2026-08-24 — AI fidelity: 200ms reaction time + throw-and-go (interactive, with Jaxon)
+Follow-on to the same session's battle-clock fix (`1d16f1d`). Jaxon audited a
+full turn-by-turn trace of Thievul/Araquanid/Stunfisk vs Talonflame/Greninja/
+Empoleon and named two things pvpoke's TrainingAI does not model. Both are now
+in `src/engine/teamBattle.js`, both symmetric across the two players, both
+implemented by wrapping — `vendor/pvpoke` untouched.
+
+**1. Reaction time (`reactionTimeMs`, default 200).** `setReactionTime(ctx,
+difficulty, ms)` writes `ms / 500` onto the shared aiArchetypes object, which
+TrainingAI captures by reference at construction (`props = aiData[l]`,
+TrainingAI.js:20) — so one write retunes both players. pvpoke reads it in one
+place, TrainingAI.js:1062, which blocks a SWITCH_BASIC decision until
+`turn - turnLastEvaluated >= props.reactionTime`. Champion ships 0, i.e. it may
+switch on the very turn it evaluated the matchup; 200ms is sub-turn but still
+non-zero, so the decision now lands no earlier than the following turn. Pass
+`null` to restore pvpoke's own archetype value (the pristine values are
+captured once in `initTeamBattle`).
+
+**2. Throw-and-go (`throwAndGoMoves`, default 2).** Land N charged moves, then
+swap out. pvpoke's only switching motive is "I am losing" — `switchWeight =
+Math.floor(Math.max((switchThreshold - overallRating) / 10, 0))`
+(TrainingAI.js:660) is 0 for any AI at or above a 500 rating, so an AI that is
+WINNING never leaves and never converts two charged moves into a free switch.
+(Champion's archetype lists SWITCH_ADVANCED and SACRIFICIAL_SWAP, but neither
+string appears anywhere else in TrainingAI.js — unimplemented.) `wrapThrowAndGo`
+counts charged moves per attacker off `battle.useMove`, zeroes the counter on
+every `setNewPokemon` (so the count means "this stint on the field" and a mon
+can throw-and-go again on a later stint), and returns a switch TimelineAction
+from `ai.decideAction`. The switch TARGET is pvpoke's own `ai.decideSwitch()`
+— only the TIMING is ours. Gated on: switch clock up, a live bench mon, and the
+opponent still alive (nobody swaps away from a mon they just KO'd).
+`summary.throwAndGoSwitchesA/B` report how often it actually fired.
+
+**Measured**, candidate team vs the full 78-team pool × 3 mirrored lead
+pairings (234 battles), all three configs identical apart from the two knobs:
+
+| config | win rate | throw-and-go switches | timeouts |
+|---|---|---|---|
+| stock (rt=0, tag off) | 123/234 = 52.6% | 0 | 2 |
+| rt=200 only | 120/234 = 51.3% | 0 | 2 |
+| rt=200 + tag=2 (new default) | 113/234 = 48.3% | 231 (0.99/battle) | 0 |
+
+25.2% of outcomes (59/234) flip vs stock. **Every fitness number in the repo
+predates this and needs re-running**, on top of the clock fix's own
+invalidation.
+
+**Open caveat, flagged not fixed:** throw-and-go is unconditional — it fires
+whenever the preconditions hold, including when the active mon is WINNING the
+matchup and should stay. On the traced matchup that costs team A more than it
+gains (Thievul is fast enough on Snarl energy to hit two Night Slashes early,
+so it swaps out of a lead it was winning). The obvious refinement is to gate it
+on the matchup rating pvpoke's `evaluateMatchup` already computes; deliberately
+not done here, since Jaxon asked for the behavior itself first.
+
+**Verified (FOREGROUND, standing rule 8):** `node --test test/teamBattle.test.js`
+→ 20/20; `npm test` → **256/256 green** (~144s), up from 250 by the 6 new tests
+covering the ms→turns conversion, the null restore, both defaults being
+reported, disable-with-0, that the behavior actually fires over a seed sweep,
+that a higher threshold fires strictly less, and that determinism survives.

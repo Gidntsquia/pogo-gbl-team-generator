@@ -12,7 +12,12 @@
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
-import { battleTeams, initTeamBattle, wrapRunScenario } from '../src/engine/teamBattle.js';
+import {
+  battleTeams,
+  initTeamBattle,
+  setReactionTime,
+  wrapRunScenario,
+} from '../src/engine/teamBattle.js';
 
 // Rank-1 IVs (attack-weight rank 1 is close enough for these coarse tests).
 const IVS = { atk: 0, def: 15, hp: 15 };
@@ -510,5 +515,105 @@ describe('T20b, part 3: bench members do not carry hasActed over from a previous
     battleTeams(ctx, { teamA, teamB: team(WEAK_IDS), leadA: 0, seed: 'T20b-hasActed-bench' });
 
     assert.equal(snapshot, false, "pvpoke's own Pokemon.js default, not the true sentinel this test seeded");
+  });
+});
+
+describe('reaction time (both players)', () => {
+  test('setReactionTime writes ms/500 turns onto the shared archetype, and null restores pvpoke\'s own value', () => {
+    const archetype = ctx.context.aiData[3];
+    // The PRISTINE archetype value captured at initTeamBattle time -- not
+    // whatever a previous battle in this file happened to leave behind, which
+    // is exactly the distinction `null` restores to.
+    const pvpokeDefault = ctx.__teamBattle.baseReactionTimes[3];
+    assert.equal(pvpokeDefault, 0, 'Champion ships reactionTime 0 (instant)');
+
+    assert.equal(setReactionTime(ctx, 3, 200), 0.4);
+    assert.equal(archetype.reactionTime, 0.4, 'ms is converted to 500ms turns');
+
+    assert.equal(setReactionTime(ctx, 3, 1000), 2, '1000ms is two full turns');
+
+    assert.equal(setReactionTime(ctx, 3, null), pvpokeDefault, 'null restores the archetype');
+    assert.equal(archetype.reactionTime, pvpokeDefault);
+
+    assert.throws(() => setReactionTime(ctx, 99, 200), /no AI archetype/);
+  });
+
+  test('battleTeams defaults to 200ms, reports it, and honors an override', () => {
+    const dflt = battleTeams(ctx, { teamA: team(STRONG_IDS), teamB: team(WEAK_IDS), seed: 7 });
+    assert.equal(dflt.summary.reactionTimeMs, 200);
+    // The archetype is left holding what the battle ran with -- both players
+    // read the same object, which is the point of the knob.
+    assert.equal(ctx.context.aiData[3].reactionTime, 0.4);
+
+    const slow = battleTeams(ctx, {
+      teamA: team(STRONG_IDS),
+      teamB: team(WEAK_IDS),
+      seed: 7,
+      reactionTimeMs: 2000,
+    });
+    assert.equal(slow.summary.reactionTimeMs, 2000);
+    assert.equal(ctx.context.aiData[3].reactionTime, 4);
+  });
+});
+
+describe('throw-and-go', () => {
+  // Two even, switch-happy teams: joke mons never build charged-move energy,
+  // so the behavior needs real Pokemon on both sides to fire at all.
+  const TAG_A = ['azumarill', 'registeel', 'altaria'];
+  const TAG_B = ['medicham', 'skarmory', 'swampert'];
+
+  test('is on by default at 2 moves, is reported, and can be disabled with 0', () => {
+    const on = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed: 3 });
+    assert.equal(on.summary.throwAndGoMoves, 2);
+    assert.ok(Number.isInteger(on.summary.throwAndGoSwitchesA));
+    assert.ok(Number.isInteger(on.summary.throwAndGoSwitchesB));
+
+    const off = battleTeams(ctx, {
+      teamA: team(TAG_A),
+      teamB: team(TAG_B),
+      seed: 3,
+      throwAndGoMoves: 0,
+    });
+    assert.equal(off.summary.throwAndGoMoves, 0);
+    assert.equal(off.summary.throwAndGoSwitchesA, 0, 'disabled means never fires');
+    assert.equal(off.summary.throwAndGoSwitchesB, 0);
+  });
+
+  test('actually fires across a seed sweep, and never fires when disabled', () => {
+    let firedOn = 0;
+    let firedOff = 0;
+    for (let seed = 0; seed < 12; seed++) {
+      const on = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed });
+      firedOn += on.summary.throwAndGoSwitchesA + on.summary.throwAndGoSwitchesB;
+
+      const off = battleTeams(ctx, {
+        teamA: team(TAG_A),
+        teamB: team(TAG_B),
+        seed,
+        throwAndGoMoves: 0,
+      });
+      firedOff += off.summary.throwAndGoSwitchesA + off.summary.throwAndGoSwitchesB;
+    }
+    assert.ok(firedOn > 0, `throw-and-go never fired in 12 battles (got ${firedOn})`);
+    assert.equal(firedOff, 0);
+  });
+
+  test('a higher move threshold fires strictly less often than a lower one', () => {
+    let two = 0;
+    let five = 0;
+    for (let seed = 0; seed < 12; seed++) {
+      const a = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed, throwAndGoMoves: 2 });
+      const b = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), seed, throwAndGoMoves: 5 });
+      two += a.summary.throwAndGoSwitchesA + a.summary.throwAndGoSwitchesB;
+      five += b.summary.throwAndGoSwitchesA + b.summary.throwAndGoSwitchesB;
+    }
+    assert.ok(two > five, `expected 2-move throw-and-go (${two}) to fire more than 5-move (${five})`);
+  });
+
+  test('stays deterministic: same seed and settings reproduce the same battle', () => {
+    const opts = { seed: 11, reactionTimeMs: 200, throwAndGoMoves: 2 };
+    const r1 = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), ...opts });
+    const r2 = battleTeams(ctx, { teamA: team(TAG_A), teamB: team(TAG_B), ...opts });
+    assert.deepEqual(r1, r2);
   });
 });

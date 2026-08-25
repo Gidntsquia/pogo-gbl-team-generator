@@ -24,6 +24,21 @@ const NORMAL_TURN_MS = 500; // pvpoke's own deltaTime (Battle.js)
 // reported duration 64000ms == 33*500 + 5*9500. See wrapBattleClock.
 const CHARGED_MOVE_CLOCK_MS = 9500;
 
+// Reaction time, in milliseconds, for BOTH players. pvpoke stores this per
+// AI archetype in TURNS (aiArchetypes.json: Novice 12, Rival 8, Elite 4,
+// Champion 0) and gates switch execution on it in TrainingAI#decideAction
+// (TrainingAI.js:1062). We express it in ms and divide by the 500ms turn so
+// the knob reads in the same units a player thinks in; 200ms is under one
+// turn, so its practical effect is that a decision formed on turn T is
+// executed no earlier than turn T+1 -- a switch can never be tapped inside
+// the same 500ms window it was decided in, which is what Champion's 0 allowed.
+const DEFAULT_REACTION_TIME_MS = 200;
+
+// Throw-and-go: number of charged moves a Pokemon lands (since it switched
+// in) before it swaps out to bank the energy advantage. 2 is the standard
+// GBL line -- throw twice, then leave on the switch. See wrapThrowAndGo.
+const DEFAULT_THROW_AND_GO_MOVES = 2;
+
 /**
  * Small deterministic mulberry32 PRNG. Given the same 32-bit seed it yields
  * the same sequence, which is what makes a whole team battle reproducible.
@@ -147,7 +162,19 @@ export function initTeamBattle(ctx) {
 
   ctx.Player = Player;
   ctx.TrainingAI = TrainingAI;
-  ctx.__teamBattle = { scheduler, vmMath };
+  // TimelineAction is a plain `function` declaration inside the sandbox, so
+  // it is not an own-property of the context object -- read it back through
+  // the vm. wrapThrowAndGo constructs switch actions with it.
+  const TimelineAction = vm.runInContext('TimelineAction', ctx.context);
+
+  // TrainingAI captures `props = aiData[level]` BY REFERENCE at construction
+  // (TrainingAI.js:20), so mutating a field on the archetype object retunes
+  // every AI built from it -- both players, this battle and later ones. Keep
+  // the pristine values so setReactionTime(ctx, level, null) can restore them.
+  const aiData = ctx.context.aiData;
+  const baseReactionTimes = aiData.map((a) => a.reactionTime);
+
+  ctx.__teamBattle = { scheduler, vmMath, TimelineAction, aiData, baseReactionTimes };
   return ctx;
 }
 
@@ -290,6 +317,153 @@ export function wrapBattleClock(battle) {
 }
 
 /**
+ * Set the AI reaction time, in milliseconds, for BOTH players.
+ *
+ * pvpoke's TrainingAI reads `props.reactionTime` in TURNS and uses it in one
+ * place: TrainingAI.js:1062, which refuses to execute a SWITCH_BASIC decision
+ * until `turn - turnLastEvaluated >= props.reactionTime`. `turnLastEvaluated`
+ * is stamped by evaluateMatchup (TrainingAI.js:806-810), which runs on every
+ * switch-in for both sides (Battle#setNewPokemon, Battle.js:112-119) and on
+ * every switch-timer expiry -- so this is exactly "how long after seeing the
+ * board change can this player act on it".
+ *
+ * Champion ships reactionTime 0, i.e. it may switch on the very turn it
+ * evaluated -- an instant, superhuman read. Anything in (0, 500] ms converts
+ * to a sub-turn value that still forces the decision to land on the FOLLOWING
+ * turn, which is the floor for a human holding a phone. Larger values scale
+ * linearly: 1000ms = 2 turns of lag, and so on.
+ *
+ * `props` is captured by reference from the shared aiArchetypes array at
+ * TrainingAI construction, so this retunes every AI at that level -- which is
+ * what "for all players, friendly and enemy" requires, since battleTeams
+ * builds both Players at the same difficulty. Pass ms = null to restore
+ * pvpoke's own archetype value.
+ *
+ * @param {object} ctx - from initEngine() (must be initTeamBattle'd)
+ * @param {number} difficulty - aiArchetypes index (0-3)
+ * @param {number|null} ms - reaction time in milliseconds, or null to reset
+ * @returns {number} the turn-denominated value actually written
+ */
+export function setReactionTime(ctx, difficulty, ms) {
+  const { aiData, baseReactionTimes } = ctx.__teamBattle;
+  const archetype = aiData[difficulty];
+  if (!archetype) throw new Error(`setReactionTime: no AI archetype at index ${difficulty}`);
+
+  const turns = ms === null || ms === undefined
+    ? baseReactionTimes[difficulty]
+    : ms / NORMAL_TURN_MS;
+
+  archetype.reactionTime = turns;
+  return turns;
+}
+
+/**
+ * Teach both AIs the throw-and-go: land N charged moves, then immediately
+ * swap out.
+ *
+ * This is a real GBL line pvpoke's TrainingAI does not model. Its only
+ * switching motive is "I am losing this matchup" -- switchWeight is
+ * `Math.floor(Math.max((switchThreshold - overallRating) / 10, 0))`
+ * (TrainingAI.js:660), which is 0 whenever the AI is at or above a 500
+ * rating. So an AI that is WINNING never leaves, and therefore never converts
+ * a pair of charged moves into a free switch. (Champion's archetype does list
+ * SWITCH_ADVANCED and SACRIFICIAL_SWAP among its strategies, but neither
+ * string is referenced anywhere in TrainingAI.js -- they are unimplemented.)
+ *
+ * The human line: throw two charged moves, forcing shields or damage, then
+ * leave on the switch before the opponent can punish. The switching player
+ * banks the energy their incoming Pokemon accrues while the opponent spends a
+ * turn or more reacting, and keeps the mon that just spent its energy alive.
+ *
+ * Implemented entirely by wrapping, per pvpoke's read-only rule:
+ *   - `battle.useMove` counts charged moves per attacker (`move.energy > 0`),
+ *     stamping the turn the Nth one landed;
+ *   - `battle.setNewPokemon` zeroes that counter on every switch-in, so the
+ *     count is always "charged moves thrown during THIS stint on the field"
+ *     and a Pokemon that comes back later can throw-and-go again;
+ *   - each `ai.decideAction` returns a "switch" TimelineAction -- built the
+ *     same way TrainingAI.js:1073 builds its own -- when the counter is met.
+ *     The switch target is pvpoke's own `ai.decideSwitch()`; we choose the
+ *     TIMING, never the target.
+ *
+ * Preconditions mirror what a player can actually do, and what one would want
+ * to do: the switch clock must be up (`getSwitchTimer() == 0`), there must be
+ * a live bench mon, and the opponent must still be alive -- nobody swaps away
+ * from a Pokemon they just knocked out, since the free turns are worth more.
+ * The reaction-time gate applies here too: the swap lands no earlier than
+ * `reactionTurns` after the Nth charged move.
+ *
+ * @param {object} battle - the pvpoke Battle for this match
+ * @param {object[]} players - [p0, p1]
+ * @param {Function} TimelineAction - the sandbox's TimelineAction constructor
+ * @param {{ moves?: number, reactionTurns?: number }} [opts]
+ *   moves: charged moves before swapping (default 2; 0 disables entirely)
+ * @returns {number[]} a live per-player-index count of throw-and-go switches
+ *   actually issued, for auditing how often the behavior fires
+ */
+export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
+  const moves = opts.moves ?? DEFAULT_THROW_AND_GO_MOVES;
+  const reactionTurns = opts.reactionTurns ?? DEFAULT_REACTION_TIME_MS / NORMAL_TURN_MS;
+  const fired = players.map(() => 0);
+  if (!moves || moves < 1) return fired;
+
+  const realUseMove = battle.useMove;
+  battle.useMove = function (attacker, defender, move) {
+    const result = realUseMove.apply(this, arguments);
+    // Count AFTER the move resolves: a charged move that faints the defender
+    // still counts, but the opponent-alive gate below then declines the swap.
+    if (attacker && move && move.energy > 0) {
+      attacker.chargedSinceSwitchIn = (attacker.chargedSinceSwitchIn || 0) + 1;
+      if (attacker.chargedSinceSwitchIn === moves) {
+        attacker.throwAndGoReadyTurn = battle.getTurns();
+      }
+    }
+    return result;
+  };
+
+  const realSetNewPokemon = battle.setNewPokemon;
+  battle.setNewPokemon = function (pokemon) {
+    if (pokemon) {
+      pokemon.chargedSinceSwitchIn = 0;
+      pokemon.throwAndGoReadyTurn = null;
+    }
+    return realSetNewPokemon.apply(this, arguments);
+  };
+
+  for (const player of players) {
+    const ai = player.getAI();
+    if (!ai) continue;
+    const realDecideAction = ai.decideAction;
+
+    ai.decideAction = function (turn, poke, opponent) {
+      if (
+        poke &&
+        poke.hp > 0 &&
+        (poke.chargedSinceSwitchIn || 0) >= moves &&
+        poke.throwAndGoReadyTurn !== null &&
+        poke.throwAndGoReadyTurn !== undefined &&
+        turn - poke.throwAndGoReadyTurn >= reactionTurns &&
+        player.getSwitchTimer() === 0 &&
+        player.getRemainingPokemon() > 1 &&
+        opponent &&
+        opponent.hp > 0
+      ) {
+        const choice = ai.decideSwitch();
+        if (choice !== null && choice !== undefined) {
+          fired[player.getIndex()] += 1;
+          return new TimelineAction('switch', player.getIndex(), turn, choice, {
+            priority: poke.priority,
+          });
+        }
+      }
+      return realDecideAction.call(this, turn, poke, opponent);
+    };
+  }
+
+  return fired;
+}
+
+/**
  * Run one full 3v3 team battle using pvpoke's emulate engine, headless.
  *
  * teamA and teamB are arrays of battle-ready pvpoke Pokemon (from
@@ -304,11 +478,19 @@ export function wrapBattleClock(battle) {
  * given (teams, leads, difficulty, seed); when seed is omitted it is derived
  * from the matchup so repeated calls with the same inputs still agree.
  *
+ * Two behaviors are layered on top of pvpoke's AI, symmetrically for both
+ * players, because pvpoke's Training AI does not model them:
+ *   - reactionTimeMs (default 200): how long after the board changes either
+ *     player may act on it. See setReactionTime.
+ *   - throwAndGoMoves (default 2): land this many charged moves, then swap
+ *     out. Pass 0 for pvpoke's stock behavior. See wrapThrowAndGo.
+ *
  * @param {object} ctx - from initEngine() (initTeamBattle is applied lazily)
  * @param {{
  *   teamA: object[], teamB: object[],
  *   leadA?: number, leadB?: number,
- *   difficulty?: number, seed?: number
+ *   difficulty?: number, seed?: number,
+ *   reactionTimeMs?: number, throwAndGoMoves?: number
  * }} params
  * @returns {{
  *   winner: 'a'|'b'|'tie',
@@ -317,6 +499,8 @@ export function wrapBattleClock(battle) {
  *     remainingA: number, remainingB: number,
  *     turns: number, duration: number,
  *     leadA: number, leadB: number, difficulty: number, seed: number,
+ *     reactionTimeMs: number, throwAndGoMoves: number,
+ *     throwAndGoSwitchesA: number, throwAndGoSwitchesB: number,
  *     endedBy: 'ko'|'timeout',
  *     leadFaintTurnA: number|null, leadFaintTurnB: number|null,
  *     shieldsRemainingA: number, shieldsRemainingB: number
@@ -331,6 +515,8 @@ export function battleTeams(ctx, params) {
     leadB = 0,
     difficulty = DEFAULT_DIFFICULTY,
     seed,
+    reactionTimeMs = DEFAULT_REACTION_TIME_MS,
+    throwAndGoMoves = DEFAULT_THROW_AND_GO_MOVES,
   } = params;
 
   if (!Array.isArray(teamA) || !Array.isArray(teamB) || !teamA.length || !teamB.length) {
@@ -339,7 +525,7 @@ export function battleTeams(ctx, params) {
 
   initTeamBattle(ctx);
   const { Player, Battle } = ctx;
-  const { scheduler, vmMath } = ctx.__teamBattle;
+  const { scheduler, vmMath, TimelineAction } = ctx.__teamBattle;
 
   // Deterministic RNG for this battle (seeds every TrainingAI random choice).
   const effectiveSeed =
@@ -369,12 +555,22 @@ export function battleTeams(ctx, params) {
   const orderedA = orderWithLead(teamA, leadA);
   const orderedB = orderWithLead(teamB, leadB);
 
+  // Retune the shared archetype BEFORE the Players (and their AIs) are built,
+  // so both sides read the same reaction time. See setReactionTime.
+  const reactionTurns = setReactionTime(ctx, difficulty, reactionTimeMs);
+
   const p0 = new Player(0, difficulty, battle);
   const p1 = new Player(1, difficulty, battle);
   // GOALS T20b: make runScenario's battle/baitShields/farmEnergy/priority
   // mutations side-effect-transparent (see wrapRunScenario's own doc comment).
   wrapRunScenario(p0.getAI());
   wrapRunScenario(p1.getAI());
+  // Throw-and-go for both sides -- installed before the leads are set so the
+  // setNewPokemon wrapper zeroes their counters too (see wrapThrowAndGo).
+  const throwAndGoFired = wrapThrowAndGo(battle, [p0, p1], TimelineAction, {
+    moves: throwAndGoMoves,
+    reactionTurns,
+  });
   p0.setRoster(orderedA);
   p0.setTeam(orderedA);
   p1.setRoster(orderedB);
@@ -413,6 +609,12 @@ export function battleTeams(ctx, params) {
     mon.farmEnergy = false;
     mon.priority = 0;
     mon.hasActed = false;
+    // Same cross-battle leak shape as the four fields above: wrapThrowAndGo's
+    // counters live on the Pokemon instance and nothing in pvpoke's own
+    // reset()/fullReset() clears them, so a bench member could otherwise start
+    // this battle already "ready" to throw-and-go from a previous one.
+    mon.chargedSinceSwitchIn = 0;
+    mon.throwAndGoReadyTurn = null;
   }
 
   battle.setBattleMode('emulate');
@@ -577,6 +779,10 @@ export function battleTeams(ctx, params) {
       leadB,
       difficulty,
       seed: effectiveSeed,
+      reactionTimeMs,
+      throwAndGoMoves,
+      throwAndGoSwitchesA: throwAndGoFired[0],
+      throwAndGoSwitchesB: throwAndGoFired[1],
       endedBy,
       // GOALS T27: lead-exchange + shield-banking ground truth, read off
       // pvpoke's own live objects (no vendor edits, no battle math added).
