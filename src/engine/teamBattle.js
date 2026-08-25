@@ -16,6 +16,13 @@ import { loadTrainingModules } from './pvpokeLoader.js';
 
 const TIME_LIMIT_MS = 240000; // pvpoke's own battle time limit (Battle.js)
 const DEFAULT_DIFFICULTY = 3; // aiArchetypes.json index 3 = "Champion" (highest)
+const NORMAL_TURN_MS = 500; // pvpoke's own deltaTime (Battle.js)
+// pvpoke's chargedMinigameTime (Battle.js:56) is 10000, but a charged-move
+// round does not also spend its own 500ms turn tick, so a charged move nets
+// 9500ms on the clock. Measured directly off pvpoke's own simulate() path:
+// a 1v1 Thievul/Talonflame battle ran 33 turns with 5 charged moves and
+// reported duration 64000ms == 33*500 + 5*9500. See wrapBattleClock.
+const CHARGED_MOVE_CLOCK_MS = 9500;
 
 /**
  * Small deterministic mulberry32 PRNG. Given the same 32-bit seed it yields
@@ -222,6 +229,67 @@ function orderWithLead(team, leadIndex) {
 }
 
 /**
+ * Make a Battle's clock agree with pvpoke's own simulate() clock.
+ *
+ * pvpoke charges a fixed `chargedMinigameTime` (Battle.js:56, 10000ms) to the
+ * battle clock for every charged move, on top of the 500ms a normal turn
+ * costs. That constant is right -- a charged move really does eat ~10s of the
+ * 240s GBL clock. But in EMULATE mode (the mode this module runs, and the only
+ * one that plays 3v3) it is charged TWICE per move:
+ *
+ *   Battle#processAction's "charged" case (Battle.js:909-985) calls
+ *   `self.useMove(...)` synchronously in simulate mode, but in emulate mode
+ *   defers it to a `setTimeout(..., 8000)` -- and in BOTH modes it runs
+ *   `roundChargedMoveUsed++` after that branch. Battle#useMove (Battle.js:1069)
+ *   then charges another `chargedMinigameTime` when
+ *   `usePriority && roundChargedMoveUsed > 0 && roundShieldUsed == 0`.
+ *   In simulate mode useMove runs BEFORE the increment, so that guard is false
+ *   for the round's first charged move and only Battle#step's own charge
+ *   (Battle.js:522-531) applies -- 10s total, correct. In emulate mode the
+ *   counter is already 1 by the time the deferred useMove fires, so the guard
+ *   is true and the same 10s lands a second time -- 20s total (10s when the
+ *   move faints the defender, so ~17s on average).
+ *
+ * Measured on the same Thievul/Talonflame pair: pvpoke's simulate() spends
+ * 9,500ms per charged move; this driver spent ~17,000ms. The consequence is
+ * that the turn loop's `getDuration() <= TIME_LIMIT_MS` guard fired far too
+ * early: 72.2% of a 234-battle curated-pool run ended by "timeout" rather than
+ * KO, at a mean of 84.9 turns. With the clock corrected, that is 0.9%.
+ *
+ * The fix has to live here: vendor/pvpoke is read-only and Battle's `time` is
+ * a closure-private variable, so the double charge cannot be undone in place.
+ * Instead we replace the battle's own `getDuration()` with the same arithmetic
+ * simulate() produces. This is a clock/termination policy, not battle math --
+ * no damage, AI, shield or switch logic is touched, and the turn-by-turn
+ * simulation is byte-for-byte pvpoke's. Safe to override because `getDuration`
+ * is read nowhere inside pvpoke's battle engine: only by its own UI
+ * (Interface.js) and TeamRanker.js, neither of which this project calls, plus
+ * this module's turn-loop guard and `summary.duration`.
+ *
+ * NOTE: `summary.duration` therefore now reports the corrected clock. Results
+ * recorded before this change are not comparable -- an A/B over the curated
+ * pool changed 16.2% of battle outcomes (38/234).
+ *
+ * @param {object} battle - a pvpoke Battle instance, before `start()`
+ * @returns {object} the same battle
+ */
+export function wrapBattleClock(battle) {
+  let chargedMoves = 0;
+  const realUseMove = battle.useMove;
+
+  battle.useMove = function (attacker, defender, move) {
+    if (move && move.energy > 0) chargedMoves += 1;
+    return realUseMove.apply(this, arguments);
+  };
+
+  battle.getDuration = function () {
+    return (battle.getTurns() - 1) * NORMAL_TURN_MS + chargedMoves * CHARGED_MOVE_CLOCK_MS;
+  };
+
+  return battle;
+}
+
+/**
  * Run one full 3v3 team battle using pvpoke's emulate engine, headless.
  *
  * teamA and teamB are arrays of battle-ready pvpoke Pokemon (from
@@ -289,6 +357,9 @@ export function battleTeams(ctx, params) {
   // A fresh Battle per match (pvpoke's own MatchHandler/BattleInterface do the
   // same). Defaults are Great League: cp 1500, levelCap 50, cup "all".
   const battle = new Battle();
+  // Correct pvpoke's emulate-mode double charge of chargedMinigameTime before
+  // anything reads the clock (see wrapBattleClock).
+  wrapBattleClock(battle);
   // GOALS T18c: match the harness's CP cap (initEngine's opts.cp) so the
   // battle reports the league it's actually running. Safe here for the same
   // reason it is in initEngine -- setCP re-initializes any Pokemon already on
