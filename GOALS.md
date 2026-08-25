@@ -30,13 +30,54 @@ size is a fixed per-fire tax)
 
 ## Queue
 
-(PROJECT COMPLETE — queue emptied 2026-08-24. The Rev 6 finale landed
-2026-08-24: T31 at 7de9cf8, T30 at ee28d4e. Jaxon disabled the hourly routine
-the same day ("queue is done"). The full completed queue — T1–T31 plus the
-initiative rationale sections — was moved verbatim to GOALS_ARCHIVE.md, along
-with T2b, archived OBSOLETE rather than done: its own condition ("only if T2
-concluded infeasible") can never fire, since T2 shipped and everything since
-runs on pvpoke Training mode. To revive the project: add tickets here, then
-re-enable trigger trig_01JfxVRAW8FQYvnGSpEdkFoG — its stored cadence is now
-`43 */4 * * *` (every 4h; raise toward hourly only for a genuinely full
-queue) and its stored prompt already carries the state-hygiene discipline.)
+- [ ] **T32 — DPS-race shield hold.** `src/engine/teamBattle.js`'s
+  `wrapShieldBanking` (around L714-766) currently declines a shield only
+  when `canTankAndAnswer` is true. Jaxon raised a distinct point in the same
+  session as the endgame-gate fix (PROGRESS.md's "follow-up 4"), noted but
+  not implemented: "actively holding a shield to protect a DPS-race
+  advantage when the opponent is low and being farmed down." This ticket's
+  spec is the orchestrator's judgment call on what that means mechanically
+  (document your interpretation in your PROGRESS.md entry so it can be
+  corrected if wrong): a shield can ALSO be declined — independent of
+  `canTankAndAnswer` — when the DEFENDER doesn't need to answer with its
+  OWN charged move to win this exchange, because the ATTACKER is already
+  losing the DPS race. Concretely, OR a second condition into the existing
+  `canTankAndAnswer(...)` check inside `ai.decideShield`:
+  1. `incoming.damage <= defender.stats.hp * MAX_TANKABLE_HP_FRACTION` —
+     same ceiling `canTankAndAnswer` already enforces; a >50%-bar hit is
+     never held for this reason either.
+  2. `defender.hp - incoming.damage > 0` — must actually survive this hit.
+  3. `beingFarmedDown(attacker, defender)` is true. The exported
+     `beingFarmedDown` helper (L455) already answers "does `poke` faint
+     from `opponent`'s fast-move chip before `poke` can throw its own
+     charged move again." Called as `beingFarmedDown(attacker, defender)`
+     it answers whether the ATTACKER is the one about to be farmed down by
+     the DEFENDER's own fast move — i.e. the defender is winning the DPS
+     race and doesn't need this particular charged move blocked to win the
+     exchange, so the shield is worth more held for later.
+  Suggested shape: a small new helper (e.g. `winningDpsRace(defender,
+  attacker, incoming)`) returning the AND of those three, exported next to
+  `canTankAndAnswer` with this file's existing doc-comment style (why, not
+  what); `wrapShieldBanking`'s decline test becomes `canTankAndAnswer(...)
+  || winningDpsRace(...)`.
+  **Tests (`test/teamBattle.test.js`):** new cases for the helper —
+  attacker being farmed down + defender survives + under the ceiling ->
+  holds; attacker healthy (not farmed down) -> no change from today's
+  behavior; incoming damage over the ceiling even with attacker farmed
+  down -> still shields; defender would NOT survive the hit -> still
+  shields (this reason never turns a fatal hit into a decline). Plus at
+  least one `wrapShieldBanking`-level integration test exercising the new
+  OR branch end-to-end (mirrors the existing last-Pokemon / behind-on-
+  bodies tests already in that describe block).
+  **Verify:** `node --test test/teamBattle.test.js` clean, then
+  `npm run test:full` clean (ticket-closing verify per standing rule 8) —
+  both FOREGROUND with an explicit generous timeout. Append a PROGRESS.md
+  entry: what was built, the interpretation call made, verify results, and
+  — only if fire budget allows, not required to check the box — a small
+  before/after decline-count sample. Commit + push to main; check this box
+  and move the ticket block to GOALS_ARCHIVE.md in the same commit.
+
+(Revived 2026-08-25 by Jaxon for T32, after the queue emptied 2026-08-24.
+Trigger cadence stays `43 */4 * * *`; raise toward hourly only for a
+genuinely full queue. If T32 lands cleanly with fire budget left over, pull
+the next item from ROADMAP.md's known-gaps list rather than idling.)
