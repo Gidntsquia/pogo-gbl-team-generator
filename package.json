@@ -4,7 +4,8 @@
   "type": "module",
   "engines": { "node": ">=18" },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test $(find test -maxdepth 1 -name '*.test.js' ! -name 'teams.test.js' ! -name 'tournament.test.js' ! -name 'varianceStudy.test.js')",
+    "test:full": "node --test",
     "setup": "bash scripts/setup.sh"
   }
 }
