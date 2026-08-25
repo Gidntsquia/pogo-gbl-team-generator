@@ -698,12 +698,6 @@ describe('throw-and-go', () => {
 describe('canTankAndAnswer', () => {
   // Only the fields the function reads. Energy/cooldown are pvpoke's units:
   // energyGain per use, cooldown in ms (500 = one turn).
-  const mon = (hp, fast, chargedEnergies, energy = 0) => ({
-    hp,
-    energy,
-    fastMove: fast,
-    chargedMoves: chargedEnergies.map((e) => ({ energy: e })),
-  });
   const fast = (energyGain, cooldown) => ({ energyGain, cooldown });
 
   // The traced Thievul/Talonflame lead fight, at its real numbers.
@@ -711,64 +705,129 @@ describe('canTankAndAnswer', () => {
   // cheapest charged move Fly at 45 => a full cycle is 11.25 turns.
   // Thievul: Sucker Punch does 7 per 2-turn use => 3.5 chip per turn, so
   // Talonflame needs 39.4 HP left over to see another move of its own.
-  const talonflame = (hp) => mon(hp, fast(20, 2500), [45, 55]);
-  const thievul = (hp, energy = 0) => mon(hp, fast(7, 1000), [35, 45], energy);
-  const thievulAttacking = { fastMove: { cooldown: 1000 } };
-  const talonflameAttacking = { fastMove: { cooldown: 2500 } };
+  const talonflame = (hp, shields = 2) => ({
+    hp,
+    energy: 0,
+    shields,
+    stats: { hp: 135 },
+    fastMove: fast(20, 2500),
+    chargedMoves: [{ energy: 45 }, { energy: 55 }],
+  });
+  // Thievul as the attacker: Sucker Punch on a 2-turn cooldown, banking 3.5
+  // energy a turn, with Night Slash at 35 to come back to.
+  const thievulAttacking = (energy = 49) => ({ energy, fastMove: fast(7, 1000) });
+  const nightSlash = (damage) => ({ damage, energy: 35 });
 
   test('the traced T14 Night Slash: tanks it and still gets another move', () => {
-    // 86 - 41 = 45 left, and 45 > 11.25 turns * 3.5 chip = 39.4.
-    assert.equal(canTankAndAnswer(talonflame(86), thievulAttacking, 41, 7), true);
+    // 86 - 41 = 45 left. Chip over the 11.25-turn window is 39.4, and the one
+    // Night Slash Thievul can fit in that window is covered by a shield
+    // Talonflame still has because it declined this one.
+    const r = canTankAndAnswer(talonflame(86), thievulAttacking(), nightSlash(41), 7, {
+      damage: 41,
+      energy: 35,
+    });
+    assert.equal(r, true);
   });
 
   test('the same move nine turns later is the shield that has to be spent', () => {
-    // T23: 50 - 41 = 9, well under the 39.4 it needs to come back.
-    assert.equal(canTankAndAnswer(talonflame(50), thievulAttacking, 41, 7), false);
+    // T23: 50 - 41 = 9, well under the 39.4 of chip alone.
+    const r = canTankAndAnswer(talonflame(50), thievulAttacking(), nightSlash(41), 7, {
+      damage: 41,
+      energy: 35,
+    });
+    assert.equal(r, false);
   });
 
   test('a move it cannot tank at all', () => {
-    assert.equal(canTankAndAnswer(talonflame(40), thievulAttacking, 41, 7), false);
-    assert.equal(canTankAndAnswer(talonflame(41), thievulAttacking, 41, 7), false);
+    assert.equal(canTankAndAnswer(talonflame(40), thievulAttacking(), nightSlash(41), 7), false);
+    assert.equal(canTankAndAnswer(talonflame(41), thievulAttacking(), nightSlash(41), 7), false);
   });
 
-  test('Fly on Thievul: survivable by 2 HP, and that is not enough', () => {
-    // 66 - 64 = 2. Thievul needs 35 energy at 3.5/turn = 10 turns, taking
-    // Incinerate at 8 per 5-turn use = 1.6/turn, so it needs 16 HP.
-    assert.equal(canTankAndAnswer(thievul(66), talonflameAttacking, 64, 8), false);
+  test('a hit over half a health bar is shielded however the sums come out', () => {
+    // Araquanid on 122 of 134 taking a 108-damage Meteor Beam. The 14 HP left
+    // does survive 14 turns of 1-damage chip, which is longer than the 13.3
+    // turns it needs to charge Water Pulse -- and it is still not a hit to
+    // tank. 0.81 of a health bar.
+    const araquanid = {
+      hp: 122,
+      energy: 0,
+      shields: 2,
+      stats: { hp: 134 },
+      fastMove: fast(3, 500),
+      chargedMoves: [{ energy: 40 }, { energy: 50 }],
+    };
+    const attacker = { energy: 0, fastMove: fast(4, 500) };
+    const meteorBeam = { damage: 108, energy: 60 };
+    assert.equal(canTankAndAnswer(araquanid, attacker, meteorBeam, 1), false);
+    // The same Pokemon, the same window, a hit under the ceiling: fine.
+    assert.equal(canTankAndAnswer(araquanid, attacker, { damage: 60, energy: 60 }, 1), true);
+  });
+
+  test('follow-up charged moves count, but only past the shields still held', () => {
+    // A defender that needs a long time to come back (35 energy at 1/turn =
+    // 35 turns) against an attacker that banks 5 energy a turn and has a
+    // 40-energy move: 175 energy in the window, so 4 more throws.
+    const defender = {
+      hp: 200,
+      energy: 0,
+      shields: 1,
+      stats: { hp: 400 },
+      fastMove: fast(1, 500),
+      chargedMoves: [{ energy: 35 }],
+    };
+    const attacker = { energy: 40, fastMove: fast(5, 500) };
+    const incoming = { damage: 20, energy: 40 };
+    const followUp = { damage: 40, energy: 40 };
+
+    // With no follow-up term at all it looks survivable: 180 left, no chip.
+    assert.equal(canTankAndAnswer(defender, attacker, incoming, 0), true);
+    // Four throws, one blocked by the shield it kept => 3 x 40 = 120 < 180.
+    assert.equal(canTankAndAnswer(defender, attacker, incoming, 0, followUp), true);
+    // Same board, a harder follow-up: 3 x 70 = 210 > 180.
+    assert.equal(
+      canTankAndAnswer(defender, attacker, incoming, 0, { damage: 70, energy: 40 }),
+      false
+    );
+    // Two shields in hand covers one more of them.
+    const twoShields = { ...defender, shields: 2 };
+    assert.equal(
+      canTankAndAnswer(twoShields, attacker, incoming, 0, { damage: 70, energy: 40 }),
+      true
+    );
   });
 
   test('energy already in hand does not make it free', () => {
     // The move in hand is not "another move of my own" -- the horizon is a
     // full charge cycle either way, so holding 45 energy changes nothing.
-    const loaded = canTankAndAnswer(talonflame(50), thievulAttacking, 41, 7);
-    assert.equal(loaded, false);
-    const loadedMon = mon(50, fast(20, 2500), [45, 55], 45);
-    assert.equal(canTankAndAnswer(loadedMon, thievulAttacking, 41, 7), false);
+    const loaded = { ...talonflame(50), energy: 45 };
+    assert.equal(canTankAndAnswer(loaded, thievulAttacking(), nightSlash(41), 7), false);
   });
 
-  test('the weak/cheap thresholds are not needed: a big hit fails on its own', () => {
-    // Brave Bird, 103 on a 130 HP Thievul at 66 -- cannot be tanked.
-    assert.equal(canTankAndAnswer(thievul(66), talonflameAttacking, 103, 8), false);
-  });
-
-  test('nothing chipping it means any survivable hit is bankable', () => {
-    assert.equal(canTankAndAnswer(talonflame(50), thievulAttacking, 41, 0), true);
+  test('nothing chipping it and nothing to follow up with is bankable', () => {
+    assert.equal(canTankAndAnswer(talonflame(50), thievulAttacking(), nightSlash(41), 0), true);
   });
 
   test('no charged move to come back to means the shield gets spent', () => {
-    const noAnswer = mon(120, fast(7, 1000), []);
-    assert.equal(canTankAndAnswer(noAnswer, thievulAttacking, 10, 7), false);
+    const noAnswer = { ...talonflame(120), chargedMoves: [] };
+    assert.equal(
+      canTankAndAnswer(noAnswer, thievulAttacking(), { damage: 10, energy: 35 }, 7),
+      false
+    );
   });
 
   test('a fast move that banks no energy is the same story', () => {
-    const noEnergy = mon(120, fast(0, 1000), [35]);
-    assert.equal(canTankAndAnswer(noEnergy, thievulAttacking, 10, 7), false);
+    const noEnergy = { ...talonflame(120), fastMove: fast(0, 1000) };
+    assert.equal(
+      canTankAndAnswer(noEnergy, thievulAttacking(), { damage: 10, energy: 35 }, 7),
+      false
+    );
   });
 
   test('missing inputs are safe', () => {
-    assert.equal(canTankAndAnswer(null, thievulAttacking, 41, 7), false);
-    assert.equal(canTankAndAnswer(talonflame(86), null, 41, 7), false);
-    assert.equal(canTankAndAnswer(talonflame(86), {}, 41, 7), false);
+    assert.equal(canTankAndAnswer(null, thievulAttacking(), nightSlash(41), 7), false);
+    assert.equal(canTankAndAnswer(talonflame(86), null, nightSlash(41), 7), false);
+    assert.equal(canTankAndAnswer(talonflame(86), {}, nightSlash(41), 7), false);
+    assert.equal(canTankAndAnswer(talonflame(86), thievulAttacking(), null, 7), false);
   });
 });
 
@@ -838,10 +897,16 @@ describe('shield banking', () => {
     const defender = {
       hp: 86,
       energy: 0,
+      shields: 2,
+      stats: { hp: 135 },
       fastMove: { energyGain: 20, cooldown: 2500 },
       chargedMoves: [{ energy: 45 }, { energy: 55 }],
     };
-    const attacker = { fastMove: { energy: 0, cooldown: 1000 } };
+    const attacker = {
+      energy: 49,
+      fastMove: { energy: 0, energyGain: 7, cooldown: 1000 },
+      chargedMoves: [{ energy: 35 }],
+    };
     const nightSlash = { energy: 35 };
     // 41 for the charged move, 7 for the fast move -- the traced numbers.
     const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 41 : 7) };
@@ -868,14 +933,60 @@ describe('shield banking', () => {
     );
   });
 
+  test('a shield is never declined while behind on bodies', () => {
+    // 1 left against 2 is the endgame the last-Pokemon rule is protecting
+    // against, one step earlier: the banked shield has to survive a fresh
+    // Pokemon arriving before it can ever be spent.
+    const defender = {
+      hp: 86,
+      energy: 0,
+      shields: 2,
+      stats: { hp: 135 },
+      fastMove: { energyGain: 20, cooldown: 2500 },
+      chargedMoves: [{ energy: 45 }, { energy: 55 }],
+    };
+    const attacker = {
+      energy: 49,
+      fastMove: { energy: 0, energyGain: 7, cooldown: 1000 },
+      chargedMoves: [{ energy: 35 }],
+    };
+    const nightSlash = { energy: 35 };
+    const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 41 : 7) };
+
+    const pair = (mine, theirs) => {
+      const ai = { decideShield: () => true };
+      const me = { getAI: () => ai, getIndex: () => 0, getRemainingPokemon: () => mine };
+      const them = { getAI: () => null, getIndex: () => 1, getRemainingPokemon: () => theirs };
+      wrapShieldBanking([me, them], DamageCalculator);
+      return me;
+    };
+
+    assert.equal(
+      pair(2, 2).getAI().decideShield(attacker, defender, nightSlash),
+      false,
+      'level on bodies: the cheap chip is taken'
+    );
+    assert.equal(
+      pair(1, 2).getAI().decideShield(attacker, defender, nightSlash),
+      true,
+      'down a body: the shield stays available'
+    );
+  });
+
   test('never turns a no into a yes', () => {
     const defender = {
       hp: 200,
       energy: 0,
+      shields: 2,
+      stats: { hp: 300 },
       fastMove: { energyGain: 8, cooldown: 500 },
       chargedMoves: [{ energy: 35 }],
     };
-    const attacker = { fastMove: { energy: 0, cooldown: 1000 } };
+    const attacker = {
+      energy: 0,
+      fastMove: { energy: 0, energyGain: 3, cooldown: 1000 },
+      chargedMoves: [{ energy: 50 }],
+    };
     const DamageCalculator = { damage: (a, d, m) => (m.energy > 0 ? 10 : 1) };
     const ai = { decideShield: () => false };
     const player = { getAI: () => ai, getIndex: () => 0, getRemainingPokemon: () => 3 };

@@ -58,6 +58,13 @@ const SWITCH_TURN_COST_MS = 1000;
 // advantage", TrainingAI.js:1310) is gated on `defender.battleStats.shieldsUsed
 // > 0`, so it can never stop the FIRST shield -- the one that actually gives
 // away the advantage. See canTankAndAnswer.
+//
+// The common-sense ceiling on top of that rule: however good the arithmetic
+// looks, a hit taking more than half a full health bar gets shielded. Araquanid
+// does not tank a Meteor Beam. Measured against stats.hp, like everything else
+// here, because it is a statement about how big the hit is, not about how much
+// of a hurt Pokemon is left.
+const MAX_TANKABLE_HP_FRACTION = 0.5;
 
 /**
  * Small deterministic mulberry32 PRNG. Given the same 32-bit seed it yields
@@ -594,34 +601,50 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
  *
  * This is the whole shield-banking rule. It deliberately says nothing about
  * the incoming move being "weak" or "cheap": those were separate thresholds in
- * the first version of this and they are redundant, because a move that is not
- * weak fails the tank test and a move you cannot come back from fails the
- * answer test. What is left is the question a player actually asks -- if I eat
- * this, am I still in the fight? -- and it umbrellas the rest.
+ * an earlier version and they are redundant, because a move that is not weak
+ * fails the tank test and a move you cannot come back from fails the answer
+ * test. What is left is the question a player actually asks -- if I eat this,
+ * am I still in the fight?
  *
- * Two conditions:
+ * Four conditions:
  *
- * TANK IT: `defender.hp - moveDamage > 0`. A shield you have to spend to
+ * NOT TOO BIG: `incoming.damage <= defender.stats.hp * MAX_TANKABLE_HP_FRACTION`.
+ * A blunt ceiling that overrides the arithmetic below. Some hits are simply not
+ * for tanking however the sums come out, and a rule with no ceiling will find
+ * a case: Araquanid on 122 of 134 declining a 108-damage Meteor Beam, because
+ * the 14 HP left survives 14 turns of 1-damage chip.
+ *
+ * TANK IT: `defender.hp - incoming.damage > 0`. A shield you have to spend to
  * survive is not a shield you were ever banking.
  *
- * STILL ANSWER: what is left outlives a full charge cycle at the attacker's
- * fast-move chip rate -- `hpAfterHit > turnsToChargedMove(defender, 0) *
- * incomingPerTurn`. Counting a whole cycle, rather than the wait from whatever
- * energy the defender happens to be holding, is the load-bearing detail. The
- * from-current-energy version reads 0 turns for anything already loaded, which
- * makes "I can still throw" trivially true and licenses declining a shield
- * that leaves 2 HP on the board -- measured, that was 349 of 786 declines
- * across the pool, including a Thievul on 66 HP taking a 64-damage Fly. A move
- * already in hand is not "another move of my own"; the honest horizon is the
- * next one, and that is a full cycle whether or not one is loaded now.
- * Infinity (nothing to reach) always fails: there is no later value to bank
- * the shield for.
+ * STILL ANSWER: what is left outlives the wait for the defender's own next
+ * charged move -- a full charge cycle, `turnsToChargedMove(defender, 0)`.
+ * Counting a whole cycle, rather than the wait from whatever energy the
+ * defender happens to be holding, is load-bearing. The from-current-energy
+ * version reads 0 turns for anything already loaded, which makes "I can still
+ * throw" trivially true and licenses declining a shield that leaves 2 HP on
+ * the board -- measured, that was 349 of 786 declines across the pool. A move
+ * already in hand is not "another move of my own".
  *
- * This is the same shape as beingFarmedDown, and deliberately so: both ask
- * whether a Pokemon reaches its own next move before the fast-move chip
- * finishes it. beingFarmedDown asks it about right now, to decide whether to
- * leave; this asks it about the HP you would have after eating one more hit,
- * to decide whether to spend a shield. They share turnsToChargedMove.
+ * SURVIVE WHAT ARRIVES IN THAT WINDOW: not just fast-move chip. The attacker
+ * banks energy through the same turns and throws again, and a window that
+ * ignores that is not telling the truth about whether the defender can tank
+ * and answer -- measured, 44% of the declines this rule made without the term
+ * (291 of 662) were dead before their own move landed if those follow-ups
+ * landed unblocked.
+ *
+ * They mostly do not land unblocked, though, and that is the point of
+ * declining: the shield this rule just kept is still in hand when the next
+ * charged move arrives. So the follow-ups are counted against
+ * `defender.shields` first, and only the ones past that do damage. Since
+ * decideShield is only ever asked when the defender has at least one shield,
+ * a single follow-up inside the window is always covered; the term bites when
+ * the attacker can fit more charged moves into the window than the defender
+ * has shields to answer them with.
+ *
+ * `beingFarmedDown` is the same shape -- does this Pokemon reach its own next
+ * move before it is chipped out -- asked about now rather than about the HP
+ * left after one more hit. They share turnsToChargedMove.
  *
  * The caller also has to have something in the back -- see wrapShieldBanking.
  * Everything else (which move the attacker is even guessed to be holding, the
@@ -630,25 +653,45 @@ export function wrapThrowAndGo(battle, players, TimelineAction, opts = {}) {
  *
  * @param {object} defender - the Pokemon deciding whether to shield
  * @param {object} attacker
- * @param {number} moveDamage - what the incoming charged move would do now
+ * @param {{ damage: number, energy: number }} incoming - the charged move
+ *   being thrown right now, and what it costs the attacker
  * @param {number} fastDamage - the attacker's fast-move damage per hit (turned
  *   into a per-turn rate here using that move's own cooldown)
+ * @param {{ damage: number, energy: number }} [followUp] - the attacker's
+ *   cheapest charged move, i.e. what it can get back to inside the window.
+ *   Omit to count fast-move chip only.
  * @returns {boolean}
  */
-export function canTankAndAnswer(defender, attacker, moveDamage, fastDamage) {
+export function canTankAndAnswer(defender, attacker, incoming, fastDamage, followUp) {
   if (!defender || !attacker || !defender.fastMove || !attacker.fastMove) return false;
-  if (!(moveDamage >= 0)) return false;
+  if (!incoming || !(incoming.damage >= 0)) return false;
 
-  const hpAfterHit = defender.hp - moveDamage;
+  // However the sums come out, some hits are not for tanking.
+  if (incoming.damage > defender.stats.hp * MAX_TANKABLE_HP_FRACTION) return false;
+
+  const hpAfterHit = defender.hp - incoming.damage;
   if (hpAfterHit <= 0) return false; // cannot tank it
 
   const turnsToAnswer = turnsToChargedMove(defender, 0);
   if (!Number.isFinite(turnsToAnswer)) return false; // no answer to hold out for
 
-  const incomingPerTurn = fastDamage / (attacker.fastMove.cooldown / NORMAL_TURN_MS);
-  if (!(incomingPerTurn > 0)) return true; // nothing chipping it down
+  const chipPerTurn = fastDamage / (attacker.fastMove.cooldown / NORMAL_TURN_MS);
+  let incomingInWindow = chipPerTurn > 0 ? chipPerTurn * turnsToAnswer : 0;
 
-  return hpAfterHit > turnsToAnswer * incomingPerTurn;
+  // What else the attacker can throw before the defender's own move lands.
+  // Energy left after this move, plus what its fast move banks in the window.
+  if (followUp && followUp.energy > 0 && followUp.damage > 0) {
+    const energyPerTurn =
+      attacker.fastMove.energyGain / (attacker.fastMove.cooldown / NORMAL_TURN_MS);
+    const energyLeft = Math.max((attacker.energy || 0) - (incoming.energy || 0), 0);
+    const banked = energyPerTurn > 0 ? energyPerTurn * turnsToAnswer : 0;
+    const throws = Math.floor((energyLeft + banked) / followUp.energy);
+    // Declining keeps the shield, so it is still there for the next one.
+    const unblocked = Math.max(throws - (defender.shields || 0), 0);
+    incomingInWindow += unblocked * followUp.damage;
+  }
+
+  return hpAfterHit > incomingInWindow;
 }
 
 /**
@@ -656,8 +699,9 @@ export function canTankAndAnswer(defender, attacker, moveDamage, fastDamage) {
  *
  * Wraps each AI's decideShield and turns a yes into a no when the defender can
  * tank the move and still answer with a charged move of its own (see
- * canTankAndAnswer) AND that player still has a Pokemon in the back for the
- * banked shield to be worth something to. A no is never turned into a yes, and
+ * canTankAndAnswer) AND this player is in a position for a banked shield to be
+ * worth something -- it has a Pokemon in the back, and is not behind on
+ * bodies. A no is never turned into a yes, and
  * pvpoke's own decision is always computed first -- both so the last-Pokemon
  * protection and matchup weighting still apply, and so the seeded RNG is
  * consumed in exactly the same order as stock, which keeps an A/B against
@@ -680,17 +724,40 @@ export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
     ai.decideShield = function (attacker, defender, move) {
       const decision = realDecideShield.apply(this, arguments);
       if (!decision) return decision;
-      // Nothing behind this Pokemon means the shield has no later value; that
-      // is the whole reason to hold it, so stand aside and let pvpoke shield.
-      if (player.getRemainingPokemon() <= 1) return decision;
+      // Endgame. A banked shield is only worth something if this player is
+      // still around to spend it. As the last Pokemon there is no later at
+      // all, and if the opponent still has bodies in the back it does not
+      // matter that this matchup can be tanked and answered -- the next one
+      // arrives fresh and farms it down while the shield sits unused. Losing
+      // with shields in hand is the failure this stands aside to avoid.
+      // Being down on bodies is the same story one step earlier.
+      const remaining = player.getRemainingPokemon();
+      const foe = players.find((other) => other !== player);
+      if (remaining <= 1) return decision;
+      if (foe && remaining < foe.getRemainingPokemon()) return decision;
       if (!attacker || !defender || !move) return decision;
 
-      const moveDamage = DamageCalculator.damage(attacker, defender, move, true);
+      const incoming = {
+        damage: DamageCalculator.damage(attacker, defender, move, true),
+        energy: move.energy,
+      };
       const fastDamage = attacker.fastMove
         ? DamageCalculator.damage(attacker, defender, attacker.fastMove, true)
         : 0;
+      // What the attacker can get back to soonest -- its cheapest charged move
+      // by energy, which is the one that fits inside the window.
+      const cheapest = (attacker.chargedMoves || []).reduce(
+        (best, m) => (best === null || m.energy < best.energy ? m : best),
+        null
+      );
+      const followUp = cheapest
+        ? {
+            damage: DamageCalculator.damage(attacker, defender, cheapest, true),
+            energy: cheapest.energy,
+          }
+        : undefined;
 
-      if (canTankAndAnswer(defender, attacker, moveDamage, fastDamage)) {
+      if (canTankAndAnswer(defender, attacker, incoming, fastDamage, followUp)) {
         declined[player.getIndex()] += 1;
         return false;
       }

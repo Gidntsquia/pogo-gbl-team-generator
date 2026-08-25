@@ -541,3 +541,83 @@ banks no energy, no chip, null safety) and ten of `wrapSwitchCost` (ordinary
 cost, both sides' charged moves opening the window, a fast move not opening it,
 the window closing next turn, post-faint, disabled-still-counts, non-switch
 actions, plus two integration tests).
+
+### Same day, follow-up 3 — an honest survival window, a damage ceiling, and the endgame
+
+Jaxon, three additions to the shield rule: count the attacker's next charged
+move inside the survival window ("it's relevant to the truth of whether the
+Pokemon can actually tank and answer"); shield anything that does too much
+damage regardless ("Araquanid should not be tanking a meteor beam"); and don't
+bank in the endgame ("if you're the last pokemon remaining, you may need to
+shield even if you can tank and answer to avoid being farmed down by an enemy
+Pokemon in the back — we don't want to lose a game when we still had shields
+available").
+
+**1. The window now counts what the attacker throws inside it.** Over
+`turnsToChargedMove(defender, 0)` turns the attacker banks
+`energyGain / (cooldown/500)` per turn on top of whatever is left after this
+move, so `floor((energyLeft + banked) / cheapestChargedEnergy)` more charged
+moves land. Measured on the previous rule: **291 of 662 declines (44%) were
+dead before their own move landed** once those follow-ups were counted.
+
+**Corrected mid-implementation by Jaxon:** "If you deny the shield on the first
+guy, and then they throw the second move before you can get to your next move,
+you should still have a shield which you can use on the second move and be good
+to go." Right — declining KEEPS the shield. Follow-ups are counted against
+`defender.shields` first and only the surplus does damage. Since decideShield is
+only asked when the defender holds at least one shield, a single follow-up in
+the window is always covered; the term bites when the attacker fits more
+charged moves into the window than the defender has shields left.
+
+This is the difference between the rule helping and hurting. Charging follow-ups
+at full damage: 265 declines, 61.5% as A / (not measured) as B. Crediting the
+shields: 502 declines, and banking finally helps in BOTH orientations.
+
+**2. `MAX_TANKABLE_HP_FRACTION = 0.5`** — a hit taking more than half a full
+health bar is shielded however the arithmetic comes out. It fires 122 times
+across the pool: Earthquake at 0.66 of Stunfisk's bar, Hydro Cannon at 0.69,
+Dynamic Punch at 0.78 on Thievul, Stone Edge at 0.59 on Araquanid. The
+Meteor Beam case that motivated it was 108 of Araquanid's 134 = 0.81.
+
+**3. Endgame stand-aside.** `wrapShieldBanking` already stood aside at
+`getRemainingPokemon() <= 1`; it now also stands aside when this player has
+FEWER Pokemon left than the opponent. Down a body, the banked shield has to
+survive a fresh Pokemon arriving before it can ever be spent. This is the
+biggest of the three gates — 310 blocks across the pool.
+
+**Where the blocks come from** (candidate vs the 78-team pool x 3 mirrored lead
+pairings), out of every shield pvpoke wanted to spend that the rule looked at:
+
+| outcome | count |
+|---|---|
+| declined | 502 |
+| blocked by the endgame gate | 310 |
+| blocked by the damage ceiling | 122 |
+| blocked by follow-up charged moves in the window | 23 |
+
+**Measured**, same sweep:
+
+| config | win rate | shields declined | switches costly/free | shields left A/B |
+|---|---|---|---|---|
+| pvpoke stock | 152/234 = 65.0% | 0 | 490 / 898 | 10 / 9 |
+| +rt200 +tag2 | 153/234 = 65.4% | 0 | 508 / 881 | 16 / 19 |
+| +bankShields | 149/234 = 63.7% | 488 | 485 / 889 | 78 / 65 |
+| +switchTurnCost (all on) | 154/234 = 65.8% | 502 | 496 / 890 | 68 / 57 |
+
+**Both orientations now agree**, which is the check that the earlier version
+failed (with everything else on, banking on vs off):
+
+| orientation | bank off | bank on |
+|---|---|---|
+| candidate as A | 148/234 = 63.2% | 154/234 = 65.8% |
+| candidate as B | 138/234 = 59.0% | 156/234 = 66.7% |
+
+Losing with shields still in hand — the failure Jaxon named — stays rare and
+total losses fall: as A, 5 of 86 losses -> 6 of 80; as B, 2 of 96 -> 8 of 78.
+
+**Verified (FOREGROUND):** `node --test test/teamBattle.test.js` -> 53/53;
+`npm test` -> **289/289 green** (~147s). `canTankAndAnswer`'s tests now cover
+the ceiling (the Meteor Beam board, and the same board under the ceiling), and
+follow-up accounting at 1 vs 2 shields against 4 throws in the window;
+`wrapShieldBanking` gains a behind-on-bodies test alongside the last-Pokemon
+one.
