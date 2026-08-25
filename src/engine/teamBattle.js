@@ -700,12 +700,11 @@ export function canTankAndAnswer(defender, attacker, incoming, fastDamage, follo
  * Wraps each AI's decideShield and turns a yes into a no when the defender can
  * tank the move and still answer with a charged move of its own (see
  * canTankAndAnswer) AND this player is in a position for a banked shield to be
- * worth something -- it has a Pokemon in the back, and is not behind on
- * bodies. A no is never turned into a yes, and
- * pvpoke's own decision is always computed first -- both so the last-Pokemon
- * protection and matchup weighting still apply, and so the seeded RNG is
- * consumed in exactly the same order as stock, which keeps an A/B against
- * `bankShields: false` a comparison of this rule alone.
+ * worth something -- it has a Pokemon in the back. A no is never turned into
+ * a yes, and pvpoke's own decision is always computed first -- both so the
+ * last-Pokemon protection and matchup weighting still apply, and so the
+ * seeded RNG is consumed in exactly the same order as stock, which keeps an
+ * A/B against `bankShields: false` a comparison of this rule alone.
  *
  * @param {object[]} players - [p0, p1]
  * @param {object} DamageCalculator - the sandbox's DamageCalculator class
@@ -724,17 +723,15 @@ export function wrapShieldBanking(players, DamageCalculator, opts = {}) {
     ai.decideShield = function (attacker, defender, move) {
       const decision = realDecideShield.apply(this, arguments);
       if (!decision) return decision;
-      // Endgame. A banked shield is only worth something if this player is
-      // still around to spend it. As the last Pokemon there is no later at
-      // all, and if the opponent still has bodies in the back it does not
-      // matter that this matchup can be tanked and answered -- the next one
-      // arrives fresh and farms it down while the shield sits unused. Losing
-      // with shields in hand is the failure this stands aside to avoid.
-      // Being down on bodies is the same story one step earlier.
+      // Endgame. A banked shield is only worth something if this player has
+      // a later Pokemon to spend it on. As the last Pokemon there is no
+      // later at all -- shielding stops here regardless of body count on
+      // either side, because a shield banked now and never spent is the
+      // failure this stands aside to avoid. Being behind on bodies with a
+      // bench left is not the same story: there is still a later, so the
+      // matchup math below gets to run.
       const remaining = player.getRemainingPokemon();
-      const foe = players.find((other) => other !== player);
       if (remaining <= 1) return decision;
-      if (foe && remaining < foe.getRemainingPokemon()) return decision;
       if (!attacker || !defender || !move) return decision;
 
       const incoming = {

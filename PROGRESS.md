@@ -621,3 +621,44 @@ the ceiling (the Meteor Beam board, and the same board under the ceiling), and
 follow-up accounting at 1 vs 2 shields against 4 throws in the window;
 `wrapShieldBanking` gains a behind-on-bodies test alongside the last-Pokemon
 one.
+
+### Same day, follow-up 4 — the endgame gate was checking the wrong thing
+
+Jaxon caught it: the `remaining < foe.getRemainingPokemon()` half of the
+endgame gate blocked banking for ANY body-count deficit, e.g. 2 left against
+3 -- not just the true "no later to spend it" case. His point: 2v3 isn't the
+endgame, and a weak last-gasp move should still be declinable, especially
+when the defender is winning the DPS race and can farm the attacker down.
+
+Root cause: shields are match-wide, not per-Pokemon, so the only real
+"no later" case is being on your OWN last Pokemon (`remaining <= 1`,
+already the first half of the gate). Being behind on count with a bench
+left still has a later. Deleted the `foe`-comparison line; `canTankAndAnswer`
+now runs whenever this player has more than one Pokemon left, regardless of
+the opponent's count. The "behind on bodies" test never actually exercised
+the deleted line (`pair(1,2)` hit the last-Pokemon condition first) --
+replaced it with one that checks `pair(2,3)` still declines.
+
+**Measured**, candidate vs the 78-team pool x 3 mirrored leads, before/after:
+
+| orientation | buggy gate | fixed gate |
+|---|---|---|
+| as A | 154/234 = 65.8% | 163/234 = 69.7% |
+| as B | 156/234 = 66.7% | 153/234 = 65.4% |
+
+Declines roughly doubled (candidate's own declines: 300 as A, up from ~250;
+348 as B, up from ~250). Losing with shields still in hand also rose in raw
+count in both orientations (as A 10 of 71 losses, as B 11 of 81) though as-A
+total losses fell (80 -> 71). This is the honest cost of the fix: more
+declines means more variance, and `canTankAndAnswer`'s window is a heuristic,
+not a guarantee. Reported to Jaxon as-is rather than tuned further -- the old
+gate was a modeling bug (shields don't expire per-Pokemon in real GBL), not a
+dial to trade off against the B-orientation dip.
+
+Jaxon's other point from the same message -- actively holding a shield to
+protect a *DPS-race* advantage when the opponent is low and being farmed
+down -- is a distinct idea from this bug fix (favoring a hold beyond "can
+tank and answer") and is not implemented; noted for later if he wants it.
+
+**Verified (FOREGROUND):** `node --test test/teamBattle.test.js` -> 53/53;
+`npm test` -> 289/289 green.

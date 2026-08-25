@@ -933,10 +933,12 @@ describe('shield banking', () => {
     );
   });
 
-  test('a shield is never declined while behind on bodies', () => {
-    // 1 left against 2 is the endgame the last-Pokemon rule is protecting
-    // against, one step earlier: the banked shield has to survive a fresh
-    // Pokemon arriving before it can ever be spent.
+  test('being behind on bodies does not block banking on its own', () => {
+    // Shields are match-wide, not per-Pokemon: with a bench left, there is
+    // still a later to spend a banked shield on even while down a body, so
+    // a tankable hit gets declined exactly as it would level on bodies. Only
+    // being on your own last Pokemon (see the last-Pokemon test above) means
+    // there is no later at all.
     const defender = {
       hp: 86,
       energy: 0,
@@ -967,9 +969,9 @@ describe('shield banking', () => {
       'level on bodies: the cheap chip is taken'
     );
     assert.equal(
-      pair(1, 2).getAI().decideShield(attacker, defender, nightSlash),
-      true,
-      'down a body: the shield stays available'
+      pair(2, 3).getAI().decideShield(attacker, defender, nightSlash),
+      false,
+      'down a body with a bench left: still declined, there is a later to bank for'
     );
   });
 
