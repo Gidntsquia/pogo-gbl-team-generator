@@ -56,6 +56,11 @@
     { "id": "jaxon-ladder-4", "name": "Real team fought 4 (Jaxon's GBL ladder, Aug 2026)", "members": ["forretress", "thievul", "azumarill"] },
     { "id": "jaxon-ladder-5", "name": "Real team fought 5 (Jaxon's GBL ladder, Aug 2026)", "members": ["greninja", "gourgeist_super", "kommo_o"], "notes": "Gourgeist Super size resolved to gourgeist_super; Kommo-o resolved to kommo_o (underscore, not hyphen) — both verified present in the pinned gamemaster" },
     { "id": "jaxon-ladder-6", "name": "Real team fought 6 (Jaxon's GBL ladder, Aug 2026)", "members": ["venusaur", "drifblim_shadow", "gardevoir"], "notes": "Jaxon observed Gardevoir using fast move Confusion, not its usual Charm — curated opponents build via pvpoke's recommended moveset (no per-member move-override plumbing exists), so the sim will play Gardevoir with its default (Charm-based) moveset; recorded honestly rather than building an override system for this one observation" },
-    { "id": "jaxon-ladder-7", "name": "Real team fought 7 (Jaxon's GBL ladder, Aug 2026)", "members": ["electrode_hisuian", "jellicent", "feraligatr_shadow"] }
+    { "id": "jaxon-ladder-7", "name": "Real team fought 7 (Jaxon's GBL ladder, Aug 2026)", "members": ["electrode_hisuian", "jellicent", "feraligatr_shadow"] },
+    { "id": "jaxon-ladder-8", "name": "Real team fought 8 (Jaxon's GBL ladder, Aug 2026)", "members": ["morpeko_full_belly", "toxicroak", "azumarill"], "notes": "Morpeko form resolved to morpeko_full_belly (bare 'morpeko' is not a valid speciesId); Jaxon observed Toxicroak using fast move Counter -- curated opponents build via pvpoke's recommended moveset (no per-member move-override plumbing exists), recorded honestly rather than building an override system for this one observation" },
+    { "id": "jaxon-ladder-9", "name": "Real team fought 9 (Jaxon's GBL ladder, Aug 2026)", "members": ["ninetales_shadow", "lickilicky", "jellicent"], "notes": "Jaxon said Shadow Ninetales without specifying form; resolved to Kanto (ninetales_shadow, not ninetales_alolan_shadow) per the same default used for jaxon-ladder-3 -- correct if this was actually Alolan" },
+    { "id": "jaxon-ladder-10", "name": "Real team fought 10 (Jaxon's GBL ladder, Aug 2026)", "members": ["dedenne", "tinkaton", "alomomola"] },
+    { "id": "jaxon-ladder-11", "name": "Real team fought 11 (Jaxon's GBL ladder, Aug 2026)", "members": ["shelgon", "lanturn", "skeledirge"] },
+    { "id": "jaxon-ladder-12", "name": "Real team fought 12 (Jaxon's GBL ladder, Aug 2026)", "members": ["thievul", "jellicent", "lucario"] }
   ]
 }

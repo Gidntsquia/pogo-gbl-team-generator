@@ -89,13 +89,13 @@ test('limit caps how many teams are built', () => {
 
 // GOALS T10b: community-curated opponent teams (data/meta-teams-community.json).
 
-test('community file loads and its teams resolve fully battle-ready (>=46 of 53)', () => {
-  assert.equal(communityRaw.teams.length, 53, 'source file has 53 entries under the pinned data (33 + T26\'s 13 Yasser Aleed teams + T31\'s 7 Jaxon ladder teams)');
+test('community file loads and its teams resolve fully battle-ready (>=51 of 58)', () => {
+  assert.equal(communityRaw.teams.length, 58, 'source file has 58 entries under the pinned data (33 + T26\'s 13 Yasser Aleed teams + 12 Jaxon ladder teams)');
 
   const teams = loadCommunityTeams(ctx);
   assert.ok(
-    teams.length >= 46,
-    `expected >=46/53 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
+    teams.length >= 51,
+    `expected >=51/58 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
   );
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
@@ -203,10 +203,10 @@ test('every community team is stamped leadIndex: 0 (declared-lead doctrine)', ()
   }
 });
 
-test('all 7 jaxon-ladder teams resolve fully battle-ready', () => {
+test('all 12 jaxon-ladder teams resolve fully battle-ready', () => {
   const teams = loadCommunityTeams(ctx);
   const ladder = teams.filter((t) => t.id.startsWith('community:jaxon-ladder-'));
-  assert.equal(ladder.length, 7, `expected all 7 jaxon-ladder teams to resolve, got ${ladder.length}`);
+  assert.equal(ladder.length, 12, `expected all 12 jaxon-ladder teams to resolve, got ${ladder.length}`);
   for (const team of ladder) {
     assert.equal(team.members.length, 3);
     assert.equal(team.tier, 'meta', `${team.id} should be untagged/full-weight (real ladder opponents)`);
