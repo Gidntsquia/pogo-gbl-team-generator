@@ -119,3 +119,60 @@ Jaxon's observation: the sim favors consistent neutral-matchup mons (Stunfisk in
 - [x] **T30 — (seq after T29 and T31) Reports + A/B validation.** Reports render teams as "Lead / Back / Back", add per-team snowballIndex/comebackIndex + designated closer (from T28 data); analytics JSON carries the new fields. ACCEPTANCE A/B (the deliverable Jaxon asked for): two small-but-real evolve runs, same seed/collection/opponents, `--fitness classic` vs battle-reality — side-by-side top-10 tables + which species rose/fell recorded in PROGRESS. Also decide + document (with the A/B as evidence) whether battle-reality becomes the evolve DEFAULT. Verify: `npm test` green + both A/B run artifacts in out/ + the comparison in PROGRESS.
   - **Done 2026-08-24 (routine fire, see PROGRESS) — box now CHECKED. This closed out Rev 6 (T27-T31 all done).** `scripts/evolve.mjs`: new `formatTeamMembers`/`formatTeamMembersHtml` render every team as `Lead (Lead) / Back / Back` everywhere a team name is shown (top-teams table, elite-detail headings, the plain-text DONE marker, the CLI's console summary line) — `members[0]` is always the designated lead (T29's own invariant). Three new per-team metrics, distinct from T29's `snowballScore`/`closerScore` fitness-blend inputs: `snowballIndex` (P(win the game | won the lead exchange)), `comebackIndex` (P(win the game | lost the lead exchange)) — both `null`, not 0, when a team had zero decided exchanges of that kind (the sample couldn't measure it) — and `designatedCloser` (whichever back member carries the HIGHER T28 closer-role prior, vs. `closerScore`'s mean of both). All computed unconditionally in `evaluateTeamsInOrder` (new `winsGivenExchangeWon`/`winsGivenExchangeLost` counters alongside the existing `exchangeWon`/`exchangeLost`), surfaced in both report renderers regardless of `--fitness` mode. `computeGenerationAnalytics` gained an optional `results` param and a `topTeams` array (reusing the existing top-10-by-fitness `eliteIdx`) with `{rank, members, fitness, winRate, snowballIndex, comebackIndex, designatedCloser}` per entry, flowing into `out/evolve-generations.json` via the existing `...r.analytics` spread — so these are trackable generation-over-generation, not just in the final elites pass. **ACCEPTANCE A/B (real, not simulated):** `node scripts/evolve.mjs fixtures/sample-pokegenie.csv --population 30 --pool 12 --score-meta 10 --opponents-per-gen 10 --generations 6 --elites 10 --seed t30ab-classic --out-dir out/evolve-ab-classic --fitness classic` (77s wall) vs the identical command with `--out-dir out/evolve-ab-reality --fitness battle-reality` (72s wall) — same seed means IDENTICAL per-generation opponent draws in both runs (`sampleOpponentTeams`'s seed doesn't depend on `config.fitness`), confirmed by matching battle counts every generation. **Side-by-side top-10 (full tables in PROGRESS.md):** classic's top team led with Medicham (80% win rate); battle-reality's led with Sableye (77%) — same 3 species, different lead, reflecting the snowball/closer-informed lead-rotation search. Species-appearance counts across each run's top-10 shifted exactly the direction Rev 6's own diagnosis predicted: **Azumarill fell 7→5**, **Stunfisk (Galarian) fell 5→2** (the "consistent neutral mon" pattern Jaxon originally flagged), while **Skarmory — absent from classic's top 10 entirely — entered twice** as a back-line closer pick, Medicham rose 2→5, and Trevenant/Talonflame/Marowak (Alolan) each rose 2→3. Full per-species appearance counts: classic `{Azumarill 7, Stunfisk (Galarian) 5, Sableye 3, Stunfisk 3, Medicham 2, Swampert 2, Marowak (Alolan) 2, Trevenant 2, Talonflame 2, Lanturn 1, Mr. Mime 1}` vs battle-reality `{Medicham 5, Azumarill 5, Sableye 3, Stunfisk 3, Marowak (Alolan) 3, Trevenant 3, Talonflame 3, Skarmory 2, Stunfisk (Galarian) 2, Swampert 1}`. **DEFAULT DECISION: flipped `DEFAULTS.fitness` from `classic` to `battle-reality`** (`--fitness classic` remains fully supported) — judgment call explicitly delegated to this ticket's own text ("decide + document... whether battle-reality becomes the evolve DEFAULT"), backed by the A/B above meeting Rev 6's own stated validation bar. Full rationale + numbers: `PLAN.md`'s new 2026-08-24 Rev 6 amendment, `README.md`'s evolve section, `PROGRESS.md`. Both A/B run artifacts left on disk under `out/evolve-ab-classic/` and `out/evolve-ab-reality/` (`out/` is gitignored, per this file's own acceptance-run convention of not committing scratch output — but per this ticket's own verify line asking for "artifacts in out/", these were deliberately NOT deleted afterward, unlike prior acceptance-run cleanup). **Test changes:** `test/evolveScript.test.js` — 3 new tests (Lead/Back/Back formatting in both MD+HTML; snowballIndex/comebackIndex/designatedCloser shape+bounds on every elite; `topTeams` shape in `evolve-generations.json`); the old "battle-reality components... even in classic mode" test was split into two (one against the now-default `shared` run confirming `fitness: battle-reality` in the Settings line, one with an explicit `fitness: 'classic'` run re-confirming T29's original claim under the non-default mode); the resume-mismatch test's second run now explicitly passes `fitness: 'classic'` (its implicit-default second run would otherwise now MATCH the first run's now-also-default battle-reality config and legitimately resume instead of exercising the mismatch path it was written to test). Verified: `node --test test/evolveScript.test.js` → **17/17** (13 prior + 1 net new from the split + 3 T30 tests = 17). `npm test` → **250/250 green** (249 prior + 1 net new). No engine/scoring/battle-math changes; no dependencies added.
 
+
+---
+
+## T32 — WITHDRAWN 2026-08-25 (never landed): DPS-race shield hold
+Queued by the orchestrator, then withdrawn by Jaxon minutes later:
+"the idea is unsound in general, and we can simply leave it
+unimplemented." The ticket text below is preserved verbatim for the
+record (in case a routine fire was already mid-flight on it and its
+commit needed reverting — see PROGRESS.md). Do not re-attempt this
+idea without a fresh, explicit go-ahead from Jaxon.
+
+- [ ] **T32 — DPS-race shield hold.** `src/engine/teamBattle.js`'s
+  `wrapShieldBanking` (around L714-766) currently declines a shield only
+  when `canTankAndAnswer` is true. Jaxon raised a distinct point in the same
+  session as the endgame-gate fix (PROGRESS.md's "follow-up 4"), noted but
+  not implemented: "actively holding a shield to protect a DPS-race
+  advantage when the opponent is low and being farmed down." This ticket's
+  spec is the orchestrator's judgment call on what that means mechanically
+  (document your interpretation in your PROGRESS.md entry so it can be
+  corrected if wrong): a shield can ALSO be declined — independent of
+  `canTankAndAnswer` — when the DEFENDER doesn't need to answer with its
+  OWN charged move to win this exchange, because the ATTACKER is already
+  losing the DPS race. Concretely, OR a second condition into the existing
+  `canTankAndAnswer(...)` check inside `ai.decideShield`:
+  1. `incoming.damage <= defender.stats.hp * MAX_TANKABLE_HP_FRACTION` —
+     same ceiling `canTankAndAnswer` already enforces; a >50%-bar hit is
+     never held for this reason either.
+  2. `defender.hp - incoming.damage > 0` — must actually survive this hit.
+  3. `beingFarmedDown(attacker, defender)` is true. The exported
+     `beingFarmedDown` helper (L455) already answers "does `poke` faint
+     from `opponent`'s fast-move chip before `poke` can throw its own
+     charged move again." Called as `beingFarmedDown(attacker, defender)`
+     it answers whether the ATTACKER is the one about to be farmed down by
+     the DEFENDER's own fast move — i.e. the defender is winning the DPS
+     race and doesn't need this particular charged move blocked to win the
+     exchange, so the shield is worth more held for later.
+  Suggested shape: a small new helper (e.g. `winningDpsRace(defender,
+  attacker, incoming)`) returning the AND of those three, exported next to
+  `canTankAndAnswer` with this file's existing doc-comment style (why, not
+  what); `wrapShieldBanking`'s decline test becomes `canTankAndAnswer(...)
+  || winningDpsRace(...)`.
+  **Tests (`test/teamBattle.test.js`):** new cases for the helper —
+  attacker being farmed down + defender survives + under the ceiling ->
+  holds; attacker healthy (not farmed down) -> no change from today's
+  behavior; incoming damage over the ceiling even with attacker farmed
+  down -> still shields; defender would NOT survive the hit -> still
+  shields (this reason never turns a fatal hit into a decline). Plus at
+  least one `wrapShieldBanking`-level integration test exercising the new
+  OR branch end-to-end (mirrors the existing last-Pokemon / behind-on-
+  bodies tests already in that describe block).
+  **Verify:** `node --test test/teamBattle.test.js` clean, then
+  `npm run test:full` clean (ticket-closing verify per standing rule 8) —
+  both FOREGROUND with an explicit generous timeout. Append a PROGRESS.md
+  entry: what was built, the interpretation call made, verify results, and
+  — only if fire budget allows, not required to check the box — a small
+  before/after decline-count sample. Commit + push to main; check this box
+  and move the ticket block to GOALS_ARCHIVE.md in the same commit.
