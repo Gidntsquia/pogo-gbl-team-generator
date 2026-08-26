@@ -27,6 +27,22 @@ const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 
 // --exhaustive opt-in path (pre-T12 behavior).
 const EXHAUSTIVE_TINY = { exhaustive: true, topK: 4, meta: 2, scoreMeta: 4, top: 3 };
 
+// runPipeline is the whole cost of this file -- a real engine run, tiny but
+// not free -- and several tests below want the SAME run: a plain SAMPLED_TINY
+// report is the baseline that the currentMoves and cp=2500 tests compare
+// against, and the thing both renderers are handed. Nothing here mutates a
+// report, so running each distinct settings object once and sharing it is
+// indistinguishable from re-running it, minus the minute it costs.
+//
+// Deliberately NOT used for the rejection test: that one needs a fresh call
+// to reject, not a cached promise.
+const pipelineRuns = new Map();
+function pipeline(opts) {
+  const key = JSON.stringify(opts);
+  if (!pipelineRuns.has(key)) pipelineRuns.set(key, runPipeline(FIXTURE, opts));
+  return pipelineRuns.get(key);
+}
+
 function assertWellFormedReport(report, expectedMetaCount, expectedTopCap) {
   assert.ok(report.rankedTeams.length >= 1, 'expected at least one ranked team');
   assert.ok(report.rankedTeams.length <= expectedTopCap, 'teamCount cap honored');
@@ -53,7 +69,7 @@ function assertWellFormedReport(report, expectedMetaCount, expectedTopCap) {
 }
 
 test('runPipeline (sampled, default path) produces ranked teams and a well-formed report', async () => {
-  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
+  const report = await pipeline(SAMPLED_TINY);
   assertWellFormedReport(report, SAMPLED_TINY.opponents, SAMPLED_TINY.top);
 
   assert.equal(report.settings.mode, 'sampled', 'default path reports mode: sampled');
@@ -65,10 +81,10 @@ test('runPipeline (sampled, default path) produces ranked teams and a well-forme
 });
 
 test('runPipeline (currentMoves: GOALS T17) forwards the opt-in flag and surfaces it in settings', async () => {
-  const withoutFlag = await runPipeline(FIXTURE, SAMPLED_TINY);
+  const withoutFlag = await pipeline(SAMPLED_TINY);
   assert.equal(withoutFlag.settings.currentMoves, false, 'defaults to off');
 
-  const report = await runPipeline(FIXTURE, { ...SAMPLED_TINY, currentMoves: true });
+  const report = await pipeline({ ...SAMPLED_TINY, currentMoves: true });
   assertWellFormedReport(report, SAMPLED_TINY.opponents, SAMPLED_TINY.top);
   assert.equal(report.settings.currentMoves, true);
   // Real fixture rows resolve to a moveset for most mons; scoring may add a
@@ -83,14 +99,14 @@ test('runPipeline (currentMoves: GOALS T17) forwards the opt-in flag and surface
 });
 
 test('runPipeline (--cp 2500: GOALS T18c) runs Ultra League end to end and labels the report', async () => {
-  const great = await runPipeline(FIXTURE, SAMPLED_TINY);
+  const great = await pipeline(SAMPLED_TINY);
   assert.equal(great.settings.cp, 1500, 'default run is Great League');
   assert.equal(great.settings.league, 'Great League');
   const greatMd = renderReport(great);
   assert.match(greatMd, /# Great League Team Report/);
   assert.doesNotMatch(greatMd, /cp=/, 'the default cap is not spelled out in the settings line');
 
-  const ultra = await runPipeline(FIXTURE, { ...SAMPLED_TINY, cp: 2500 });
+  const ultra = await pipeline({ ...SAMPLED_TINY, cp: 2500 });
   assertWellFormedReport(ultra, SAMPLED_TINY.opponents, SAMPLED_TINY.top);
   assert.equal(ultra.settings.cp, 2500);
   assert.equal(ultra.settings.league, 'Ultra League');
@@ -114,7 +130,7 @@ test('runPipeline rejects an unsupported --cp before doing any work', async () =
 });
 
 test('runPipeline (--exhaustive) still produces the old C(topK,3) + curated-only behavior', async () => {
-  const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
+  const report = await pipeline(EXHAUSTIVE_TINY);
   assertWellFormedReport(report, EXHAUSTIVE_TINY.meta, EXHAUSTIVE_TINY.top);
 
   assert.equal(report.settings.mode, 'exhaustive', 'explicit --exhaustive reports mode: exhaustive');
@@ -125,7 +141,7 @@ test('runPipeline (--exhaustive) still produces the old C(topK,3) + curated-only
 });
 
 test('renderReport writes a Markdown report that names >= 1 team (sampled, default path)', async () => {
-  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
+  const report = await pipeline(SAMPLED_TINY);
   const md = renderReport(report);
 
   assert.match(md, /# Great League Team Report/);
@@ -155,7 +171,7 @@ test('renderReport writes a Markdown report that names >= 1 team (sampled, defau
 });
 
 test('renderReportHtml writes a self-contained HTML report naming >= 1 team (sampled, default path)', async () => {
-  const report = await runPipeline(FIXTURE, SAMPLED_TINY);
+  const report = await pipeline(SAMPLED_TINY);
   const html = renderReportHtml(report);
 
   assert.match(html, /<!doctype html>/i);
@@ -211,7 +227,7 @@ test('renderReportHtml handles the no-candidates case without throwing', () => {
 });
 
 test('renderReport settings line uses the old topK/candidates shape for --exhaustive', async () => {
-  const report = await runPipeline(FIXTURE, EXHAUSTIVE_TINY);
+  const report = await pipeline(EXHAUSTIVE_TINY);
   const md = renderReport(report);
 
   assert.doesNotMatch(md, /mode=sampled/, 'exhaustive report does not claim sampled mode');
