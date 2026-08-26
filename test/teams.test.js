@@ -1,5 +1,7 @@
 // JavaScript Document
 //
+// @slow -- ranks teams through the real pvpoke 3v3 engine; ~50s on its own.
+//
 // Verifies src/teams/index.js -- the 3v3 team evaluator + ranking. The
 // combinatorics (buildCandidates: topK, dup-species rule, excludeSpecies) are
 // checked purely against a hand-built fake matrix with no engine. The ranking

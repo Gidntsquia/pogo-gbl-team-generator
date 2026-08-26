@@ -1,3 +1,5 @@
+// @slow -- replays whole battle sets to reproduce an ordering flip; ~30s on its own.
+//
 // Tests for scripts/variance-study.mjs (ROADMAP "TrainingAI variance study").
 // Keeps the battle count tiny (2 candidates x 2 opponents x 9 pairings x a
 // few orderings) so this stays fast while still exercising the real pvpoke

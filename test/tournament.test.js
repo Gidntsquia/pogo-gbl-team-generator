@@ -1,3 +1,5 @@
+// @slow -- drives full multi-stage tournament runs; ~35s on its own.
+//
 // Tests for scripts/tournament.mjs (GOALS T13: multi-stage overnight
 // tournament runner). Drives the exported `runTournament` in-process (no
 // subprocess, no network) with tiny knobs so the real pvpoke 3v3 engine still
