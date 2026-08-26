@@ -237,8 +237,9 @@ export function loadCommunityTeams(ctx, opts = {}) {
  * off-meta teams sort last, so a typical small `limit` (the exhaustive CLI
  * path's default `--meta 5`) never reaches them at all -- they only surface
  * once a caller asks for enough teams to exhaust the vendor + community-meta
- * pool ahead of them (25 vendor + up to 17 community-meta under the pinned
- * data). An unlimited/full call still returns every off-meta team.
+ * pool ahead of them (25 vendor + up to 81 community-meta under the pinned
+ * data; only 1 community entry is tagged off-meta). An unlimited/full call
+ * still returns every off-meta team.
  *
  * Each member is a distinct built instance, so a returned team can be handed
  * straight to `battleTeams` as one side. `battleTeams` fullResets every mon at

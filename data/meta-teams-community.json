@@ -2,7 +2,7 @@
   "source": "https://www.reddit.com/r/TheSilphRoad/comments/1tv2140/great_league_recommended_teams_gbl_season_27/",
   "curator": "YonkouJean PGO infographic — Great League teams recommended/used by top GBL players, GBL Season 27 (Aug 2026)",
   "collectedAt": "2026-08-21",
-  "extraction": "Orchestrator read team images supplied by Jaxon (2026-08-21). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve, dropping a team whole if ANY member fails (2 mons isn't a team). Core-breaker strips in the YonkouJean images are the teams' counters, deliberately NOT included. Teams with tier:'off-meta' come from a second batch (Japanese Nature-Cup party infographics + player battle-party screenshots + one English player party): Jaxon wants them in the opponent pool for surface diversity, at reduced sampling weight vs the untagged (meta) teams. JP entries were identified primarily from printed katakana names (high confidence); in-game screenshots use a nickname-of-base-stage pattern resolved via CP feasibility (e.g. 'Frillish' at CP 1498 = Jellicent, pink female sprite). Entries id-prefixed 'yasseraleed-' are a third batch (GOALS T26, 2026-08-21): 13 untagged (meta) teams visually transcribed from stream screenshots by GBL streamer Yasser Aleed (twitch.tv/YasserAleed, YouTube aleed_yasser, Discord /thecoolkidz), supplied by Jaxon; where an on-screen team-builder card was visible its text is authoritative over a visual read (recorded in each team's 'notes'), and species-level shadow status is recorded only where the stream explicitly showed it (a shiny/cosmetic render is never treated as shadow). Entries id-prefixed 'jaxon-ladder-' are a fourth batch (GOALS T31, 2026-08-23): 7 untagged (meta, full weight — real opponents Jaxon actually faces on the GBL ladder) teams Jaxon reported directly from his own ladder games, speciesIds resolved and verified against the pinned gamemaster before being committed. FILE-WIDE LEAD DOCTRINE (Jaxon, 2026-08-23): for EVERY entry in this file, `members[0]` IS that team's established lead — for the pre-existing 46 entries that ordering came from the source images/screenshots (best available at the time); for 'jaxon-ladder-' entries it is Jaxon's own directly-observed opponent lead. src/meta/teams.js's loadCommunityTeams stamps `leadIndex: 0` on every returned team so scripts/evolve.mjs's opponentLeadIndex() reads it as declared data rather than falling through to its own index-0 default. The same first-member-is-lead convention applies to pvpoke's vendored gobattleleague training presets (no code change needed there — the loader's existing default already reads member index 0).",
+  "extraction": "Orchestrator read team images supplied by Jaxon (2026-08-21). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve, dropping a team whole if ANY member fails (2 mons isn't a team). Core-breaker strips in the YonkouJean images are the teams' counters, deliberately NOT included. Teams with tier:'off-meta' come from a second batch (Japanese Nature-Cup party infographics + player battle-party screenshots + one English player party): Jaxon wants them in the opponent pool for surface diversity, at reduced sampling weight vs the untagged (meta) teams. JP entries were identified primarily from printed katakana names (high confidence); in-game screenshots use a nickname-of-base-stage pattern resolved via CP feasibility (e.g. 'Frillish' at CP 1498 = Jellicent, pink female sprite). Entries id-prefixed 'yasseraleed-' are a third batch (GOALS T26, 2026-08-21): 13 untagged (meta) teams visually transcribed from stream screenshots by GBL streamer Yasser Aleed (twitch.tv/YasserAleed, YouTube aleed_yasser, Discord /thecoolkidz), supplied by Jaxon; where an on-screen team-builder card was visible its text is authoritative over a visual read (recorded in each team's 'notes'), and species-level shadow status is recorded only where the stream explicitly showed it (a shiny/cosmetic render is never treated as shadow). Entries id-prefixed 'jaxon-ladder-' are a fourth batch (GOALS T31, 2026-08-23): 7 untagged (meta, full weight — real opponents Jaxon actually faces on the GBL ladder) teams Jaxon reported directly from his own ladder games, speciesIds resolved and verified against the pinned gamemaster before being committed. FILE-WIDE LEAD DOCTRINE (Jaxon, 2026-08-23): for EVERY entry in this file, `members[0]` IS that team's established lead — for the pre-existing 46 entries that ordering came from the source images/screenshots (best available at the time); for 'jaxon-ladder-' entries it is Jaxon's own directly-observed opponent lead. src/meta/teams.js's loadCommunityTeams stamps `leadIndex: 0` on every returned team so scripts/evolve.mjs's opponentLeadIndex() reads it as declared data rather than falling through to its own index-0 default. The same first-member-is-lead convention applies to pvpoke's vendored gobattleleague training presets (no code change needed there — the loader's existing default already reads member index 0). Entries id-prefixed 'jaxon-ladder-13'/'jaxon-ladder-14' continue the fourth batch (2026-08-26): 2 more teams Jaxon reported from his own ladder games. Entries id-prefixed 'pvpoke-top-' are a fifth batch (2026-08-26): 2 Great League teams Jaxon took from PvPoke's own top-performing team listings — untagged (meta), same full weight as the rest. Entries id-prefixed 'high-ladder-' are a sixth batch (2026-08-26): 21 teams Jaxon supplied as high-ladder Great League compositions — untagged (meta), full weight. Every speciesId in all three of those batches was verified against the pinned gamemaster before commit, and each entry checked for duplication against both the pre-existing community entries and the 25 vendor gobattleleague presets (none were duplicates). Where a batch entry named an explicit moveset, the file has no per-member move-override plumbing (buildRecommendedMon builds from pvpoke’s recommended moveset alone), so the moveset is recorded in that entry’s `notes` and the divergence, if any, is stated there. Ambiguous forms in the high-ladder batch were resolved to Kanto (marowak_shadow, ninetales_shadow) per that batch’s own habit of naming regionals explicitly; the Marowak read is flagged in its notes for confirmation.",
   "teams": [
     {
       "id": "omarchm10",
@@ -540,6 +540,239 @@
         "lickilicky",
         "empoleon_shadow"
       ]
+    },
+    {
+      "id": "jaxon-ladder-13",
+      "name": "Real team fought 13 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "skeledirge",
+        "morpeko_full_belly",
+        "serperior"
+      ],
+      "notes": "Morpeko form resolved to morpeko_full_belly (bare 'morpeko' is not a valid speciesId in the pinned gamemaster)"
+    },
+    {
+      "id": "jaxon-ladder-14",
+      "name": "Real team fought 14 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "seismitoad",
+        "thievul",
+        "fearow"
+      ]
+    },
+    {
+      "id": "pvpoke-top-1",
+      "name": "PvPoke top performer 1 (Great League, Aug 2026)",
+      "members": [
+        "tinkaton",
+        "dusknoir_shadow",
+        "feraligatr_shadow"
+      ]
+    },
+    {
+      "id": "pvpoke-top-2",
+      "name": "PvPoke top performer 2 (Great League, Aug 2026)",
+      "members": [
+        "corsola_galarian",
+        "gastrodon",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "high-ladder-1",
+      "name": "High ladder team 1 (GBL Great League, Aug 2026)",
+      "members": [
+        "tinkaton",
+        "seaking",
+        "electrode_hisuian"
+      ]
+    },
+    {
+      "id": "high-ladder-2",
+      "name": "High ladder team 2 (GBL Great League, Aug 2026)",
+      "members": [
+        "thievul",
+        "lickilicky",
+        "mantine"
+      ]
+    },
+    {
+      "id": "high-ladder-3",
+      "name": "High ladder team 3 (GBL Great League, Aug 2026)",
+      "members": [
+        "tinkaton",
+        "mandibuzz",
+        "furret"
+      ]
+    },
+    {
+      "id": "high-ladder-4",
+      "name": "High ladder team 4 (GBL Great League, Aug 2026)",
+      "members": [
+        "dusknoir_shadow",
+        "forretress_shadow",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "high-ladder-5",
+      "name": "High ladder team 5 (GBL Great League, Aug 2026)",
+      "members": [
+        "forretress_shadow",
+        "mantine",
+        "florges"
+      ]
+    },
+    {
+      "id": "high-ladder-6",
+      "name": "High ladder team 6 (GBL Great League, Aug 2026)",
+      "members": [
+        "stunfisk",
+        "mantine",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "high-ladder-7",
+      "name": "High ladder team 7 (GBL Great League, Aug 2026)",
+      "members": [
+        "seaking",
+        "tinkaton",
+        "diggersby"
+      ]
+    },
+    {
+      "id": "high-ladder-8",
+      "name": "High ladder team 8 (GBL Great League, Aug 2026)",
+      "members": [
+        "stunfisk",
+        "kingdra",
+        "charizard_shadow"
+      ]
+    },
+    {
+      "id": "high-ladder-9",
+      "name": "High ladder team 9 (GBL Great League, Aug 2026)",
+      "members": [
+        "feraligatr",
+        "tinkaton",
+        "ninetales_shadow"
+      ],
+      "notes": "Jaxon explicitly said Kanto Ninetales, not Alolan — resolved to ninetales_shadow (NOT ninetales_alolan_shadow)"
+    },
+    {
+      "id": "high-ladder-10",
+      "name": "High ladder team 10 (GBL Great League, Aug 2026)",
+      "members": [
+        "gliscor_shadow",
+        "dunsparce",
+        "azumarill"
+      ]
+    },
+    {
+      "id": "high-ladder-11",
+      "name": "High ladder team 11 (GBL Great League, Aug 2026)",
+      "members": [
+        "sandslash_alolan_shadow",
+        "jellicent",
+        "fearow"
+      ],
+      "notes": "Jaxon supplied Shadow Alolan Sandslash’s moveset (Powder Snow, Ice Punch + Drill Run); pvpoke’s recommended moveset for sandslash_alolan_shadow is exactly POWDER_SNOW / ICE_PUNCH + DRILL_RUN, so the sim already plays it as observed — no override needed"
+    },
+    {
+      "id": "high-ladder-12",
+      "name": "High ladder team 12 (GBL Great League, Aug 2026)",
+      "members": [
+        "sableye_shadow",
+        "stunfisk",
+        "altaria"
+      ]
+    },
+    {
+      "id": "high-ladder-13",
+      "name": "High ladder team 13 (GBL Great League, Aug 2026)",
+      "members": [
+        "sealeo_shadow",
+        "mantine",
+        "diggersby"
+      ]
+    },
+    {
+      "id": "high-ladder-14",
+      "name": "High ladder team 14 (GBL Great League, Aug 2026)",
+      "members": [
+        "electrode_hisuian",
+        "mantine",
+        "primeape_shadow"
+      ]
+    },
+    {
+      "id": "high-ladder-15",
+      "name": "High ladder team 15 (GBL Great League, Aug 2026)",
+      "members": [
+        "marowak_shadow",
+        "kingdra_shadow",
+        "sealeo_shadow"
+      ],
+      "notes": "Marowak form was NOT qualified by Jaxon; resolved to Kanto marowak_shadow (this batch names regional forms explicitly where it means them — “Galarian Corsola”, “Shadow Alolan Sandslash”, “shadow kanto ninetails” — and Kanto Shadow Marowak is the GL-relevant form, #68 in the pinned GL rankings vs #227 for marowak_alolan_shadow). Flagged for confirmation."
+    },
+    {
+      "id": "high-ladder-16",
+      "name": "High ladder team 16 (GBL Great League, Aug 2026)",
+      "members": [
+        "togekiss",
+        "seismitoad",
+        "empoleon"
+      ],
+      "notes": "Jaxon supplied Empoleon’s fast move (Waterfall); pvpoke’s recommended set for empoleon is METAL_SOUND / HYDRO_CANNON + DRILL_PECK, so the sim will play it with Metal Sound instead — curated opponents build via pvpoke’s recommended moveset (no per-member move-override plumbing exists), recorded honestly rather than building an override system for this one observation"
+    },
+    {
+      "id": "high-ladder-17",
+      "name": "High ladder team 17 (GBL Great League, Aug 2026)",
+      "members": [
+        "hydreigon_shadow",
+        "forretress",
+        "ninetales_shadow"
+      ],
+      "notes": "Ninetales form was not qualified here; resolved to Kanto ninetales_shadow, consistent with this batch’s explicit “shadow kanto ninetails” in team 9 (NOT ninetales_alolan_shadow)"
+    },
+    {
+      "id": "high-ladder-18",
+      "name": "High ladder team 18 (GBL Great League, Aug 2026)",
+      "members": [
+        "forretress_shadow",
+        "feraligatr",
+        "carbink"
+      ]
+    },
+    {
+      "id": "high-ladder-19",
+      "name": "High ladder team 19 (GBL Great League, Aug 2026)",
+      "members": [
+        "corsola_galarian",
+        "florges",
+        "azumarill"
+      ],
+      "notes": "Jaxon supplied Florges’ charged moves (Chilling Water + Trailblaze); pvpoke’s recommended set for florges is FAIRY_WIND / CHILLING_WATER + DISARMING_VOICE, so Chilling Water matches but the sim will play Disarming Voice in place of Trailblaze — curated opponents build via pvpoke’s recommended moveset (no per-member move-override plumbing exists), recorded honestly rather than building an override system for this one observation"
+    },
+    {
+      "id": "high-ladder-20",
+      "name": "High ladder team 20 (GBL Great League, Aug 2026)",
+      "members": [
+        "kingdra_shadow",
+        "gastrodon",
+        "carbink"
+      ]
+    },
+    {
+      "id": "high-ladder-21",
+      "name": "High ladder team 21 (GBL Great League, Aug 2026)",
+      "members": [
+        "sableye_shadow",
+        "stunfisk",
+        "corviknight"
+      ],
+      "notes": "Source read “Coviknight”; resolved to corviknight"
     }
   ]
 }
