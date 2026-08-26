@@ -11,6 +11,8 @@
 // show the same Pokemon standing still anyway.
 
 import { readAppraisal } from './bars.js';
+import { auraMeasure } from './aura.js';
+import { readsPurifyButton } from './purify.js';
 import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes, readsShadow } from './text.js';
 
 /**
@@ -75,6 +77,18 @@ export function readFrame(frame, { resolveCaption }) {
       candidates: species.candidates,
       types,
       shadow: species.shadow,
+      // What the sliver of page above the appraisal panel says about shadow
+      // -- true, false, or undefined when the buttons are not showing (see
+      // purify.js). Deliberately NOT folded into `shadow` here: group.js
+      // splits a run of frames when `shadow` changes, and a band that reads
+      // on some frames of a card and not others would tear one Pokemon into
+      // two rows. It is voted on per Pokemon instead.
+      button: readsPurifyButton(frame.strip),
+      // How much this frame's background looks like a shadow's aura (see
+      // aura.js). Kept out of `shadow` for the same reason `button` is, and
+      // only consulted for a Pokemon whose button never showed: the button
+      // states shadow outright, the aura only resembles it.
+      aura: auraMeasure(frame.boxes),
       purified: species.purified,
       // Both optional. The Pokemon's own animation is drawn *over* the CP
       // text, so on a frame where a wing or a flame crosses it the number

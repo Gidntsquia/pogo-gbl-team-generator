@@ -21,6 +21,8 @@ import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes, readsS
 import { createCaptionResolver } from '../src/videoscan/species.js';
 import { createFormResolver, DEFAULT_FORMS } from '../src/videoscan/forms.js';
 import { readFrame } from '../src/videoscan/frame.js';
+import { readsPurifyButton } from '../src/videoscan/purify.js';
+import { auraMeasure, auraVerdict } from '../src/videoscan/aura.js';
 import { chooseCp, scanFrames } from '../src/videoscan/index.js';
 import { groupReadings, mergeDuplicates } from '../src/videoscan/group.js';
 import { toCsv } from '../src/videoscan/csv.js';
@@ -547,8 +549,16 @@ test('scanFrames turns recorded frames into collection rows', async () => {
   // scanner says so rather than presenting a one-frame read as settled.
   const singleFrame = warnings.filter((w) => /read from a single frame/.test(w));
   assert.equal(singleFrame.length, 2);
-  // Every scan also states how much of its shadow column it actually checked.
-  assert.equal(warnings.length, singleFrame.length + 1, warnings.join('\n'));
+  // Every scan also states how much of its shadow column it actually
+  // checked, and names the rows it could not check. These frames predate the
+  // strip the button is read from, so neither Pokemon can be checked.
+  const shadow = warnings.filter((w) => /^Shadow /.test(w));
+  assert.deepEqual(
+    shadow.map((w) => /^Shadow read/.test(w)),
+    [true, false]
+  );
+  assert.match(shadow[1], /could NOT be read at all for 2 of 2 Pokemon/);
+  assert.equal(warnings.length, singleFrame.length + shadow.length, warnings.join('\n'));
 });
 
 test('scanFrames recovers an obscured CP and survives the bar animation', async () => {
@@ -730,6 +740,50 @@ test('readsShadow finds the markings Pokemon GO only draws behind the appraisal 
   // An ordinary appraisal frame says nothing either way -- of a shadow
   // Pokemon as much as any other.
   assert.equal(readsShadow([box('CP807'), box('115 / 115 HP'), box('Attack')]), false);
+});
+
+// Real pixels off the two test recordings: for purify.js the sliver of page
+// above the appraisal panel, for aura.js the four background patches, one
+// entry per frame of the card. Each Pokemon here has an answer that does not
+// come from the code under test -- the button says so outright, or the aura
+// is plain to see in the frame.
+const SIGNALS = JSON.parse(readFileSync(path.resolve(__dirname, '../fixtures/videoscan/shadow-signals.json'), 'utf8'));
+const verdict = (name) => auraVerdict(SIGNALS.aura[name].frames.map(auraMeasure));
+
+test('readsPurifyButton tells PURIFY from POWER UP through the appraisal panel', () => {
+  // The band is eight pixels tall under a cream veil and carries no legible
+  // text at all; what is left is that PURIFY is pink and POWER UP is green.
+  assert.equal(readsPurifyButton(SIGNALS.button.pink.strip), true);
+  assert.equal(readsPurifyButton(SIGNALS.button.green.strip), false);
+  // Scrolled past the buttons there is nothing to read, and saying "not
+  // shadow" here would be a guess dressed as a reading.
+  assert.equal(readsPurifyButton(SIGNALS.button.hidden.strip), undefined);
+  assert.equal(readsPurifyButton(undefined), undefined);
+});
+
+test('auraVerdict finds the smoke around a shadow whose button never showed', () => {
+  // Gallade's page is scrolled past its buttons on every frame, so the aura
+  // is the only thing left that knows. Mewtwo is the same case on a white
+  // background rather than a dark one.
+  assert.equal(verdict('gallade'), true);
+  assert.equal(verdict('mewtwo'), true);
+  // Muk fills its own frame, leaving no background beside it to darken --
+  // caught by the blue in the smoke instead (see aura.js).
+  assert.equal(verdict('muk'), true);
+  // That second route is for a collapsed measurement, not a second chance:
+  // this Rapidash is as blue as Muk on a violet background, darkens like any
+  // ordinary card, and is not shadow.
+  assert.equal(verdict('rapidash'), false);
+  assert.equal(auraVerdict([]), undefined);
+});
+
+test('auraVerdict is not fooled by a purple Pokemon or a purple background', () => {
+  // The three hardest ordinary Pokemon in 231: a violet Sableye on near
+  // black, a violet Weezing on a night sky, and a Braviary lit magenta from
+  // behind -- the closest any of them came to reading as shadow.
+  assert.equal(verdict('sableye'), false);
+  assert.equal(verdict('weezing'), false);
+  assert.equal(verdict('braviary'), false);
 });
 
 test('scanFrames reads shadow off the frames it cannot read as an appraisal', async () => {

@@ -31,19 +31,49 @@ const BIN_DIR = path.resolve(HERE, '../../out/.videoscan');
 export const DEFAULT_REGION = { x: 0, y: 0.55, w: 0.62, h: 0.45 };
 
 /**
+ * A second, narrow region reported one row at a time (see scan.swift's
+ * `strip`): the sliver of the Pokemon's own page still showing above the
+ * appraisal panel.
+ *
+ * Its x window is what is left of that sliver once the appraisal stamp on
+ * the left (out to ~0.24) and the trainer avatar on the right (from ~0.47)
+ * are excluded. purify.js reads the PURIFY / POWER UP button out of it.
+ */
+export const STRIP_REGION = { x: 0.26, y: 0.6, w: 0.2, h: 0.2 };
+
+/**
+ * Boxes reported as a single mean colour each (see scan.swift's `boxes`),
+ * in the order aura.js expects them: two of clean background just under the
+ * CP text, then two beside the Pokemon's feet. Left and right are separate
+ * boxes because the sprite fills the middle, and the whole point is to
+ * measure the background the sprite is standing in.
+ */
+export const AURA_BOXES = [
+  { x: 0.0, y: 0.06, w: 0.125, h: 0.04 },
+  { x: 0.875, y: 0.06, w: 0.125, h: 0.04 },
+  { x: 0.0, y: 0.24, w: 0.125, h: 0.1 },
+  { x: 0.875, y: 0.24, w: 0.125, h: 0.1 },
+];
+
+/**
  * @typedef {object} Frame
  * @property {number} t - presentation timestamp in seconds.
  * @property {number} w
  * @property {number} h
  * @property {import('./text.js').TextBox[]} text
  * @property {{y: number, runs: number[][]}[]} rows
+ * @property {number[][]} [strip] - mean [r,g,b] of each row of STRIP_REGION,
+ *   top to bottom. Absent on frames recorded before the strip existed.
+ * @property {number[][]} [boxes] - mean [r,g,b] of each of AURA_BOXES.
  */
 
 /**
  * Decode and analyse a video, yielding one Frame per sampled timestamp.
  *
  * @param {string} videoPath
- * @param {{interval?: number, region?: {x: number, y: number, w: number, h: number}, signal?: AbortSignal}} [opts]
+ * @param {{interval?: number, region?: {x: number, y: number, w: number, h: number},
+ *   strip?: {x: number, y: number, w: number, h: number},
+ *   boxes?: {x: number, y: number, w: number, h: number}[], signal?: AbortSignal}} [opts]
  * @returns {AsyncGenerator<Frame>}
  */
 export async function* probeVideo(videoPath, opts = {}) {
@@ -60,11 +90,26 @@ export async function* probeVideo(videoPath, opts = {}) {
   }
   const interval = opts.interval ?? 0.25;
   const region = opts.region ?? DEFAULT_REGION;
+  const strip = opts.strip ?? STRIP_REGION;
+  const boxes = opts.boxes ?? AURA_BOXES;
 
   const [command, leadingArgs] = await scanCommand();
   const child = spawn(
     command,
-    [...leadingArgs, videoPath, String(interval), String(region.x), String(region.y), String(region.w), String(region.h)],
+    [
+      ...leadingArgs,
+      videoPath,
+      String(interval),
+      String(region.x),
+      String(region.y),
+      String(region.w),
+      String(region.h),
+      String(strip.x),
+      String(strip.y),
+      String(strip.w),
+      String(strip.h),
+      ...boxes.flatMap((b) => [String(b.x), String(b.y), String(b.w), String(b.h)]),
+    ],
     { stdio: ['ignore', 'pipe', 'pipe'], signal: opts.signal }
   );
 

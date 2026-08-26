@@ -17,7 +17,8 @@
 //            nickname and is usually a rank percentage
 //   IVs      the three appraisal bars, measured in pixels (see bars.js)
 //   level    solved for, from species + IVs + CP + max HP (see level.js)
-//   shadow   stated by the caption when present ("This Shadow Machamp...")
+//   shadow   the colour of the action button showing above the appraisal
+//            panel -- pink PURIFY or green POWER UP (see purify.js)
 //
 // Recording advice worth passing on to a user: open the appraisal, and rest
 // about a second on each Pokemon before swiping. Frames mid-swipe are thrown
@@ -35,6 +36,9 @@ import { IV_SNAP_WARN } from './bars.js';
  * @property {string} name
  * @property {{atk: number, def: number, hp: number}} ivs
  * @property {boolean} shadow
+ * @property {boolean} shadowKnown - whether `shadow` was read off the screen
+ *   or is the default for a Pokemon nothing on screen described either way.
+ * @property {'button'|'aura'|'text'|undefined} shadowSource - what said so.
  * @property {boolean} purified
  * @property {number} cp
  * @property {number} [maxHp]
@@ -108,18 +112,39 @@ export async function scanFrames(source, opts = {}) {
     );
   }
 
-  // Shadow is the one thing on a collection row that the appraisal screen
-  // simply does not state (see frame.js). Saying so is not optional noise: a
-  // shadow Pokemon written as an ordinary one looks completely normal in the
-  // CSV, so the trainer has to be told which rows were never actually
-  // checked, not left to assume the scan checked all of them.
+  // Shadow is read twice over: from the PURIFY / POWER UP band above the
+  // appraisal panel (purify.js), which states it outright, and where that
+  // band is hidden -- which happens on any card whose page is scrolled past
+  // it -- from the purple smoke around the Pokemon itself (aura.js), which
+  // only resembles it. Which of the two answered matters to the trainer,
+  // because a shadow Pokemon written as an ordinary one looks completely
+  // normal in the CSV. Saying nothing would leave them to assume every row
+  // was checked the same way.
+  const unchecked = groups.filter((g) => !g.shadowKnown);
   const shadows = groups.filter((g) => g.shadow);
+  const byAura = groups.filter((g) => g.shadowSource === 'aura');
+  const auraShadows = byAura.filter((g) => g.shadow);
   warnings.push(
-    `Shadow could not be read for ${groups.length - shadows.length} of ${groups.length} Pokemon -- ` +
-      'Pokemon GO only says "PURIFY" / "SHADOW BONUS" with the appraisal panel CLOSED, and ' +
-      `the recording showed that for ${shadows.length}${shadows.length ? ` (${shadows.map((g) => g.name).join(', ')})` : ''}. ` +
-      'Every other row is written as not shadow whether it is or not -- set the flag by hand for any you know of.'
+    `Shadow read from the screen for ${groups.length - unchecked.length} of ${groups.length} Pokemon` +
+      `${shadows.length ? `; ${shadows.length} of them are shadow (${shadows.map((g) => g.name).join(', ')})` : ', none of them shadow'}.`
   );
+  if (byAura.length > 0) {
+    warnings.push(
+      `${byAura.length} of those had the PURIFY button hidden behind the appraisal panel and were judged by ` +
+        `the purple aura around the Pokemon instead${auraShadows.length ? `, which found ${auraShadows.length} shadow (${auraShadows.map((g) => g.name).join(', ')})` : ', and found none shadow'}. ` +
+        'The aura is a resemblance rather than a statement -- it got all 26 shadows and none of the 231 ' +
+        'ordinary Pokemon in the recordings it was measured against, but it is the half of this scan worth ' +
+        'a second look.'
+    );
+  }
+  if (unchecked.length > 0) {
+    warnings.push(
+      `Shadow could NOT be read at all for ${unchecked.length} of ${groups.length} Pokemon ` +
+        `(${unchecked.map((g) => g.name).join(', ')}) -- the button was hidden and no frame of ` +
+        `${unchecked.length === 1 ? 'it' : 'them'} could be measured for an aura. ` +
+        'Those rows are written as not shadow whether they are or not.'
+    );
+  }
 
   for (const key of Object.keys(rejected)) {
     if (key.startsWith('unrecognized species')) {
@@ -132,6 +157,10 @@ export async function scanFrames(source, opts = {}) {
     name: group.name,
     ivs: group.ivs,
     shadow: group.shadow,
+    // false when nothing on any frame of this Pokemon stated shadow either
+    // way, so `shadow: false` above is a default rather than a reading.
+    shadowKnown: group.shadowKnown,
+    shadowSource: group.shadowSource,
     purified: group.purified,
     cp: group.cpVotes[0]?.value,
     maxHp: group.maxHp,

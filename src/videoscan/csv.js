@@ -2,7 +2,7 @@
 //
 // Writes scanned Pokemon out in this project's generic collection format --
 // the same `name,atk,def,sta,shadow,level,cp` header src/importer already
-// reads (PLAN.md), so a scanned video drops straight into the normal
+// reads, so a scanned video drops straight into the normal
 // pipeline: `node scripts/scan-video.mjs box.mp4 --out out/box.csv` then
 // `node src/cli.js out/box.csv`.
 

@@ -9,6 +9,8 @@
 // come in as nulls (frame.js refuses to read them), so a Pokemon is simply a
 // run of consecutive readable frames that agree.
 
+import { auraVerdict } from './aura.js';
+
 /** Unreadable frames this many in a row or fewer are a blink, not a swipe. */
 const DEFAULT_GAP_TOLERANCE = 3;
 
@@ -21,6 +23,10 @@ const DEFAULT_GAP_TOLERANCE = 3;
  *   species the caption could mean (see species.js); one entry for almost all.
  * @property {string[]} types - the type badges read off this frame.
  * @property {boolean} shadow
+ * @property {boolean} [button] - what the action button above the appraisal
+ *   panel said (purify.js): true PURIFY, false POWER UP, undefined hidden.
+ * @property {{blueShift: number, darkening: number}} [aura] - how much this
+ *   frame's background looks like a shadow's purple smoke (aura.js).
  * @property {boolean} purified
  * @property {number} cp
  * @property {number} [maxHp]
@@ -95,7 +101,10 @@ function applyHints(mons, hints) {
     const matches = mons.filter(
       (m) => m.maxHp === hint.maxHp && m.cpVotes.some((v) => v.value === hint.cp)
     );
-    if (matches.length === 1) matches[0].shadow = true;
+    if (matches.length === 1) {
+      matches[0].shadow = true;
+      matches[0].shadowKnown = true;
+    }
   }
   return mons;
 }
@@ -139,7 +148,13 @@ function summarize(group) {
     // "psychic + flying" seen once says strictly more about which Oricorio
     // this is than "psychic" seen three times.
     types: bestTypes(rs.map((r) => r.types ?? [])),
-    shadow: group.first.shadow,
+    shadow: group.first.shadow || readShadow(rs).shadow === true,
+    // Whether this Pokemon's shadow flag was actually read off the screen or
+    // merely left at its default, and which of the two things that can say so
+    // said it. index.js reports the difference rather than letting an
+    // unchecked Pokemon look like a checked one.
+    shadowKnown: group.first.shadow || readShadow(rs).shadow !== undefined,
+    shadowSource: group.first.shadow ? 'text' : readShadow(rs).source,
     purified: group.first.purified,
     // Every distinct CP the frames offered, commonest first -- index.js picks
     // between them using the stats, because any one of them may be a number
@@ -156,6 +171,46 @@ function summarize(group) {
     maxDelta: Math.max(...settled.flatMap((r) => r.deltas)),
     ivDisagreement,
   };
+}
+
+/**
+ * What this Pokemon's frames say about shadow, from the two things on screen
+ * that can say it.
+ *
+ * The button is asked first and is never overruled. It is the Pokemon's own
+ * page stating the fact outright, where the aura is a resemblance -- and the
+ * two do not fail in the same way, so the aura is exactly what is left for
+ * the roughly one Pokemon in three whose button never came out from behind
+ * the panel.
+ *
+ * @param {Reading[]} readings
+ * @returns {{shadow: boolean|undefined, source: 'button'|'aura'|undefined}}
+ */
+function readShadow(readings) {
+  const button = votedShadow(readings);
+  if (button !== undefined) return { shadow: button, source: 'button' };
+  const aura = auraVerdict(readings.map((r) => r.aura));
+  return { shadow: aura, source: aura === undefined ? undefined : 'aura' };
+}
+
+/**
+ * What this Pokemon's frames agreed the action button said.
+ *
+ * Two frames are required before the band is believed, and any disagreement
+ * throws the whole vote away. Both guards earn their keep on real
+ * recordings: a single frame caught while the panel was still sliding shows
+ * the band half-drawn and reads pink on a Pokemon that is not shadow, and
+ * that mistake never survives a second frame.
+ *
+ * @param {Reading[]} readings
+ * @returns {boolean|undefined}
+ */
+function votedShadow(readings) {
+  const pink = readings.filter((r) => r.button === true).length;
+  const green = readings.filter((r) => r.button === false).length;
+  if (pink >= 2 && green === 0) return true;
+  if (green >= 2 && pink === 0) return false;
+  return undefined;
 }
 
 /**
@@ -232,6 +287,7 @@ export function mergeDuplicates(groups) {
     if (seen.maxHp === undefined) seen.maxHp = group.maxHp;
     seen.cpVotes = [...seen.cpVotes, ...group.cpVotes];
     seen.ivDisagreement = seen.ivDisagreement || group.ivDisagreement;
+    seen.shadowKnown = seen.shadowKnown || group.shadowKnown;
     seen.maxDelta = Math.max(seen.maxDelta, group.maxDelta);
     if (key !== lastKey && !merged.includes(group.name)) merged.push(group.name);
     lastKey = key;

@@ -9,20 +9,30 @@
 //
 // Usage:
 //   swift scan.swift <video> <intervalSeconds> <rx> <ry> <rw> <rh>
+//                    [<sx> <sy> <sw> <sh> [<bx> <by> <bw> <bh>]...]
 //
 // <rx,ry,rw,rh> are the pixel-region of interest in normalized, TOP-LEFT
-// origin coordinates.
+// origin coordinates. <sx,sy,sw,sh> is an optional second region, the
+// "strip", summarised one row at a time instead of run-length encoded.
+// Any further quadruples are "boxes", each summarised as a single mean
+// colour -- the coarsest summary there is, for a caller that only wants to
+// compare one patch of the screen against another.
 //
 // Output: JSON Lines on stdout, one object per sampled frame:
 //   {"t":0.25,"w":384,"h":832,
 //    "text":[{"x":..,"y":..,"w":..,"h":..,"c":0.5,"s":"CP1498"}],
-//    "rows":[{"y":645,"runs":[[x,len,r,g,b],...]}]}
+//    "rows":[{"y":645,"runs":[[x,len,r,g,b],...]}],
+//    "strip":[[r,g,b],...],"boxes":[[r,g,b],...]}
 //
 // `text` boxes are normalized with a TOP-LEFT origin (Vision's own
 // bottom-left origin is converted here) so JS never has to flip anything.
 // `rows` holds only rows that contain a long non-white run -- a generic
 // structural filter that keeps horizontal bar-like shapes and throws away
 // the flat background, keeping the JSON small on long videos.
+// `strip` is the mean colour of every row of the strip region, top to
+// bottom -- the cheapest possible summary of a tall narrow slice, for
+// finding a horizontal band whose colour matters but whose edges do not.
+// `boxes` is one mean colour per box argument, in the order given.
 
 import AVFoundation
 import CoreImage
@@ -42,6 +52,15 @@ let rx = Double(args[3]) ?? 0.0
 let ry = Double(args[4]) ?? 0.0
 let rw = Double(args[5]) ?? 1.0
 let rh = Double(args[6]) ?? 1.0
+let strip: (Double, Double, Double, Double)? =
+  args.count >= 11
+    ? (Double(args[7]) ?? 0.0, Double(args[8]) ?? 0.0, Double(args[9]) ?? 0.0, Double(args[10]) ?? 0.0)
+    : nil
+/// Every complete quadruple after the strip. A trailing partial one is
+/// ignored rather than read as zeroes, which would average the whole frame.
+let boxArgs: [(Double, Double, Double, Double)] = stride(from: 11, to: args.count - 3, by: 4).map {
+  (Double(args[$0]) ?? 0.0, Double(args[$0 + 1]) ?? 0.0, Double(args[$0 + 2]) ?? 0.0, Double(args[$0 + 3]) ?? 0.0)
+}
 
 // Two pixels belong to the same run when every channel is within this of the
 // run's first pixel. Large enough to survive video compression noise on a
@@ -107,6 +126,21 @@ let x1 = max(x0 + 1, min(outW, Int((rx + rw) * Double(outW))))
 let y1 = max(y0 + 1, min(outH, Int((ry + rh) * Double(outH))))
 let regionW = x1 - x0
 let minRunLen = max(4, Int(MIN_RUN_FRACTION * Double(regionW)))
+
+// Strip region, same clamping.
+let sx0 = strip.map { max(0, min(outW - 1, Int($0.0 * Double(outW)))) } ?? 0
+let sy0 = strip.map { max(0, min(outH - 1, Int($0.1 * Double(outH)))) } ?? 0
+let sx1 = strip.map { max(sx0 + 1, min(outW, Int(($0.0 + $0.2) * Double(outW)))) } ?? 0
+let sy1 = strip.map { max(sy0 + 1, min(outH, Int(($0.1 + $0.3) * Double(outH)))) } ?? 0
+
+/// Boxes in pixels, clamped the same way, resolved once rather than per frame.
+let boxes: [(Int, Int, Int, Int)] = boxArgs.map { b in
+  let bx0 = max(0, min(outW - 1, Int(b.0 * Double(outW))))
+  let by0 = max(0, min(outH - 1, Int(b.1 * Double(outH))))
+  return (bx0, by0,
+          max(bx0 + 1, min(outW, Int((b.0 + b.2) * Double(outW)))),
+          max(by0 + 1, min(outH, Int((b.1 + b.3) * Double(outH)))))
+}
 
 var buf = [UInt8](repeating: 0, count: outW * outH * 4)
 
@@ -234,6 +268,39 @@ func encodeRow(_ y: Int) -> String? {
   return "{\"y\":\(y),\"runs\":[\(body)]}"
 }
 
+/// Mean colour of every row of the strip region, top to bottom.
+func encodeStrip() -> String {
+  guard strip != nil else { return "" }
+  var out: [String] = []
+  out.reserveCapacity(sy1 - sy0)
+  let width = sx1 - sx0
+  for y in sy0..<sy1 {
+    var r = 0, g = 0, b = 0
+    for x in sx0..<sx1 {
+      let o = (y * outW + x) * 4
+      r += Int(buf[o]); g += Int(buf[o + 1]); b += Int(buf[o + 2])
+    }
+    out.append("[\(r / width),\(g / width),\(b / width)]")
+  }
+  return out.joined(separator: ",")
+}
+
+/// Mean colour of each box, in the order the boxes were given.
+func encodeBoxes() -> String {
+  boxes.map { box in
+    let (bx0, by0, bx1, by1) = box
+    var r = 0, g = 0, b = 0
+    for y in by0..<by1 {
+      for x in bx0..<bx1 {
+        let o = (y * outW + x) * 4
+        r += Int(buf[o]); g += Int(buf[o + 1]); b += Int(buf[o + 2])
+      }
+    }
+    let n = (bx1 - bx0) * (by1 - by0)
+    return "[\(r / n),\(g / n),\(b / n)]"
+  }.joined(separator: ",")
+}
+
 /// Downscale a frame for the text recognizer, or hand it back as-is when it
 /// is already small enough.
 func forOCR(_ cg: CGImage) -> CGImage {
@@ -294,7 +361,9 @@ while reader.status == .reading, let sample = output.copyNextSampleBuffer() {
 
   let line = "{\"t\":\(fmt(ts)),\"w\":\(outW),\"h\":\(outH)," +
     "\"text\":[\(recognizeText(forOCR(cg)).joined(separator: ","))]," +
-    "\"rows\":[\(rows.joined(separator: ","))]}\n"
+    "\"rows\":[\(rows.joined(separator: ","))]," +
+    "\"strip\":[\(encodeStrip())],"  +
+    "\"boxes\":[\(encodeBoxes())]}\n"
   stdout.write(line.data(using: .utf8)!)
   emitted += 1
 }
