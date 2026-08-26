@@ -231,7 +231,7 @@ function bestBy(arr, valueFn) {
  * the function is now async either way so callers must `await` it.
  *
  * Win rates and team RANKING are identical between the serial and threaded
- * paths (verified: test/teams.test.js, and by hand against a real CLI run).
+ * paths (verified: test/e2e.test.js, and by hand against a real CLI run).
  * Exact `avgHpMargin`/`safeSwap.avgHpPct` numbers
  * can drift by a small amount, because threading changes the ORDER battles
  * run in and pvpoke's own Pokemon#resetMoves() has a discovered

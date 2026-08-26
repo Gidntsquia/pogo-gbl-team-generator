@@ -1331,7 +1331,7 @@ function renderDoneMarker(result) {
 /**
  * Run the full evolutionary search and write per-generation checkpoints, the
  * rolling analytics file, the final report, and the DONE marker. Exported so
- * test/evolveScript.test.js can drive it in-process (same pattern as
+ * a test could drive it in-process (the dedicated evolve test was folded into test/e2e.test.js; same pattern as
  * scripts/tournament.mjs's runTournament / src/cli.js's runPipeline).
  *
  * @param {string} csvPath

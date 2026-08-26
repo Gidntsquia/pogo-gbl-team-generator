@@ -4,7 +4,7 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 
 **Fresh clone / start of every scheduled run:** `bash scripts/setup.sh` FIRST — `vendor/pvpoke` is gitignored and absent until it runs.
 
-- Tests: `npm test` (fast tier) while working, `npm run test:full` before a push. Only node's built-in `node:test` + `node:assert`. Full policy and the rest of the commands under **Tests** below.
+- Tests: `npm test` (fast tier, ~1s) while working, `npm run test:full` (~13s) before a push. Real battles run in `test/e2e.test.js` and nowhere else. Only node's built-in `node:test` + `node:assert`. Full policy and the rest of the commands under **Tests** below.
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
 - `vendor/pvpoke` is a pinned read-only sparse clone (gitignored). Load/execute its code and data; never edit it, never reimplement its battle math. Need a path not checked out? `git -C vendor/pvpoke sparse-checkout add <path>`.
 - Module interfaces are documented in the JSDoc on each exported function, and README.md explains how the pieces fit — follow them exactly; if one proves wrong, say so in your report rather than silently changing it.
@@ -26,22 +26,19 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 | `package.json`, `scripts/tests.mjs`, the `vendor/pvpoke` pin, a dependency | `npm run test:full` |
 | nothing — you are about to push | `npm run test:full` |
 
-`npm run test:full` costs minutes, tells you nothing the targeted run didn't, and
-running it on a loop is how an afternoon disappears.
+The union runs in about 13 seconds and the fast tier in about 1. Neither is
+something to ration — the table is about picking the run that answers your
+question, not about avoiding cost.
 
 These override the table:
 
-- **A small change gets a small run.** Running the full suite to check a
-  one-line edit isn't caution, it's this section being ignored. If you can name
-  the file you changed, you can name the test that covers it.
-- **After a failure, re-run that test file, not the suite.** Widen only once
-  it's green, and only one row at a time.
-- **At most one full-suite run per session**, at the end. Having already run it
-  is a reason not to run it again, not a reason to be sure.
+- **A small change gets a small run.** Not because the suite is expensive, but
+  because a green run over code you didn't touch tells you nothing. If you can
+  name the file you changed, you can name the test that covers it.
+- **After a failure, re-run that test file, not the suite.** The failure is
+  right there; widen only once it's green.
 - **The push is the gate, not the edit.** The closing `npm run test:full` is
-  yours to run and is not optional — foreground, with a
-  300000–600000 ms timeout. Nothing else will catch what it catches. That is
-  exactly why it belongs once at the end and not after every edit.
+  yours to run and is not optional. Nothing else will catch what it catches.
 - **Don't run tests to prove unrelated code still works.** That is what the
   tier is for.
 
@@ -59,16 +56,25 @@ If you genuinely can't tell which test covers a change, run `npm run test:change
 
 The tier is a marker, not a list: a file is slow when its header comment contains `@slow`, and `scripts/tests.mjs` reads that and nothing else. `grep -l @slow test/` answers "what does `npm test` skip?".
 
-**Where the line sits:** the fast tier is unit tests — a module, its inputs, its
-outputs. A file goes `@slow` when it drives a `scripts/*.mjs` harness end to end,
-spawns `worker_threads`, writes a report to disk, or runs enough real pvpoke
-battles to cost seconds. Every `@slow` marker carries its measured solo cost and
-the reason, so the line stays checkable rather than a matter of taste.
+**Where the line sits:** `test/e2e.test.js` is the only file in the suite that
+runs real pvpoke battles, and it is the only `@slow` file. Everything else works
+on hand-built fixtures, fake matrices, or pure functions.
+
+**Adding a test that needs the engine to actually fight?** It goes in
+`test/e2e.test.js`, asserted against one of the shared runs already at module
+scope there — not a fresh run of its own, and not a new file. The expensive work
+happens once and the tests read its results. That rule is the whole reason the
+union is 13 seconds instead of the 158 it used to be: the suite was re-simulating
+from eleven files to check plumbing a single run already proved.
+
+A handful of fast-tier files (`engine`, `scoring`, `evolve`, `metaTeams`,
+`sampleTeams`, `sampleCandidates`) still call `simBattle`/`scoreCollection`/
+`battleTeams` against tiny hand-built inputs. They cost ~0s together and are
+unit tests of those call sites, not simulation runs.
 
 Tiering costs no coverage on the narrow path: `test:changed` maps changed modules
 to test files without consulting the marker, so editing `src/engine/teamBattle.js`
-still runs `teamBattle.test.js` and the nine other files that touch it. The tier
-only decides what the *unfiltered* run skips.
+still pulls in `e2e.test.js`. The tier only decides what the *unfiltered* run skips.
 
 `node --test test/<file>.test.js` bypasses `scripts/tests.mjs` entirely, so it
 runs an `@slow` file too when you name it. That is deliberate — it is the one

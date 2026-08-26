@@ -44,7 +44,7 @@ import { runBattles, createExecutor, defaultThreadCount } from '../src/engine/pa
 
 const IVS = { atk: 0, def: 15, hp: 15 };
 // Two competitively-matched Great League staple trios (not a blowout like
-// the STRONG_IDS/WEAK_IDS pair in test/teamBattle.test.js) so turn counts and
+// the STRONG_IDS/WEAK_IDS pair in test/e2e.test.js) so turn counts and
 // per-battle cost are representative of real evaluator/tournament runs,
 // which pit strong candidate teams against strong meta teams.
 const TEAM_A_IDS = ['azumarill', 'registeel', 'altaria'];
@@ -280,7 +280,7 @@ async function main() {
   console.log(`  avg turns/battle:      ${avgTurns.toFixed(1)}`);
 }
 
-// Only auto-run when executed directly (not when imported by bench.test.js).
+// Only auto-run when executed directly (not when imported by a test).
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
     console.error(err);

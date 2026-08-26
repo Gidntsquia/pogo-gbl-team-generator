@@ -196,7 +196,7 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
 
 /**
  * Run the full pipeline and return the pieces the report needs. Exported so
- * test/cli.test.js can drive it with tiny knobs without spawning a subprocess.
+ * test/e2e.test.js drives it with tiny knobs without spawning a subprocess.
  *
  * Sampling (default) vs exhaustive (`opts.exhaustive: true`) only
  * changes how `candidates`/`metaTeams` are produced; evaluateTeams itself

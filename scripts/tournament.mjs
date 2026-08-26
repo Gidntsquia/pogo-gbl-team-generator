@@ -863,7 +863,7 @@ function renderDoneMarker(result) {
 
 /**
  * Run the full 3-stage overnight tournament and write checkpoints + the
- * final report + DONE marker. Exported so test/tournament.test.js can drive
+ * final report + DONE marker. Exported so a test can drive
  * it in-process with a tiny opts object (same pattern as src/cli.js's
  * runPipeline) -- the CLI's main() below just parses argv into this same
  * opts shape.

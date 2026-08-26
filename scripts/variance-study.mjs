@@ -13,7 +13,7 @@
 // rolls -- see vendor/pvpoke/src/js/training/TrainingAI.js), but
 // src/engine/teamBattle.js already patches the vm's Math.random with a
 // seeded mulberry32 PRNG derived per battle from (teams, leads, seed) --
-// test/bench.test.js already verifies battleTeams is bit-identical for a
+// test/e2e.test.js already verifies battleTeams is bit-identical for a
 // FIXED battle order under a fixed seed. So "AI randomness" itself
 // contributes ZERO variance once pinned; the actual variance source found
 // earlier is different: pvpoke's own Pokemon#resetMoves() reads a

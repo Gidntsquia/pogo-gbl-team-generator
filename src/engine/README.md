@@ -73,7 +73,7 @@ the three things a browserless run is missing:
 **Balance / tolerance.** A residual player-1 edge remains from pvpoke's
 emulate design, so mirror matches land *near* 50/50 rather than exactly:
 across all 9 lead pairings of a top-meta team against itself the split is
-5–4. `test/teamBattle.test.js` therefore asserts neither side takes more than
+5–4. `test/e2e.test.js` therefore asserts neither side takes more than
 6 of 9 pairings (win rate inside `[2/9, 7/9]`), not a hard 50/50. A blatantly
 dominant team (3 top-meta mons vs 3 joke mons) wins **all 9** pairings.
 
@@ -291,7 +291,7 @@ confirms the reuse itself is correct, just not yet benchmarked end-to-end.
 roughly-equal groups, through repeated `run()` calls against ONE
 `createExecutor()` pool instead of one `runBattles()` call -- exercising
 exactly the amortization scenario above (`runBenchPersistent` in
-`scripts/bench.mjs`, covered at tiny N by `test/bench.test.js`). Per-batch
+`scripts/bench.mjs`, no longer covered by a test after the suite consolidation). Per-batch
 timing is printed (or returned in the JSON via `--json`), so batch 0 (pool
 boot + battles) is directly comparable against batch 1+ (amortized, no
 boot) -- this is the tool to run locally to fill in the table above with
@@ -332,13 +332,25 @@ needs -- no additional plumbing was required.
 
 ## Resolved: battle order and reused-instance state (history; was "Known limitation")
 
+> **Note on the test citations below.** This section was written when the suite
+> ran real battles from eleven files, and it cites `test/teamBattle.test.js`,
+> `test/tournament.test.js` and `test/teams.test.js` as the proofs for the two
+> mechanisms. Those files were removed when the suite was consolidated so that
+> `test/e2e.test.js` is the only place real battles run. The *fixes* described
+> here are still in the code and still correct — but the specific regression
+> tests that pinned them (the pre-battle-state probe, the `wrapRunScenario`
+> restore tests, and the replayed 332-battle flip) went with those files and are
+> **not** currently covered. Treat the citations as history, not as a claim about
+> what the suite checks today. Re-pinning them would mean porting those cases
+> into `test/e2e.test.js`.
+
 **Status (2026-08-22): RESOLVED.** Every mechanism behind this
 section's history is fixed, INCLUDING the threaded-execution follow-up the
 "What this does NOT yet establish" paragraph below left open. Serial and
 threaded execution of the same battles are now bit-identical -- not merely
 winner-equivalent or rank-equivalent -- verified directly (`assert.deepEqual`
-on full result objects, `avgHpMargin` included, in both `test/teams.test.js`
-and `test/tournament.test.js`) and at scale (`scripts/variance-study.mjs`
+on full result objects, `avgHpMargin` included, in `test/e2e.test.js`
+) and at scale (`scripts/variance-study.mjs`
 across several seeds/pool sizes, 0 flips throughout). **Serial is no longer
 the "reference" mode threaded execution merely approximates -- both are
 simply correct.** The rest of this section is kept as history: it explains
