@@ -64,6 +64,79 @@ score appendix), plus a self-contained `out/report.html` with the same
 content styled for reading in a browser (no build step, no external CSS/JS —
 just open the file).
 
+### Building the CSV from a screen recording (`scripts/scan-video.mjs`)
+
+**macOS only.** If you'd rather not keep a Poke Genie export up to date, you
+can record your box with your phone and have that video turned into the CSV
+above:
+
+```bash
+node scripts/scan-video.mjs my-box.mp4 --out out/scanned.csv
+node src/cli.js out/scanned.csv
+```
+
+**How to record.** Open a Pokemon, tap **Appraise** so the three stat bars
+are showing, then swipe through your box resting about a second on each
+Pokemon. AirDrop the recording to your Mac. Frames caught mid-swipe are
+thrown away on purpose, which is why the pause matters.
+
+Two things the game does make this harder than it sounds, and the scanner
+handles both rather than trusting any single frame:
+
+- **The Pokemon is drawn over its own CP.** A wing or a flame crossing the
+  digits makes the number read short (`968` comes back as `96`). So CP is
+  settled per Pokemon rather than per frame: max HP is printed inside the
+  white card where nothing covers it, and species + IVs + HP narrow the CP to
+  a short list — usually one. A CP recovered that way is always reported as a
+  warning, never written silently.
+- **The appraisal bars animate in.** The first frame or two after a swipe
+  genuinely shows shorter bars than the real IVs, so the frames of one
+  Pokemon vote and the settled reading wins.
+
+**What it reads, and from where:**
+
+| Column | Read from |
+| --- | --- |
+| `cp` | the large `CP 1498` text above the Pokemon |
+| `name` | the caught-location caption — *"This **Trevenant** was caught on…"* |
+| `atk` / `def` / `sta` | the three appraisal bars, measured in pixels |
+| `level` | not shown on screen — solved for from species + IVs + CP + max HP |
+| `shadow` | the caption, when it says so (*"This **Shadow** Machamp…"*) |
+
+A Pokemon is identified across frames by species + max HP, so two of the same
+species scan as two rows as long as their HP differs.
+
+The species deliberately comes from the caption rather than the name above
+the stats, because that name is your own **nickname** — for most PvP players
+it's a rank percentage ("Trevena91.1"), not a species.
+
+Because CP, max HP and the three IVs over-determine each other, every row is
+checked before it is written: if no level in the game's range produces the
+CP *and* the HP that were read, the scan misread something and the row is
+flagged as a warning instead of quietly landing in your CSV.
+
+```
+node scripts/scan-video.mjs <video.mp4> [options]
+  --out PATH      CSV output path                 (default out/scanned.csv)
+  --interval S    seconds between sampled frames  (default 0.25)
+  --no-level      skip level derivation (faster; leaves the level column blank)
+  --json PATH     also write the full per-Pokemon detail as JSON
+  --quiet         only print the summary line
+```
+
+Roughly half the length of the recording: a 28-second clip of 15 Pokemon
+scans in about 14 seconds.
+
+No npm dependency, no ffmpeg and no OCR install: frame decoding is
+AVFoundation and text recognition is Apple's Vision framework, both macOS
+system frameworks, driven by the small `src/videoscan/scan.swift` helper.
+That helper needs the Xcode Command Line Tools (`xcode-select --install`);
+it is compiled once into `out/.videoscan/` and reused (an unoptimized script
+run is ~5x slower, since it measures every pixel of every sampled frame).
+Everything it doesn't do — deciding what a frame shows, measuring the bars,
+grouping frames into Pokemon — is plain JavaScript in `src/videoscan/` and is
+unit-tested against recorded frames in `fixtures/videoscan/`.
+
 ### Options
 
 ```
@@ -445,6 +518,13 @@ npm test                              # everything
 node --test test/<file>.test.js       # one suite
 ```
 
+`test/videoscan.test.js` covers the video importer against real frames
+recorded off a phone — `fixtures/videoscan/appraisal-frames.jsonl` (a
+downscaled clip) and `ultra-frames.jsonl` (full resolution, including a
+maxed stat drawn in red, a CP behind the Pokemon's animation, and a frame
+caught while the bars were still filling) — so it needs no video and no
+macOS frameworks to run.
+
 `test/e2e.test.js` runs the full pipeline (import → score → build meta
 teams → evaluate → report) against the bundled fixture collection with a
 small search size, and checks the resulting report file.
@@ -460,6 +540,9 @@ See `ROADMAP.md` for the full backlog. Notably:
   moveset by default — pass `--current-moves` to use each mon's actual
   currently-learned moves instead (see "Current-moves mode" above); moves
   that don't resolve fall back to recommended with a warning.
+- The video importer (`scripts/scan-video.mjs`) is macOS-only, needs the
+  appraisal panel visible in the recording, and cannot see a Pokemon's
+  moves, Lucky or Best Buddy status — only what the appraisal screen shows.
 - Great League (default) and Ultra League (`--cp 2500`) are both supported
   end-to-end; the community-curated opponent teams and the optional live
   usage snapshot are Great League only (see "Leagues (`--cp`)" above).
