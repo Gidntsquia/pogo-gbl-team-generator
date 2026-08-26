@@ -21,8 +21,8 @@ const communityRaw = JSON.parse(readFileSync(COMMUNITY_FILE, 'utf8'));
 
 test('loads the curated Great League meta teams (>=8, all 3v3)', () => {
   // Vendor-preset-specific invariants (species-joined id/name format) --
-  // scoped to includeCommunity: false since T10b's community teams carry
-  // their own human-authored names/ids instead (see the T10b tests below).
+  // scoped to includeCommunity: false since the community teams carry
+  // their own human-authored names/ids instead (see the community tests below).
   const teams = loadMetaTeams(ctx, { includeCommunity: false });
   assert.ok(teams.length >= 8, `expected >=8 meta teams, got ${teams.length}`);
   for (const team of teams) {
@@ -87,15 +87,19 @@ test('limit caps how many teams are built', () => {
   assert.deepEqual(three.map((t) => t.id), full.slice(0, 3).map((t) => t.id));
 });
 
-// GOALS T10b: community-curated opponent teams (data/meta-teams-community.json).
+// Community-curated opponent teams (data/meta-teams-community.json).
 
-test('community file loads and its teams resolve fully battle-ready (>=51 of 58)', () => {
-  assert.equal(communityRaw.teams.length, 58, 'source file has 58 entries under the pinned data (33 + T26\'s 13 Yasser Aleed teams + 12 Jaxon ladder teams)');
+test('community file loads and its teams resolve fully battle-ready (>=54 of 57)', () => {
+  // 2026-08-26 (Jaxon): the 12 JP Nature Cup + 3 JP player-party teams and all 3
+  // Mimikyu teams were deleted (Mimikyu is banned in Competitor's Cup, the GL
+  // format he plays), and 17 teams he fought on ladder that day were added.
+  // 58 - 18 + 17 = 57.
+  assert.equal(communityRaw.teams.length, 57, 'source file has 57 entries under the pinned data (33 + 13 Yasser Aleed teams + 12 Jaxon ladder teams, minus 18 JP-cup/JP-party/Mimikyu, plus 17 Aug-26 ladder teams)');
 
   const teams = loadCommunityTeams(ctx);
   assert.ok(
-    teams.length >= 51,
-    `expected >=51/58 community teams to resolve (a few JP ids like arctibax may legitimately be absent from the pinned gamemaster), got ${teams.length}`
+    teams.length >= 54,
+    `expected >=54/57 community teams to resolve (the JP ids that used to fail here, e.g. arctibax, went out with the JP-cup teams), got ${teams.length}`
   );
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
@@ -192,7 +196,7 @@ test('a small limit on loadMetaTeams stays within the vendor pool (documented of
   );
 });
 
-// GOALS T31: Jaxon's 7 real-ladder opponent teams + the file-wide
+// Jaxon's 7 real-ladder opponent teams + the file-wide
 // "members[0] is the established lead" doctrine.
 
 test('every community team is stamped leadIndex: 0 (declared-lead doctrine)', () => {
