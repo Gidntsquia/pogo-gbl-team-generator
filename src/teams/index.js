@@ -1,6 +1,6 @@
 // JavaScript Document
 //
-// Team evaluator + ranking (PLAN.md Rev 2). Turns the 1v1 scoring matrix into
+// Team evaluator + ranking. Turns the 1v1 scoring matrix into
 // candidate 3-mon teams, battles each candidate against every meta team across
 // all 3x3 lead pairings using the real pvpoke 3v3 engine (src/engine/
 // teamBattle.js), and ranks them by mean team-battle win rate. No battle math
@@ -9,13 +9,13 @@
 // combinatorics (which teams to try, from which mons) and the bookkeeping
 // (tally wins, average HP margins, pick the best lead and the safest switch).
 //
-// Safe-swap analysis (ROADMAP known-gap): each battle already reports
+// Safe-swap analysis (a known gap): each battle already reports
 // per-member surviving HP (survivorsHp.aPerMon); safeSwap picks, among the
 // two non-lead members, whichever averages the highest remaining-HP fraction
 // across every battle where it was switched in rather than leading. Free --
 // no additional battles are run for it.
 //
-// Fixed-side convention (see PROGRESS.md 2026-08-20T17:59Z / 18:03Z): pvpoke's
+// Fixed-side convention: pvpoke's
 // emulate mode carries a small residual player-1 side edge. Every candidate is
 // always evaluated as team A (the same fixed side), so that constant offset is
 // identical for every candidate and cancels in the RELATIVE ranking. Absolute
@@ -105,7 +105,7 @@ function speciesOf(matrix, key) {
  * of each physical Pokemon. Returns a shallow matrix copy
  * with pruned `ratings`/`builtMons`; other fields are shared unchanged.
  *
- * Originally lived in src/cli.js (T5); moved here (GOALS T11) so the weighted
+ * Originally lived in src/cli.js; moved here so the weighted
  * candidate sampler (src/teams/sample.js) and the exhaustive CLI path share
  * exactly one implementation instead of drifting. Behavior is unchanged.
  *
@@ -178,8 +178,8 @@ function combinations3(items) {
  * C(20,3)=1140 candidates; times a full 25-team meta times 9 is ~256k battles
  * -- far too many for an interactive run. The knobs to keep it sane are topK
  * here and `limit` on loadMetaTeams (and, for reporting only, teamCount). The
- * CLI (T5) is expected to pass a small topK and a capped meta for a quick run;
- * the default is left at the PLAN-specified 20 so a deliberate full run is
+ * CLI is expected to pass a small topK and a capped meta for a quick run;
+ * the default is left at 20 so a deliberate full run is
  * possible, but callers should size topK x metaTeams to their time budget.
  *
  * @param {object} matrix - scoreCollection's return (needs ratings + builtMons).
@@ -220,24 +220,24 @@ function bestBy(arr, valueFn) {
  * (3 candidate leads x 3 meta leads) via battleTeams. Teams are ranked by mean
  * win rate; ties broken by mean surviving-HP margin.
  *
- * GOALS T15b: when `opts.threads` is set, every battle across every candidate
+ * When `opts.threads` is set, every battle across every candidate
  * is collected into one flat spec list and run through a single
  * src/engine/parallel.js runBattles() call (one worker pool for the whole
  * evaluateTeams call, not one per candidate) instead of calling battleTeams
  * serially; results are consumed back in the exact same (candidate, metaTeam,
  * leadA, leadB) order the serial path iterates in. `opts.threads` omitted/
  * falsy keeps today's serial battleTeams loop untouched -- same code path as
- * before this ticket. Public interface is otherwise frozen (PLAN Rev 2/3);
+ * before threading was added. Public interface is otherwise frozen;
  * the function is now async either way so callers must `await` it.
  *
  * Win rates and team RANKING are identical between the serial and threaded
- * paths (verified: test/teams.test.js, and by hand against a real CLI run --
- * PROGRESS.md's T15b entry). Exact `avgHpMargin`/`safeSwap.avgHpPct` numbers
+ * paths (verified: test/teams.test.js, and by hand against a real CLI run).
+ * Exact `avgHpMargin`/`safeSwap.avgHpPct` numbers
  * can drift by a small amount, because threading changes the ORDER battles
  * run in and pvpoke's own Pokemon#resetMoves() has a discovered
  * order-sensitivity when a Pokemon instance is reused across sequential
  * battles (see src/engine/README.md's "Known limitation" section) -- this is
- * pre-existing pvpoke behavior, not something this ticket's threading
+ * pre-existing pvpoke behavior, not something this module's threading
  * introduces; serial execution is merely self-consistent because its order
  * never changes run to run.
  *
@@ -277,7 +277,17 @@ export async function evaluateTeams(ctx, params) {
       return {
         key,
         speciesId: b.speciesId,
-        name: b.name,
+        // Shadow is a FLAG on the spec, not part of the base speciesId (see the
+        // typedef above), so `b.name` is the plain species name -- a shadow mon
+        // and its ordinary counterpart render identically. Every report renders
+        // members through this `name`, so a team built on a shadow read as if it
+        // used the normal form. Regional forms never had this problem: they ARE
+        // distinct speciesIds, so "Corsola (Galarian)" comes through on its own.
+        // Stamp the qualifier here, at the one place report-facing members are
+        // constructed, rather than in each renderer. Guarded so a name that
+        // already carries it (an opponent resolved from a real "<id>_shadow"
+        // gamemaster entry) is not double-suffixed.
+        name: b.spec?.shadow && !/\(Shadow\)/.test(b.name) ? `${b.name} (Shadow)` : b.name,
         pokemon: b.pokemon,
         spec: b.spec,
         // Build-cost inputs (see buildCost on TeamResult): where this mon is

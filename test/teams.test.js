@@ -126,6 +126,35 @@ describe('evaluateTeams', () => {
     }
   });
 
+  // Shadow is a flag on the spec, not a distinct speciesId, so a shadow mon and
+  // its ordinary counterpart used to render under the same name -- the jet-gl-2
+  // run reported "Typhlosion / Thievul / Walrein" for a team whose Typhlosion was
+  // the shadow. Regional forms never had the bug (they are their own speciesIds).
+  test('a shadow member renders its name with the (Shadow) qualifier', async () => {
+    const shadowCollection = [
+      { speciesId: 'registeel', name: 'Registeel', ivs: RANK1_IVS, shadow: true, sourceRow: 1 },
+      { speciesId: 'azumarill', name: 'Azumarill', ivs: RANK1_IVS, shadow: false, sourceRow: 2 },
+      { speciesId: 'altaria', name: 'Altaria', ivs: RANK1_IVS, shadow: false, sourceRow: 3 },
+    ];
+    const matrix = scoreCollection(ctx, shadowCollection, { groupEntries: TEST_META });
+    // topK is the candidate POOL size, so all 3 go in: C(3,3) = one candidate
+    // against one meta team = 9 battles.
+    const ranked = await evaluateTeams(ctx, {
+      matrix,
+      metaTeams: loadMetaTeams(ctx, { limit: 1 }),
+      opts: { topK: 3 },
+    });
+
+    const names = ranked[0].members.map((m) => m.name);
+    assert.ok(names.includes('Registeel (Shadow)'), `shadow member keeps its qualifier, got ${names.join(', ')}`);
+    assert.ok(names.includes('Azumarill'), 'non-shadow members are untouched');
+    assert.equal(
+      names.filter((n) => /\(Shadow\)/.test(n)).length,
+      1,
+      'only the shadow member is qualified, and it is not double-suffixed'
+    );
+  });
+
   test('result objects are well-formed', async () => {
     const matrix = scoreCollection(ctx, collection, { groupEntries: TEST_META });
     const metaTeams = loadMetaTeams(ctx, { limit: 2 });
@@ -190,16 +219,16 @@ describe('evaluateTeams', () => {
     assert.equal(ranked.length, 2);
   });
 
-  // GOALS T15b originally found opts.threads' battle-order changes could
+  // Threading work originally found opts.threads' battle-order changes could
   // drift exact avgHpMargin (a discovered pvpoke engine characteristic --
   // see src/engine/README.md's "Known limitation") even though win rates and
-  // ranking held. GOALS T20-T20b then found and fixed the distinct
+  // ranking held. Later work then found and fixed the distinct
   // order-dependence mechanisms behind that (index/battle staleness; a
   // runScenario restore-block leak; and finally stale
   // hasActed/priority/baitShields/farmEnergy on bench members, which
   // fullReset()/setRoster() never touch and which only the two active leads
-  // get freshly written each battle -- see src/engine/README.md and
-  // PROGRESS.md's T20b entries for the full history). With all of them
+  // get freshly written each battle -- see src/engine/README.md for the
+  // full history). With all of them
   // fixed, serial and threaded execution of the same battles are
   // bit-identical, not merely rank-equivalent -- verified directly by
   // comparing the full result objects (avgHpMargin included), not just
