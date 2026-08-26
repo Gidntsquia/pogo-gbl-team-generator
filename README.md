@@ -419,8 +419,18 @@ exhaustively enumerated (see `src/meta/usage.js`, `src/teams/sample.js`,
   shows up on more candidate teams.
 - **Opponent teams** (`--opponents`, `--curated-ratio`): a mixture of
   curated/community Great League team presets (a `--curated-ratio`
-  fraction, default 0.4) plus weighted-random 3-mon compositions from the
-  wide usage-weighted pool.
+  fraction) plus weighted-random 3-mon compositions. The composed half draws
+  from a **meta-capped** species pool: the top N species by pvpoke's own
+  overall ranking score (default 100, `--opponent-meta-pool` in
+  `scripts/evolve.mjs`), *then* weighted by usage within that pool. The cap
+  decides "does anyone play this"; the weights decide "how often, among
+  those". Weighting alone was not enough — at the usage exponent of 2.5 the
+  top 50 species hold only ~7% of the total weight across pvpoke's
+  1,144-species field, so an uncapped draw produced three fringe picks per
+  team and applied no real pressure. Every opponent team, curated or
+  composed, carries a **designated lead** in `members[0]`: curated teams
+  declare it in the data file, composed ones get the member with the highest
+  `lead` role prior (see "Role priors" below).
 - **Reproducibility** (`--seed`): everything is driven by a seeded PRNG
   (`src/util/rng.js`, no npm dependency) — the same collection + the same
   `--seed` always produces the same candidate/opponent teams. The seed used
@@ -492,8 +502,12 @@ node scripts/tournament.mjs fixtures/sample-pokegenie.csv --threads 4
   see its own `--help`) defaults to `max(1, cpus - 1)` already; pass
   `--threads 1` to force serial.
 - Either way, the *same* `(seed, threads)` reproduces the exact same battle
-  results every run — worker assignment is a deterministic function of the
-  battle list and thread count, not real-time scheduling.
+  results every run — and so does a *different* thread count, and so does
+  serial. What a result depends on is its own spec and seed, nothing else.
+  (Which worker runs which battle is not fixed: workers take a contiguous
+  chunk each and then steal from whoever is furthest behind, so nobody sits
+  idle waiting on a straggler. Nothing observable depends on the assignment —
+  see `src/engine/parallel.js`'s "Tail work-stealing".)
 - A threaded run's results are **bit-identical** to a serial run's, not just
   rank-equivalent — several distinct reused-instance state-leak mechanisms
   that used to cause rare cross-run drift (see `src/engine/README.md`'s
@@ -525,8 +539,10 @@ node scripts/evolve.mjs fixtures/sample-pokegenie.csv --population 8 --opponents
 ```
 
 **The selection scheme, in plain words** ("locked leads" and
-battle-reality fitness are both described below): every generation, every team in the population is battled against a
-fresh sample of opponent teams. The bottom third by win rate die. Each
+battle-reality fitness are both described below): every generation, every team
+in the population is battled against every team in the opponent pool (which is
+a population of its own — see "Both sides evolve" below). The bottom third by
+win rate die. Each
 *surviving* team then rolls a chance to mutate — the better a team did
 relative to the rest of that generation, the more likely it mutates (from a
 5% floor for the weakest survivors up to a 40% ceiling for the top) — and a
@@ -544,14 +560,14 @@ which one stopped the run.
 different individuals in the population (evolution can promote a back to
 lead via the lead-rotation mutation above, same spirit as a member swap).
 Every generation's fitness battle battles a team ONLY at its own declared
-lead, against each opponent's own lead (curated/preset teams have no
-data-declared lead today, so their first listed member is used as a
-documented default; randomly-composed sampled opponents get a seeded lead
-keyed to their own id) — one battle per opponent instead of the pre-Rev-6
-scheme's three, freeing up ~3x the battle budget to spend on
-`--opponents-per-gen`/`--generations` instead. The final generation's
-`--elites` get a 3-pairing pass (their own lead against all 3 of the
-opponent's possible leads) for the report's bestLead/safe-swap detail.
+lead, against each opponent's own declared lead — one battle per opponent
+instead of the pre-Rev-6 scheme's three, freeing up ~3x the battle budget to
+spend on `--opponents-per-gen`/`--generations` instead. Opponents declare a
+lead the same way candidates do: curated teams from the data file, composed
+ones from pvpoke's `leads` role prior at composition time. The final elites
+pass uses the same one-pairing rule (it used to spread each elite over all 3
+of the opponent's possible leads) — now that every opponent has a real lead,
+averaging over two leads nobody plays only adds noise.
 
 **Fitness: `--fitness classic|battle-reality`:** by
 default (`battle-reality`) a team's fitness blends its plain
@@ -592,6 +608,54 @@ each generation's top-10-by-fitness teams (`topTeams`) with these same
 fields, so they're trackable across generations, not just in the final
 elites pass.
 
+**Both sides evolve** (`src/meta/opponentPool.js`): the opponent pool is not
+re-drawn from scratch each generation — it is a *persistent population* that
+culls, mutates and takes immigrants just like the candidate side, so "beat the
+opponent pool" cannot collapse into "beat one fixed list of ~110 curated
+teams". That collapse is exactly the overfitting this design exists to break.
+The two sides run at deliberately different temperatures:
+
+| | candidate pool (`src/teams/evolve.js`) | opponent pool (`src/meta/opponentPool.js`) |
+| --- | ---: | ---: |
+| culled per generation | 1/3 | 15% of the evolvable half |
+| mutation rate | 5% → 40% (fitness-ramped) | 2% → 20% (fitness-ramped) |
+| curated-entry mutation | — | 3% flat |
+| immigrants | ~10% | ~8% of the evolvable half |
+
+The opponent pool is a *measuring instrument*, not a search: churning it hard
+would make a candidate's win rate mean something different every generation.
+**Curated entries are protected** — never culled, never modified in place, and
+topped back up to `--curated-ratio` of the pool every generation. They can
+still throw off a mutant (at that 3% flat rate), but the mutant is a *new*
+entry with `origin: 'curated-mutant'` taking a freed evolvable slot while the
+real team stays in the pool untouched. That is what keeps the pool anchored to
+teams actually observed on the ladder. An opponent's fitness is free: it is
+`1 - (mean candidate win rate against it)`, the other side of the ledger the
+generation's battles already produced.
+
+**The schedule** (`--population-final-ratio`): the candidate population
+*shrinks* over the run (to 40% of `--population` by the last generation, floor
+12) while the opponent count *grows* to match, holding `population ×
+opponents` — the per-generation battle grid — roughly flat. Late generations
+therefore measure fewer, better teams against a much wider field, instead of
+spending the same budget re-confirming that the weak teams are weak.
+
+**The ranking number:** the report sorts on a **Score** that blends the elites
+pass with recent history — `0.7 × elites-pass win% + 0.3 × mean win% over the
+last 5 generations` (the last *quarter* of the run when fewer than 20
+generations ran). The elites pass is the only apples-to-apples measurement, so
+it carries the majority; the trailing average spans several independent
+opponent pools, which is what filters out a team that merely drew a friendly
+final generation. A team younger than the window ranks on the elites pass
+alone. Both components are printed next to the Score in every report table.
+
+**Battle memo cache:** identical pairings are memoized within a run, keyed on
+the two teams' resolved specs and leads. pvpoke battles are deterministic, so
+a cache hit returns the numbers a re-simulation would have produced — this is
+a speed knob, not an accuracy trade. Hit rate is reported in the run summary.
+`--no-battle-cache` re-simulates everything (an escape hatch for A/B checking
+the cache itself, not a correctness setting).
+
 **Flags** (`node scripts/evolve.mjs --help` for the full list with
 defaults): `--population`, `--opponents-per-gen`, and `--generations` size
 the search (battles per generation ≈ `population × opponents-per-gen`, one
@@ -599,12 +663,17 @@ battle per pairing under the locked-lead scheme above); `--seed` controls
 reproducibility; `--threads` battles through the same persistent worker-pool
 executor `--threads` uses elsewhere in this repo (defaults to
 `max(1, cpus - 1)`); `--deadline-minutes` stops the run before starting
-another generation once past budget; `--fixed-opponents` reuses one opponent
-draw for every generation instead of a fresh one each time; `--elites`
-controls how many of the final generation's top teams get the final
-evaluation pass (best lead, safe swap); `--fitness` selects the fitness
-metric (above); `--cp`, `--score-meta`, `--pool`, `--curated-ratio`, and
-`--exclude` mean the same thing they do elsewhere in this repo.
+another generation once past budget; `--fixed-opponents` freezes the opponent
+pool at its generation-0 draw (no evolution, no resizing) — the pre-arms-race
+behavior, kept for A/B comparisons; `--elites` controls how many of the final
+generation's top teams get the final evaluation pass (the ranking win%, safe
+swap, hardest opponents);
+`--population-final-ratio` sets how far the candidate population shrinks by the
+last generation; `--opponent-meta-pool` caps the composed opponents' species
+pool; `--no-battle-cache` disables pairing memoization; `--fitness` selects the
+fitness metric (above); `--cp`, `--score-meta`, `--pool`, `--curated-ratio`
+(default 0.66), and `--exclude` mean the same thing they do elsewhere in this
+repo.
 
 **Checkpoint format:** each `out/evolve-gen<N>.json` is tagged with a
 `formatVersion`. A checkpoint written under an incompatible population/
@@ -619,11 +688,19 @@ population sampling, opponent draws, mutation rolls, and immigrant picks are
 all derived from that one seed. Change the seed and you get a different
 (but still deterministic) trajectory.
 
+**The final elites pass** fights each of the top `--elites` teams against
+*every* curated team, untouched and at its declared lead, plus the strongest
+teams the opponent pool evolved over the run — in practice all of them, since
+the live pool holds far fewer evolvable entries than the ~110 curated teams.
+Both sides lead with their designated lead, one battle per pairing, so the
+headline win% is a team's record against the real field.
+
 **Output:** `out/my-teams-evolve.md` / `out/my-teams-evolve.html` (same
 `--out`/`--html`/`--no-html` flags as the other CLIs) report the final
-elite teams (win%, best lead, safe swap, hardest opponents), a
-generation-by-generation summary, a species-trajectory table (representation
-per generation for the top species), and the top elite 2-species "cores".
+elite teams (Score, elites-pass win%, trailing win%, safe swap, hardest
+opponents), a generation-by-generation summary, a species-trajectory table
+(representation per generation for the top species), the final opponent pool's
+composition and toughest members, and the top elite 2-species "cores".
 Per-generation checkpoints (`out/evolve-gen<N>.json`) and a rolling
 analytics file (`out/evolve-generations.json`) are also written — a killed
 run resumes from its last completed generation automatically. All of the
@@ -698,9 +775,16 @@ team: two mons isn't a team.)
 ## Tests
 
 ```bash
-npm test                              # everything
-node --test test/<file>.test.js       # one suite
+npm test                              # fast tier (~1s) -- what to run while working
+npm run test:changed                  # only what the working tree touches
+npm run test:full                     # the union, incl. real battles -- before a push
+node --test test/<file>.test.js       # one suite (never skips, even a slow one)
 ```
+
+The tier is a marker, not a list: a file is slow when its header comment
+contains `@slow`, and `scripts/tests.mjs` reads that and nothing else.
+`test/e2e.test.js` is the only file that runs real pvpoke battles and the only
+`@slow` one; everything else works on hand-built fixtures or pure functions.
 
 `test/videoscan.test.js` covers the video importer against real frames
 recorded off a phone — `fixtures/videoscan/appraisal-frames.jsonl` (a
@@ -711,7 +795,9 @@ macOS frameworks to run.
 
 `test/e2e.test.js` runs the full pipeline (import → score → build meta
 teams → evaluate → report) against the bundled fixture collection with a
-small search size, and checks the resulting report file.
+small search size, and checks the resulting report file. It is the one place
+real battles run: every other suite asserts against the shared runs already at
+its module scope, or against hand-built fixtures.
 
 ## Known limitations / not yet implemented
 

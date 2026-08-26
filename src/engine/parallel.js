@@ -104,14 +104,13 @@
 // is still deterministic given its own spec, the exact sequence of battles
 // any one worker's Pokemon instances see was not reproducible.
 //
-// `createExecutor` now partitions specs into CONTIGUOUS chunks, one per
+// `createExecutor` therefore partitions specs into CONTIGUOUS chunks, one per
 // worker, computed once per `run()` call from nothing but `specs.length` and
 // the pool's (fixed-at-boot) worker count -- see `partitionContiguous` below.
-// A worker only ever asks for the next spec inside ITS OWN chunk, so the
-// exact sequence of specs (and therefore the exact sequence of reused-Pokemon-
-// instance battles) any given worker index processes is now a pure function
-// of (specs, threads), independent of real execution timing. Two runs of the
-// same (specs, threads) are therefore bit-for-bit reproducible.
+// A worker takes the next spec inside ITS OWN chunk, so the sequence of specs
+// (and therefore the sequence of reused-Pokemon-instance battles) a given
+// worker index processes is, for as long as its chunk lasts, a pure function
+// of (specs, threads) rather than of real execution timing.
 //
 // Contiguous chunks (worker 0 gets specs [0, n/threads), worker 1 the next
 // slice, etc.) were chosen over striping (worker i gets every i-th spec)
@@ -120,14 +119,44 @@
 // together (all 9 lead pairings against one meta team are adjacent, etc.) --
 // contiguous chunks keep that locality inside one worker's build cache, while
 // striping would spread every team's battles evenly across every worker,
-// diluting cache hits for no benefit (throughput is unaffected either way;
-// only which specs share a worker's instance-reuse history changes). This
-// replaces the old availability-based dispatch outright rather than being an
-// opt-in mode -- reproducibility is a strict improvement with no observable
-// downside for the roughly-uniform-cost battle workloads this executor
-// serves (a pathologically uneven batch could in principle leave one worker's
-// chunk running long after the others finish theirs; not a concern at
-// tournament/evolve scale where per-battle cost is fairly stable).
+// diluting cache hits for no benefit.
+//
+// --- Tail work-stealing, and what "reproducible" means now (2026-08-26) -----
+//
+// The paragraph above USED to end by claiming two runs of the same (specs,
+// threads) are bit-for-bit reproducible BECAUSE the assignment is timing-
+// independent, and accepted the cost that names itself: "a pathologically
+// uneven batch could in principle leave one worker's chunk running long after
+// the others finish theirs". Measurement (2026-08-26, evolve-scale batches at
+// threads=7) put that at a 3.7% median / 7.7% mean wall-clock loss -- not
+// pathological at all, just the ordinary spread of per-battle cost, made
+// worse by E-core/P-core asymmetry.
+//
+// It is also a cost paid for a guarantee that is no longer load-bearing. The
+// order-sensitivity that motivated the static partition -- a reused Pokemon
+// instance carrying a `resetMoves()` tie-break artifact between battles -- was
+// root-caused and FIXED on 2026-08-22 (uninitialized bench-member
+// `baitShields`/`farmEnergy`/`priority`/`hasActed`; see README.md's "Net
+// effect: the doctrine is retired"). A battle's result now depends on its own
+// spec and seed and nothing else -- not on what its worker ran before it, not
+// on which worker ran it, not on how many workers there are.
+//
+// So a worker that exhausts its own chunk now STEALS the tail of the busiest
+// remaining chunk instead of idling (`stealNext` below), and the honest
+// statement of the guarantee changes shape:
+//   * RESULTS are reproducible, and always were once the 2026-08-22 fix
+//     landed: same specs + same seed -> same results array, bit for bit,
+//     serial or threaded, at any thread count. That is what callers depend
+//     on and it is asserted by test/parallel.test.js's serial-vs-parallel
+//     tests, test/tournament.test.js's and test/teams.test.js's
+//     threaded-vs-serial bit-identity tests.
+//   * WHICH WORKER ran which spec is no longer a pure function of (specs,
+//     threads) once stealing starts. Nothing observable depends on it, and no
+//     test asserts it.
+// Steals take from the victim's tail so the victim keeps its own forward run
+// of adjacent specs, which is what its build cache is warm for -- locality is
+// preserved for the common case and given up only for the specs that would
+// otherwise have been the straggler's.
 
 import { Worker } from 'node:worker_threads';
 import os from 'node:os';
@@ -371,20 +400,52 @@ export function createExecutor(opts = {}) {
     failActive(err);
   }
 
+  /**
+   * Find a spec to steal for a worker that has exhausted its own chunk: take
+   * the LAST UNCLAIMED index from whichever chunk has the most left. Only
+   * unclaimed indices are eligible (`cursor <= idx < ends`), so a spec is
+   * never handed out twice and the one a victim is currently running is never
+   * touched. Taking from the tail leaves the victim's own forward run of
+   * adjacent specs -- and therefore its build-cache locality -- intact. Ties
+   * go to the lowest worker index, which keeps a run's steal pattern stable
+   * when the timings happen to be. Note the final queued spec of a chunk IS
+   * stealable: that is precisely the straggler case worth fixing (a worker
+   * mid-battle with one spec queued behind it, while another sits idle).
+   * @returns {number} the stolen spec index, or -1 if nothing is stealable.
+   */
+  function stealNext() {
+    let victim = -1;
+    let most = 0; // any chunk with an unclaimed spec is a candidate
+    for (let i = 0; i < active.ends.length; i++) {
+      const remaining = active.ends[i] - active.cursor[i];
+      if (remaining > most) {
+        most = remaining;
+        victim = i;
+      }
+    }
+    if (victim === -1) return -1;
+    return --active.ends[victim];
+  }
+
   /** Hand `worker` (at `workerIndex` in the pool) the next spec inside ITS OWN
-   * deterministic partition range (see module header), or count
-   * it idle-at-end if that range is exhausted. */
+   * contiguous chunk; once that chunk is exhausted, steal the tail of the
+   * busiest remaining chunk (see module header), and only count it
+   * idle-at-end when there is nothing left anywhere to take. */
   function assignNext(worker, workerIndex) {
     if (!active) return;
-    const range = active.partition[workerIndex];
-    if (active.cursor[workerIndex] >= range.end) {
+    let id;
+    if (active.cursor[workerIndex] < active.ends[workerIndex]) {
+      id = active.cursor[workerIndex]++;
+    } else {
+      id = stealNext();
+    }
+    if (id === -1) {
       active.idleAtEnd += 1;
       if (pool && active.idleAtEnd === pool.workers.length) {
         settle(active.resolve, active.results);
       }
       return;
     }
-    const id = active.cursor[workerIndex]++;
     worker.postMessage({ type: 'battle', id, spec: active.specs[id] });
   }
 
@@ -456,6 +517,12 @@ export function createExecutor(opts = {}) {
         results: new Array(specs.length),
         partition,
         cursor: partition.map((r) => r.start),
+        // Mutable copy of each chunk's exclusive end. A steal decrements the
+        // victim's `ends` entry, which is what makes "unclaimed" a single
+        // shared fact: an index is handed out either by its own worker's
+        // `cursor++` or by a stealer's `--ends`, never both, because a steal
+        // only fires while `ends[victim] - cursor[victim] >= 2`.
+        ends: partition.map((r) => r.end),
         idleAtEnd: 0,
         settled: false,
         resolve,

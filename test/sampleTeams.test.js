@@ -1,9 +1,12 @@
 // Tests for src/meta/sampleTeams.js -- the weighted opponent-team sampler.
 // Verifies: determinism under a fixed seed, no duplicate
 // species within a team, curated/sampled mixture proportion, battle
-// readiness (real 3v3 battle), and a loose usage-weight distribution check
-// (top-quartile-weight species appear meaningfully more often than
-// bottom-quartile ones across many sampled teams).
+// readiness (real 3v3 battle), the meta-pool cap (the sampled half only ever
+// draws from the top N species by pvpoke's own ranking score), a loose
+// usage-weight distribution check with that cap lifted (top-quartile-weight
+// species appear meaningfully more often than bottom-quartile ones), and
+// designated leads (members[0] is the lead, chosen from the leads role
+// priors when they're supplied).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +14,12 @@ import assert from 'node:assert/strict';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
-import { sampleOpponentTeams } from '../src/meta/sampleTeams.js';
+import { loadRoleScores } from '../src/meta/roles.js';
+import {
+  DEFAULT_META_POOL_SIZE,
+  loadMovesetPool,
+  sampleOpponentTeams,
+} from '../src/meta/sampleTeams.js';
 
 const ctx = await initEngine();
 const weights = loadUsageWeights(ctx);
@@ -107,12 +115,20 @@ test('a sampled team is battle-ready and usable in a real 3v3 battle', () => {
 });
 
 test('top-quartile-weight species appear meaningfully more often than bottom-quartile ones', () => {
+  // Cap lifted (metaPoolSize: 0) -- this asserts the WEIGHTS still shape the
+  // draw across the full field. The cap is a separate knob, tested below.
   const sorted = [...weights.entries()].sort((a, b) => b[1] - a[1]);
   const n = sorted.length;
   const topSet = new Set(sorted.slice(0, Math.floor(n / 4)).map(([id]) => id));
   const botSet = new Set(sorted.slice(Math.floor((3 * n) / 4)).map(([id]) => id));
 
-  const teams = sampleOpponentTeams(ctx, { count: 220, weights, seed: 'dist-test', curatedRatio: 0 });
+  const teams = sampleOpponentTeams(ctx, {
+    count: 220,
+    weights,
+    seed: 'dist-test',
+    curatedRatio: 0,
+    metaPoolSize: 0,
+  });
   assert.equal(teams.length, 220);
 
   let topCount = 0;
@@ -123,7 +139,60 @@ test('top-quartile-weight species appear meaningfully more often than bottom-qua
       if (botSet.has(m.speciesId)) botCount++;
     }
   }
-  assert.ok(botCount > 0, 'sanity: bottom-quartile species should still appear sometimes');
+  assert.ok(botCount > 0, 'sanity: with the cap lifted, bottom-quartile species appear sometimes');
   const ratio = topCount / botCount;
   assert.ok(ratio >= 2, `expected top-quartile species to appear >=2x as often as bottom-quartile, got ${ratio}`);
+});
+
+test('the meta-pool cap keeps every sampled member inside the top N by ranking score', () => {
+  const capped = new Set(loadMovesetPool(ctx, { metaPoolSize: 30 }).map((e) => e.speciesId));
+  assert.equal(capped.size, 30);
+
+  const teams = sampleOpponentTeams(ctx, { count: 25, weights, seed: 'cap-pool', curatedRatio: 0, metaPoolSize: 30 });
+  for (const team of teams) {
+    for (const m of team.members) {
+      assert.ok(capped.has(m.speciesId), `${m.speciesId} is outside the top-30 meta pool`);
+    }
+  }
+
+  // Default cap, and the uncapped field it is carved out of.
+  const byDefault = loadMovesetPool(ctx);
+  const uncapped = loadMovesetPool(ctx, { metaPoolSize: 0 });
+  assert.equal(byDefault.length, DEFAULT_META_POOL_SIZE);
+  assert.ok(uncapped.length > byDefault.length, 'the cap actually removes species');
+  assert.ok(
+    byDefault.every((e, i) => i === 0 || e.score <= byDefault[i - 1].score),
+    'the pool is score-sorted descending'
+  );
+  assert.ok(byDefault.at(-1).score >= uncapped.at(-1).score, 'the cap keeps the top of the field, not the tail');
+});
+
+test('every team is lead-ordered: members[0] leads, leadIndex is 0', () => {
+  const roleScores = loadRoleScores(ctx);
+  const teams = sampleOpponentTeams(ctx, { count: 12, weights, seed: 'lead-order', curatedRatio: 0.5, roleScores });
+  assert.ok(teams.some((t) => t.label === 'curated') && teams.some((t) => t.label === 'sampled'));
+
+  for (const team of teams) {
+    assert.equal(team.leadIndex, 0, `${team.id} declares members[0] as its lead`);
+    if (team.label !== 'sampled') continue;
+    const leadPriors = team.members.map((m) => roleScores.get(m.speciesId)?.lead ?? 0);
+    assert.equal(
+      leadPriors[0],
+      Math.max(...leadPriors),
+      `${team.id} leads with its highest lead prior (${team.members.map((m) => m.speciesId)})`
+    );
+  }
+});
+
+test('without role scores a sampled lead is still assigned, deterministically', () => {
+  const opts = { count: 8, weights, seed: 'no-roles', curatedRatio: 0 };
+  const a = sampleOpponentTeams(ctx, opts);
+  const b = sampleOpponentTeams(ctx, opts);
+  assert.deepEqual(
+    a.map((t) => t.members.map((m) => m.speciesId)),
+    b.map((t) => t.members.map((m) => m.speciesId))
+  );
+  assert.ok(a.every((t) => t.leadIndex === 0 && t.members.length === 3));
+  // The lead is part of the id, so the id agrees with the member order.
+  assert.ok(a.every((t) => t.id === `sampled-${t.members.map((m) => m.speciesId).join('-')}`));
 });

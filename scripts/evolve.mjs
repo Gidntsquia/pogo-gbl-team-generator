@@ -1,31 +1,95 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// Evolutionary team search driver ("survival of the fittest"),
-// sibling of scripts/tournament.mjs (which stays -- this is
-// an alternate search strategy, not a replacement). Where the tournament
-// funnel narrows a WIDE fixed sample down through progressively deeper
-// opponent pools, this instead runs a genetic algorithm: a population of
-// candidate teams is repeatedly battled, the worst performers die, some
-// survivors mutate (one member swapped), fresh immigrants keep the gene pool
-// open, and the process repeats until the top teams converge -- so compute
-// concentrates on already-good teams instead of being spread evenly across a
-// static sample.
+// Evolutionary team search driver ("survival of the fittest"), sibling of
+// scripts/tournament.mjs (which stays -- this is an alternate search strategy,
+// not a replacement). Where the tournament funnel narrows a WIDE fixed sample
+// down through progressively deeper opponent pools, this runs a CO-EVOLUTIONARY
+// genetic algorithm: a population of candidate teams and a population of
+// opponent teams are repeatedly battled against each other, and BOTH sides
+// cull, mutate and take in immigrants -- so compute concentrates on already
+// -good teams instead of being spread evenly across a static sample, and
+// "good" keeps meaning something as the search goes on.
 //
-// All GA bookkeeping (selection/mutation/immigration/convergence) is
-// src/teams/evolve.js -- pure, no battles. This file's only job
-// is the battle-driving glue: shared collection->matrix setup (mirrors
-// scripts/tournament.mjs's sampled path exactly), per-generation opponent
-// sampling, running every team's battles through the persistent
-// executor, checkpointing, and rendering the report. No battle math is
-// reimplemented anywhere here -- every win/loss/HP number comes from
-// battleTeams (src/engine/teamBattle.js, pvpoke's own emulate engine).
+// All GA bookkeeping is in two pure modules with no battles inside:
+// src/teams/evolve.js (candidate side) and src/meta/opponentPool.js (opponent
+// side). This file's only job is the battle-driving glue: shared collection->
+// matrix setup (mirrors scripts/tournament.mjs's sampled path exactly), running
+// every pairing through the persistent executor, checkpointing, and rendering
+// the report. No battle math is reimplemented anywhere here -- every win/loss/
+// HP number comes from battleTeams (src/engine/teamBattle.js, pvpoke's own
+// emulate engine).
 //
-// EVERY team in the population is battled every generation (elites included
-// -- by design: no stale fitness carryover, no overfitting to
-// one opponent sample), against a FRESH seeded opponent draw each
-// generation by default (`--fixed-opponents` opts out and reuses one draw
-// for the whole run).
+// --- WHY BOTH SIDES EVOLVE (Jaxon 2026-08-26) ------------------------------
+//
+// The previous design drew a fresh opponent pool every generation: a curated
+// majority plus a randomly-composed minority. Candidate teams OVERFIT to it,
+// for two compounding reasons.
+//   * The curated pool is a fixed list of ~110 real teams. Over a long run the
+//     population converges on whatever beats those specific teams.
+//   * The composed minority was drawn from pvpoke's FULL 1,144-species
+//     rankings field, weighted by usage. Weighting alone does not make that
+//     field meta -- the top 50 species hold only ~7% of the total weight, so
+//     the long tail dominated every draw and the composed teams were fringe
+//     junk applying no selection pressure at all.
+// Both are fixed. The composed half is now built from a META-CAPPED species
+// pool (the top N of pvpoke's own ranking -- see src/meta/sampleTeams.js), and
+// the opponent pool is a PERSISTENT POPULATION that culls its weakest members,
+// mutates its survivors and takes in fresh immigrants (src/meta/
+// opponentPool.js), at rates deliberately far gentler than the candidate side's
+// -- gentler still for curated entries, which are additionally never culled and
+// never modified in place, so the pool keeps reflecting on-the-ground team
+// realities while still getting harder.
+//
+// An opponent's fitness costs NO extra battles: it is the other side of the
+// ledger the candidates' own battles already produce (`1 - mean candidate win
+// rate against it`).
+//
+// --- SCHEDULE --------------------------------------------------------------
+//
+// The candidate population SHRINKS across the run and the opponent pool GROWS
+// to match, so late generations spend the same battle budget measuring fewer,
+// better teams against many more opponents. Opponent count is DERIVED from the
+// population to hold `population x opponents` -- the per-generation battle grid
+// -- flat, so the trade is cost-neutral. See populationAt/opponentsAt.
+//
+// --- LEADS -----------------------------------------------------------------
+//
+// A candidate's `team[0]` is its designated lead (src/teams/evolve.js's
+// representation), so every battle runs the candidate at leadA=0 only, never
+// averaged over its own 3 members. EVERY opponent now likewise carries an
+// explicit designated lead at `members[0]`: curated teams by src/meta/teams.js's
+// file-wide member-index-0-is-lead doctrine, composed teams because
+// src/meta/sampleTeams.js picks their lead from pvpoke's own published `leads`
+// rankings and rotates it into slot 0 at composition time. Lead assignment is
+// therefore part of an opponent's identity and evolves with it (lead-rotation
+// is one of the two opponent mutation types).
+//
+// --- FINAL ELITES PASS -----------------------------------------------------
+//
+// The top --elites teams of the last evaluated generation are re-measured
+// against ONE broad, identical opponent set: every curated team, untouched and
+// at its own established lead, plus the strongest teams the opponent GA evolved
+// over the run (held to the run's own curated:evolved ratio). One battle per
+// (elite, opponent) -- both sides at their designated lead. That replaces the
+// old spread across the opponent's 3 possible leads: now that every opponent
+// has a real lead, fighting it at the other two measures a team nobody plays.
+//
+// FINAL RANKING blends two win rates: the elites pass (the only apples-to
+// -apples measurement, so it carries the majority) and the team's mean win rate
+// over the trailing generations (measured against a moving pool, so not
+// comparable in absolute terms, but it averages several independent opponent
+// draws and so filters out a team that merely drew a friendly final
+// generation). See RANKING_WEIGHTS / recentWindowSize.
+//
+// --- BATTLE MEMO CACHE -----------------------------------------------------
+//
+// battleTeams is deterministic given (teams, leads, difficulty), and with both
+// populations persisting most of generation N's grid IS generation N-1's grid.
+// Identical pairings are therefore memoized rather than re-simulated -- not an
+// approximation, and typically the single largest cost saving in a long run.
+// `--no-battle-cache` opts out, and is a pure speed switch: a cached run and
+// an uncached one produce bit-identical results (see createBattleCache).
 //
 // Fixed-side convention (same as scripts/tournament.mjs / src/teams/
 // index.js): every population member is always battled as team A, so
@@ -34,106 +98,25 @@
 //
 // Usage:
 //   node scripts/evolve.mjs <collection.csv> [options]
+//   node scripts/evolve.mjs --help    (the authoritative flag list)
 //
-// Flags (defaults):
-//   --population N        GA population size                        (100)
-//   --opponents-per-gen M  opponent teams sampled each generation     (20)
-//   --generations G        generation cap                            (15)
-//   --seed S               PRNG seed                                 ("pogo-gbl-team-generator-evolve")
-//   --threads N             battle via ONE persistent worker-pool executor
-//                            shared across every generation (src/engine/
-//                            parallel.js), like scripts/tournament.mjs's own
-//                            persistent-executor adoption; this CLI defaults
-//                            to max(1, cpus-1)
-//                            (--threads 1 for the serial reference mode)
-//   --deadline-minutes D   optional wall-clock budget -- if set, the run
-//                            stops BEFORE starting a generation once already
-//                            past the deadline (no opponent-count self-
-//                            tuning like tournament.mjs's stages; simpler --
-//                            see the header note below). Omitted = no
-//                            deadline, only --generations/convergence stop it. (none)
-//   --cp N                 CP cap / league, forwarded to initEngine like
-//                            every other CLI in this repo                 (1500)
-//   --fixed-opponents       draw ONE opponent set (seed `${seed}-opponents`)
-//                            and reuse it every generation, instead of a
-//                            fresh draw per generation                    (off)
-//   --elites N              how many of the final generation's top-fitness
-//                            teams get the final evaluation pass (own lead
-//                            vs. the opponent's 3 leads)
-//                            + bestLead/safeSwap for the report (an
-//                            unspecified count -- documented judgment
-//                            call, mirrors tournament.mjs's s3Top default)  (10)
-//   --score-meta S          1v1-pruning meta size (candidate-pool ranking
-//                            only, mirrors tournament.mjs)                (20)
-//   --pool P                sampling pool size (best-scoring, deduped)     (40)
-//   --curated-ratio R       curated-vs-sampled opponent mix                (0.4)
-//   --exclude a,b            species ids excluded from candidate teams     (none)
-//   --difficulty D           AI difficulty 0-3 override                   (engine default, 3)
-//   --out PATH               final Markdown report path            (<out-dir>/my-teams-evolve.md)
-//   --html PATH              final HTML report path (self-contained, no
-//                            build step, mirrors src/cli.js's --html /
-//                            src/report/index.js's renderReportHtml pattern)
-//                                                    (<out-dir>/my-teams-evolve.html)
-//   --no-evolutions          score mons only in the form you own (never evolve them)
-//   --no-html                skip writing the HTML report                 (off)
-//   --out-dir DIR            checkpoints + DONE marker + default reports  ("out")
-//   --fitness classic|battle-reality  which metric selection/mutation/
-//                            convergence act on -- 'classic' is today's
-//                            plain win-rate; 'battle-reality' blends win rate
-//                            with a snowball term (this team's own lead
-//                            -exchange conversion) and a closer term
-//                            (species-level role priors), see
-//                            DEFAULT_FITNESS_WEIGHTS. Both are always
-//                            computed and reported regardless of which one
-//                            drives the GA.                                ("classic")
-//   --help                   print this help and exit
+// BUDGET MATH: battles/generation = population x opponents-per-gen, held flat
+// across the run by the schedule above. At the flag defaults: 100 x 20 = 2,000
+// pairings/generation; 15 generations = 30,000, plus a final elites pass of
+// elites x (all curated + evolved) -- with the pinned data that is 10 x ~162 =
+// ~1,620. The memo cache means the number of pairings SIMULATED is far lower
+// than the number planned (the report prints both). Measured rates vary by
+// machine (~18ms/battle threaded on Jaxon's Mac) -- size --population/
+// --opponents-per-gen/--generations to your own time budget; --deadline-minutes
+// is a simple stop-before-the-next-generation safety net, not a self-tuning
+// scaler (unlike tournament.mjs's stage 2/3 tuning).
 //
-// LOCKED LEADS: a population member's
-// `team[0]` is its designated lead (src/teams/evolve.js's representation,
-// landed by the prior fire) -- so every per-generation battle now runs the
-// candidate at leadA=0 ONLY, never averaged over its own 3 members. Opponent
-// leads: per Jaxon 2026-08-23, member index 0 IS the established
-// lead for EVERY curated/preset opponent team -- both pvpoke's vendored
-// gobattleleague training presets and data/meta-teams-community.json (whose
-// loader, src/meta/teams.js's loadCommunityTeams, stamps an explicit
-// `leadIndex: 0` on every entry so this reads as declared data rather than a
-// fallback default). Sampled teams (label:'sampled', composed by weighted
-// random draw with no source ordering to begin with) still get a
-// seeded-random pick keyed to the opponent's OWN id -- see opponentLeadIndex()
-// below.
-//
-// BUDGET MATH (revised from the original x3 estimate now that own
-// -lead averaging is gone): battles/generation = population x opponents-per
-// -gen x 1. At the flag defaults: 100 x 20 = 2,000 battles/generation (was
-// 6,000 pre-lead-lock); 15 generations (if run to the cap, no early convergence) =
-// 30,000 battles (was 90,000), plus a final elites pass spread across the
-// opponent's 3 possible leads (elites x opponents-per-gen x 3 = 10 x 20 x 3
-// = 600; was a 9-pairing grid = 1,800 pre-lead-lock, since the elite's OWN lead no
-// longer varies either). REINVESTMENT (ticket-mandated to document, not to
-// auto-apply): this is a ~3x battle-count reduction for the SAME
-// --population/--opponents-per-gen/--generations -- callers can raise
-// opponents-per-gen (more matchup coverage per generation) or generations
-// (deeper search) roughly 3x and land at the same wall-clock cost as before
-// this fire. DEFAULTS are deliberately left UNCHANGED here: a scale bump is
-// its own judgment call with its own acceptance run, not an automatic
-// consequence of a mechanical speedup -- a future ticket/fire can raise them
-// once there's a real run to point to. Measured rates vary by machine
-// (~172ms/battle in the sandbox, ~73ms/battle on Jaxon's local Mac, both
-// MUCH faster threaded) -- size --population/--opponents-per-gen/--generations
-// to your own time budget; --deadline-minutes is a simple stop-before-the-next
-// -generation safety net, not a self-tuning scaler (unlike tournament.mjs's
-// stage 2/3 tuning -- self-tuning isn't needed here,
-// and per-generation opponent/population counts don't have tournament's
-// "narrowing funnel" structure to tune against, so a flat stop is the
-// honest, simple choice).
-//
-// GA TUNABLES (deathRate/mutationFloor/mutationCeil/immigrantFraction/alpha,
-// convergence window/topN): deliberately NOT exposed as CLI flags here --
-// src/teams/evolve.js's exported DEFAULT_* constants (bottom-quarter death,
-// 0.05->0.40 percentile-scaled mutation, ~10% immigrant floor, top-10
-// stable-for-3-generations convergence) already encode Jaxon's revised
-// scheme. A future ticket can add flags if tuning them from the CLI turns
-// out to matter in practice.
+// GA TUNABLES: deliberately NOT exposed as CLI flags. The candidate side's
+// (deathRate/mutationFloor/mutationCeil/leadRotationRate/immigrantFraction/
+// alpha, convergence window/topN) live as exported DEFAULT_* constants in
+// src/teams/evolve.js; the opponent side's live the same way in
+// src/meta/opponentPool.js. A future ticket can add flags if tuning them from
+// the CLI turns out to matter in practice.
 //
 // ROBUSTNESS: each generation writes out/evolve-gen<N>.json (config + that
 // generation's population/fitness/lineage-to-next-gen + timing/analytics) as
@@ -172,10 +155,18 @@ import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
-import { sampleOpponentTeams } from '../src/meta/sampleTeams.js';
+import { loadMovesetPool, DEFAULT_META_POOL_SIZE } from '../src/meta/sampleTeams.js';
+import { loadMetaTeams } from '../src/meta/teams.js';
+import {
+  initOpponentPool,
+  nextOpponentPool,
+  isProtectedOpponent,
+  serializeOpponentPool,
+  rehydrateOpponentPool,
+  curatedHeadcount,
+} from '../src/meta/opponentPool.js';
 import { dedupeBestPerSpecies } from '../src/teams/index.js';
 import { initPopulation, nextGeneration, hasConverged } from '../src/teams/evolve.js';
-import { rngFromSeed } from '../src/util/rng.js';
 import { leagueForCp } from '../src/util/leagues.js';
 import { loadRoleScores } from '../src/meta/roles.js';
 
@@ -188,7 +179,25 @@ const DEFAULTS = Object.freeze({
   elites: 10,
   scoreMeta: 20,
   pool: 40,
-  curatedRatio: 0.4,
+  // 0.66 (Jaxon 2026-08-26, down from the 0.70 his real runs were passing).
+  // Curated teams are the only OBSERVED-reality anchor in the opponent pool,
+  // so they stay the majority; the extra 4 points go to the evolving half,
+  // which is now composed from a meta-capped species pool and gets stronger
+  // over the run instead of being random filler.
+  curatedRatio: 0.66,
+  // Candidate population at the LAST generation, as a fraction of the
+  // gen-0 population (Jaxon 2026-08-26: "cull the candidate team count and
+  // correspondingly increase the opponent team count ... so we can spend more
+  // time refining the strongest teams instead of wasting resources on teams
+  // that are too weak"). Opponent count is then DERIVED to hold
+  // population x opponents -- the per-generation battle grid -- flat, so the
+  // run's cost per generation does not change as the trade is made. See
+  // populationAt/opponentsAt.
+  populationFinalRatio: 0.4,
+  // Species pool the sampled half of the opponent pool is composed from: the
+  // top N of pvpoke's own overall ranking for the run's CP cap. See
+  // src/meta/sampleTeams.js's META-CAPPED POOL note.
+  opponentMetaPool: DEFAULT_META_POOL_SIZE,
   outDir: 'out',
   html: 'my-teams-evolve.html', // resolved against outDir unless --html/opts.html is absolute or explicit
   // Flipped to 'battle-reality' as the DEFAULT -- backed by a real A/B
@@ -204,20 +213,64 @@ const DEFAULTS = Object.freeze({
 
 const FITNESS_MODES = ['classic', 'battle-reality'];
 
+/**
+ * How the final ranking blends the two win-rate measurements
+ * (Jaxon 2026-08-26). `elitePass` is the dedicated final pass -- every elite
+ * against the SAME broad opponent set (the full curated pool plus the run's
+ * strongest evolved opponents), which makes it the only directly comparable,
+ * apples-to-apples number the run produces, so it carries the majority.
+ * `recent` is the team's mean win rate across the last few generations, which
+ * is measured against a moving opponent pool and is therefore not comparable
+ * team-to-team in absolute terms -- but it averages over several independent
+ * opponent draws, so it carries information the single elites pass cannot:
+ * whether a team is durably good or just had a favorable final matchup set.
+ */
+const RANKING_WEIGHTS = Object.freeze({ elitePass: 0.7, recent: 0.3 });
+
+/**
+ * How many trailing generations the `recent` term above averages over: the
+ * last 5, or the last quarter of the run when fewer than 20 generations
+ * actually ran (the two rules agree exactly at 20). At least 1 either way, so
+ * a 1-generation run still produces a number rather than a null.
+ */
+const RECENT_WINDOW_GENERATIONS = 5;
+const RECENT_WINDOW_MIN_GENERATIONS = 20;
+
+function recentWindowSize(generationsRun) {
+  if (generationsRun >= RECENT_WINDOW_MIN_GENERATIONS) return RECENT_WINDOW_GENERATIONS;
+  return Math.max(1, Math.ceil(generationsRun / 4));
+}
+
 // Used only if a generation somehow measures 0 battles (every battle errored)
 // -- keeps timing math finite. Mirrors tournament.mjs's own fallback figure.
 const FALLBACK_MS_PER_BATTLE = 200;
 const SPECIES_STATS_CAP = 25; // report/analytics-JSON cap on how many species rows are kept per generation (documented, not silent -- see renderEvolveReport).
 const TOP_CORES_CAP = 15;
 const TRAJECTORY_SPECIES_CAP = 15;
+const TOUGHEST_OPPONENTS_CAP = 15; // report/analytics-JSON cap on how many opponent rows are kept (same documented-not-silent rule as SPECIES_STATS_CAP).
 
 const LEADS = [0, 1, 2];
+
+// Memo-cache ceiling. Measured (2026-08-26, heap-delta over a real run) at
+// 289 bytes per trimmed entry plus its interned key, so a FULL cache is about
+// 578 MB of main-process heap -- affordable for a run big enough to reach it,
+// and well inside node's default old-space, but not free. Smaller runs never
+// come close: a 120-generation run at the sizes Jaxon actually uses lands
+// around a million distinct pairings, ~290 MB.
+// Past the cap the cache simply stops accepting new entries -- see
+// createBattleCache for why there is no eviction.
+const BATTLE_CACHE_MAX_ENTRIES = 2_000_000;
 
 // Bump whenever a checkpoint's on-disk SHAPE changes in a way `config`
 // -matching alone can't detect (see the ROBUSTNESS comment above). v2 = the
 // locked-lead population representation: `team[0]`
-// is a designated lead, not an arbitrary array slot.
-const CHECKPOINT_FORMAT_VERSION = 2;
+// is a designated lead, not an arbitrary array slot. v3 = the persistent,
+// evolving opponent pool: a checkpoint now also carries the serialized
+// opponent pool it was measured against and the pool it handed to the next
+// generation, plus per-team win rates keyed by team signature (the input to
+// the trailing-generations ranking term). A v2 checkpoint has none of that
+// and cannot be resumed.
+const CHECKPOINT_FORMAT_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Small pure formatting helpers (duplicated from scripts/tournament.mjs --
@@ -313,25 +366,21 @@ function formatDuration(ms) {
 const CANDIDATE_LEAD = 0;
 
 /**
- * Resolve an opponent team's designated lead index -- see the header's
- * LOCKED LEADS note for the full rationale. `opp.leadIndex` (now
- * stamped explicitly by src/meta/teams.js's loadCommunityTeams on every
- * community-curated team) is honored first; a vendor-preset team has no
- * `leadIndex` field but shares the same member-index-0-is-lead doctrine, so
- * it falls through to the same default below.
+ * Resolve an opponent team's designated lead index. Every opponent now
+ * carries one explicitly: curated teams by src/meta/teams.js's file-wide
+ * member-index-0-is-lead doctrine, and composed teams because
+ * src/meta/sampleTeams.js rotates the chosen lead into slot 0 at composition
+ * time (from pvpoke's own published `leads` rankings) and stamps
+ * `leadIndex: 0`. The `?? 0` is the vendor-preset case, which shares the same
+ * doctrine without stamping the field.
  */
-function opponentLeadIndex(seedPrefix, opp) {
-  if (opp.leadIndex !== undefined) return opp.leadIndex;
-  if (opp.label === 'sampled') {
-    const rng = rngFromSeed(`${seedPrefix}|opponentLead|${opp.id}`);
-    return Math.floor(rng() * LEADS.length) % LEADS.length;
-  }
-  return 0; // curated/preset: documented default, first-listed member.
+function opponentLeadIndex(opp) {
+  return opp.leadIndex ?? 0;
 }
 
-/** Own-lead-locked single pairing: candidate's team[0] vs. the opponent's resolved lead. */
-function ownLeadPairing(seedPrefix, opp) {
-  return [{ leadA: CANDIDATE_LEAD, leadB: opponentLeadIndex(seedPrefix, opp) }];
+/** Own-lead-locked single pairing: candidate's team[0] vs. the opponent's declared lead. */
+function ownLeadPairing(opp) {
+  return [{ leadA: CANDIDATE_LEAD, leadB: opponentLeadIndex(opp) }];
 }
 
 // ---------------------------------------------------------------------------
@@ -461,16 +510,164 @@ function pickDesignatedCloser(members, roleScores) {
   }, null);
 }
 
+// ---------------------------------------------------------------------------
+// Population / opponent-count schedule (Jaxon 2026-08-26).
+//
+// The candidate population SHRINKS across the run and the opponent pool GROWS
+// to match, so late generations spend the same battle budget measuring fewer,
+// better teams against many more opponents (less sampling noise per team,
+// less compute burned on teams that were already hopeless). Both are pure
+// functions of the generation index and the run config -- no state, so a
+// resumed run recomputes exactly the same sizes.
+// ---------------------------------------------------------------------------
+
+/** Smallest population the schedule will shrink to, whatever the ratio says -- below this the GA has no gene pool left to work with. Itself capped by `--population`: the floor may not INFLATE a run the caller deliberately asked to keep small (a `--population 8` smoke run must stay at 8). */
+const MIN_SCHEDULED_POPULATION = 12;
+
 /**
- * Final elites pass: candidate's lead stays locked at team[0], but spreads
- * across the opponent's all 3 possible leads (not just its resolved "own"
- * one) for a more robust win-rate/avg-HP-margin/safe-swap read on the report
- * -- 3 battles per (elite, opponent), a 3x reduction from the pre-Rev-6 full
- * 9-pairing grid (which also varied the elite's OWN lead across 3 options,
- * no longer meaningful once the lead is locked).
+ * Candidate population for generation `g`: a straight linear ramp from the
+ * configured `population` down to `population * populationFinalRatio` at the
+ * last allowed generation.
  */
-function ownLeadEliteSpread() {
-  return LEADS.map((leadB) => ({ leadA: CANDIDATE_LEAD, leadB }));
+function populationAt(g, config) {
+  const G = Math.max(1, config.generations);
+  const t = G > 1 ? Math.min(1, g / (G - 1)) : 0;
+  const ratio = 1 - t * (1 - config.populationFinalRatio);
+  const floor = Math.min(MIN_SCHEDULED_POPULATION, config.population);
+  return Math.max(floor, Math.min(config.population, Math.round(config.population * ratio)));
+}
+
+/**
+ * Opponent-pool size for generation `g`: DERIVED from the population so the
+ * per-generation battle grid (population x opponents) stays at its gen-0
+ * value. That is what makes the trade cost-neutral -- the run does not get
+ * slower as it narrows, it just re-spends the same battles on a better
+ * question.
+ */
+function opponentsAt(g, config) {
+  const budget = config.population * config.opponentsPerGen;
+  return Math.max(1, Math.round(budget / populationAt(g, config)));
+}
+
+// ---------------------------------------------------------------------------
+// Battle memo cache.
+//
+// `battleTeams` is deterministic given (teamA specs, teamB specs, leadA,
+// leadB, difficulty) -- src/engine/teamBattle.js resets a fresh Battle, a
+// fresh virtual clock and a seeded RNG per call, and derives its seed from
+// exactly those inputs. The GA re-fights an enormous number of IDENTICAL
+// pairings: two thirds of the candidate population survives each generation
+// unchanged, and (since the opponent pool became persistent) so does most of
+// the opponent pool, so most of generation N's grid is the same grid as
+// generation N-1's. Memoizing it is not an approximation -- it returns the
+// number the battle would have returned.
+//
+// BIT-IDENTICAL, not merely equivalent. An earlier draft of this comment
+// hedged, citing src/engine/README.md's "Known limitation" -- a Pokemon
+// INSTANCE reused across battles carrying a `resetMoves()` tie-break artifact
+// that made exact HP totals (very rarely, winners) depend on the order that
+// instance's battles ran in. That limitation was root-caused and FIXED on
+// 2026-08-22 (uninitialized bench-member `baitShields`/`farmEnergy`/
+// `priority`/`hasActed`; see the README's "Net effect: the doctrine is
+// retired"). Same spec + seed -> same result, whatever ran before it. So the
+// memo returns exactly what a re-simulation would have returned, and
+// `--no-battle-cache` is a speed switch, not a correctness knob -- it exists
+// to A/B the cache itself and to cap memory on a very long run.
+// ---------------------------------------------------------------------------
+
+/** Stable key for one plain-data mon spec. Mirrors src/engine/parallelWorker.js's own `monKey` -- same fields, same order, for the same reason (two specs differing only in an explicit moveset are different mons). */
+function monSpecKey(m) {
+  const moveset = m.fastMove ? `${m.fastMove}/${(m.chargedMoves || []).join(',')}` : '';
+  return `${m.speciesId}|${m.ivs.atk},${m.ivs.def},${m.ivs.hp}|${m.shadow ? 1 : 0}|${m.bestBuddy ? 1 : 0}|${moveset}`;
+}
+
+/**
+ * The battle-result fields anything downstream of `evaluateTeamsInOrder`
+ * actually reads. Cached entries are trimmed to exactly this shape so a long
+ * run's cache stays a few tens of MB instead of a few hundred: `winner`,
+ * `survivorsHp.{a,b,aPerMon}` (win/loss, HP margin, and the per-member
+ * switched-in HP the safe-swap stat needs), and the two `summary` fields the
+ * lead-exchange classifier reads. ADDING A NEW CONSUMER OF SOME OTHER
+ * `summary` FIELD MEANS ADDING IT HERE TOO -- otherwise it silently reads
+ * `undefined` on a cache hit.
+ */
+function trimBattleResult(r) {
+  return {
+    winner: r.winner,
+    survivorsHp: { a: r.survivorsHp.a, b: r.survivorsHp.b, aPerMon: r.survivorsHp.aPerMon },
+    summary: { leadFaintTurnA: r.summary.leadFaintTurnA, leadFaintTurnB: r.summary.leadFaintTurnB },
+  };
+}
+
+/**
+ * Create the run-scoped battle memo. Team specs are interned to small integer
+ * ids so a cache key is ~15 characters rather than the ~250 a pair of full
+ * spec lists would cost -- at a million entries that is the difference
+ * between tens and hundreds of megabytes of keys alone.
+ *
+ * @param {number} maxEntries - stop inserting past this many results (the
+ *   cache degrades to "some misses" rather than growing without bound; there
+ *   is no eviction, because the entries most worth keeping are the oldest --
+ *   long-surviving elites against long-surviving opponents).
+ */
+function createBattleCache(maxEntries) {
+  const teamIds = new Map();
+  const results = new Map();
+  let hits = 0;
+  let misses = 0;
+  let dropped = 0;
+
+  function teamId(specs) {
+    const key = specs.map(monSpecKey).join(';');
+    let id = teamIds.get(key);
+    if (id === undefined) {
+      id = teamIds.size;
+      teamIds.set(key, id);
+    }
+    return id;
+  }
+
+  return {
+    keyFor(teamASpec, leadA, teamBSpec, leadB, difficulty) {
+      return `${teamId(teamASpec)}:${leadA}|${teamId(teamBSpec)}:${leadB}|${difficulty ?? ''}`;
+    },
+    get(key) {
+      const hit = results.get(key);
+      if (hit === undefined) {
+        misses += 1;
+        return undefined;
+      }
+      hits += 1;
+      return hit;
+    },
+    set(key, result) {
+      if (results.size >= maxEntries) {
+        dropped += 1;
+        return;
+      }
+      results.set(key, trimBattleResult(result));
+    },
+    stats() {
+      return { hits, misses, size: results.size, dropped };
+    },
+  };
+}
+
+/**
+ * Cache-disabled stand-in with the same shape, so the battle loop has exactly
+ * one code path. Every `keyFor` call returns a fresh unique string, so
+ * nothing is ever a hit AND nothing is ever deduplicated within a batch
+ * either -- `--no-battle-cache` reproduces the pre-cache behavior exactly,
+ * including re-fighting a pairing that appears twice in the same generation.
+ */
+function createNullBattleCache() {
+  let n = 0;
+  return {
+    keyFor: () => `uncached-${n++}`,
+    get: () => undefined,
+    set: () => undefined,
+    stats: () => ({ hits: 0, misses: 0, size: 0, dropped: 0 }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -481,10 +678,11 @@ function ownLeadEliteSpread() {
  * Canonical JSON-serializable REQUESTED inputs for a run -- compared against
  * a checkpoint's `config` on resume (same key-order-stable, deliberately-
  * conservative approach as scripts/tournament.mjs's buildRunConfig).
- * `deadlineMinutes` and `threads` are excluded on purpose: neither changes
- * what any generation COMPUTES (deadline only decides whether to stop before
- * starting the next one; threads is a pure performance knob), so changing
- * either between runs must not invalidate an existing checkpoint.
+ * `deadlineMinutes`, `threads` and `battleCache` are excluded on purpose:
+ * none changes what any generation COMPUTES (deadline only decides whether to
+ * stop before starting the next one; threads and the memo cache are pure
+ * performance knobs), so changing any of them between runs must not
+ * invalidate an existing checkpoint.
  */
 function buildRunConfig(csvPath, opts) {
   return {
@@ -502,11 +700,23 @@ function buildRunConfig(csvPath, opts) {
     generations: opts.generations ?? DEFAULTS.generations,
     fixedOpponents: !!opts.fixedOpponents,
     eliteCount: opts.eliteCount ?? DEFAULTS.elites,
+    // Both change what every generation COMPUTES (the schedule decides each
+    // generation's population/opponent counts; the meta-pool cap decides which
+    // species a composed opponent can be made of), so both are part of the
+    // checkpoint fingerprint.
+    populationFinalRatio: opts.populationFinalRatio ?? DEFAULTS.populationFinalRatio,
+    opponentMetaPool: opts.opponentMetaPool ?? DEFAULTS.opponentMetaPool,
     // Part of the fingerprint -- resuming a 'classic' run's
     // checkpoints under 'battle-reality' (or vice versa) would silently graft
     // a different generation's fitness semantics onto a population that was
     // selected/mutated under the other one.
     fitness: opts.fitness ?? DEFAULTS.fitness,
+    // NOT in the fingerprint, deliberately: `battleCache`, `threads` and
+    // `deadlineMinutes` -- all three are pure speed knobs that cannot change a
+    // battle's outcome (the memo returns what a re-simulation would return,
+    // and worker count has been bit-identical to serial since the 2026-08-22
+    // engine fix), so toggling one mid-run must not invalidate hours of
+    // checkpoints.
   };
 }
 
@@ -570,6 +780,65 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
 
 function speciesOfTeam(matrix, team) {
   return team.map((key) => matrix.builtMons[key].speciesId);
+}
+
+/**
+ * Lead-aware identity for a candidate team: the lead key, then the two backs
+ * sorted (their relative order carries no meaning). This MUST stay
+ * byte-identical to src/teams/evolve.js's own private `teamSignature` -- that
+ * module uses it for uniqueness and convergence, and this file uses it to
+ * follow one team's win rate across the generations it survived. It is
+ * duplicated rather than exported because it is three lines and the two uses
+ * are genuinely independent; if it ever grows, export it from there instead.
+ */
+function teamSignature(team) {
+  return `${team[0]}||${[...team.slice(1)].sort().join('|')}`;
+}
+
+/**
+ * Per-generation opponent-pool analytics: how the pool is composed and how
+ * hard it actually is. Counting only, over data the generation's battles
+ * already produced -- no extra battles.
+ *
+ * @param {{opponents: object[], opponentFitness: number[]}} params
+ * @returns {{opponentOriginCounts: object, opponentMeanFitness: number,
+ *   opponentMaxFitness: number, toughestOpponents: Array<object>}}
+ */
+function computeOpponentAnalytics({ opponents, opponentFitness }) {
+  const opponentOriginCounts = {};
+  for (const o of opponents) opponentOriginCounts[o.origin ?? o.label ?? 'unknown'] = (opponentOriginCounts[o.origin ?? o.label ?? 'unknown'] ?? 0) + 1;
+  const ranked = opponents
+    .map((o, i) => ({ id: o.id, name: o.name, origin: o.origin ?? o.label ?? null, fitness: opponentFitness[i] ?? 0 }))
+    .sort((a, b) => b.fitness - a.fitness);
+  return {
+    opponentOriginCounts,
+    opponentMeanFitness: opponentFitness.length
+      ? opponentFitness.reduce((sum, f) => sum + f, 0) / opponentFitness.length
+      : 0,
+    opponentMaxFitness: opponentFitness.length ? Math.max(...opponentFitness) : 0,
+    toughestOpponents: ranked.slice(0, TOUGHEST_OPPONENTS_CAP),
+  };
+}
+
+/** Report-facing summary of the run's FINAL opponent pool (composition + its hardest members). */
+function summarizeOpponentPool(pool, fitness) {
+  const originCounts = {};
+  for (const o of pool) originCounts[o.origin ?? o.label ?? 'unknown'] = (originCounts[o.origin ?? o.label ?? 'unknown'] ?? 0) + 1;
+  const ranked = pool
+    .map((o, i) => ({
+      id: o.id,
+      name: o.name,
+      origin: o.origin ?? o.label ?? null,
+      parentId: o.parentId ?? null,
+      members: o.members.map((m) => m.speciesId),
+      fitness: fitness[i] ?? 0,
+    }))
+    .sort((a, b) => b.fitness - a.fitness);
+  return {
+    size: pool.length,
+    originCounts,
+    toughest: ranked.slice(0, TOUGHEST_OPPONENTS_CAP),
+  };
 }
 
 /**
@@ -677,27 +946,66 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
 }
 
 // ---------------------------------------------------------------------------
-// Battle runner: every team in `population` (or a narrower elite slice)
-// against every opponent, in INPUT ORDER (not sorted -- src/teams/evolve.js's
-// nextGeneration needs fitness[i] to correspond to population[i]). Mirrors
-// scripts/tournament.mjs's runFunnelStage's pass1/pass2 + threaded-executor
-// structure; the difference is no candidate narrowing (every generation
-// battles its WHOLE population) and preserved input order.
+// Battle runner. Mirrors scripts/tournament.mjs's runFunnelStage's
+// threaded-executor structure; the differences are no candidate narrowing
+// (every generation battles its WHOLE population), preserved input order, and
+// the memo cache above.
 // ---------------------------------------------------------------------------
 
+/**
+ * Battle every team in `teams` against every opponent, in INPUT ORDER (not
+ * sorted -- src/teams/evolve.js's nextGeneration needs fitness[i] to
+ * correspond to population[i]).
+ *
+ * Structure: (1) plan every pairing and reduce it to a cache key; (2) run the
+ * DISTINCT, not-already-cached pairings once, threaded or serial; (3) walk the
+ * plan again and accumulate per-team and per-opponent statistics from the
+ * outcome map. Step 2 is where the memo cache (and, with it, the whole
+ * saving from re-fighting an unchanged grid) lives; steps 1 and 3 are the
+ * same bookkeeping this function always did.
+ *
+ * @param {object} ctx
+ * @param {{
+ *   teams: string[][], matrix: object, opponents: object[],
+ *   pairingsFor: (opp: object) => Array<{leadA:number, leadB:number}>,
+ *   difficulty?: number, trackLeads?: boolean, executor?: object,
+ *   onLog?: (msg:string)=>void, roleScores?: Map<string, object>,
+ *   cache?: object,
+ * }} params
+ * @returns {Promise<{results:object[], opponentTally:Array<{winPoints:number, battles:number}>,
+ *   battleCount:number, cachedCount:number, errorCount:number, elapsedMs:number,
+ *   startedAt:number, finishedAt:number}>}
+ *   `opponentTally[j]` is the CANDIDATE side's ledger against `opponents[j]`
+ *   across every team battled -- src/meta/opponentPool.js turns it into that
+ *   opponent's fitness (`1 - winPoints/battles`) at no extra battle cost.
+ *   `battleCount` counts battles actually SIMULATED; `cachedCount` counts
+ *   pairings served from the memo (both are reported, so a run's speedup is
+ *   visible rather than implied).
+ */
 async function evaluateTeamsInOrder(ctx, params) {
   // trackLeads' bestLead computation (below) predates the locked
   // leads and still iterates all 3 of the team's OWN lead slots -- left
-  // as-is rather than redesigned this fire (a separate report-level
-  // "Lead / Back / Back" redesign). It still resolves correctly without any
+  // as-is rather than redesigned. It still resolves correctly without any
   // code change: `pairingsFor` now only ever produces leadA=0 battles (see
-  // ownLeadPairing/ownLeadEliteSpread above), so leadWins[1]/leadWins[2] and
+  // ownLeadPairing above), so leadWins[1]/leadWins[2] and
   // leadBattles[1]/leadBattles[2] stay at 0 and the max-by-winRate reduce
   // below trivially always resolves to index 0 (`team[0]`, the locked lead).
-  const { teams, matrix, opponents, pairingsFor, difficulty, trackLeads = false, executor, onLog, roleScores } = params;
+  const {
+    teams,
+    matrix,
+    opponents,
+    pairingsFor,
+    difficulty,
+    trackLeads = false,
+    executor,
+    onLog,
+    roleScores,
+  } = params;
+  const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
   const startedAt = Date.now();
   let battleCount = 0;
+  let cachedCount = 0;
   let errorCount = 0;
 
   const prepared = teams.map((keys) => {
@@ -720,37 +1028,80 @@ async function evaluateTeamsInOrder(ctx, params) {
       };
     });
     const teamASpec = members.map((m) => m.spec);
-    const sig = [...keys].sort().join('|');
-    const oppPlans = opponents.map((opp) => ({ opp, pairings: pairingsFor(sig, opp) }));
+    const oppPlans = opponents.map((opp, oppIndex) => ({ opp, oppIndex, pairings: pairingsFor(opp) }));
     return { members, teamASpec, oppPlans };
   });
 
-  let allResults = [];
-  if (threaded) {
-    const allSpecs = [];
-    for (const { teamASpec, oppPlans } of prepared) {
-      for (const { opp, pairings } of oppPlans) {
-        const teamBSpec = opp.members.map((m) => m.spec);
-        for (const { leadA, leadB } of pairings) {
-          allSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
-        }
-      }
-    }
-    if (allSpecs.length > 0) {
-      try {
-        allResults = await executor.run(allSpecs);
-      } catch (err) {
-        onLog?.(`battle batch error (whole generation's ${allSpecs.length} battles skipped): ${err.message}`);
-        allResults = new Array(allSpecs.length).fill({ ok: false, error: { message: err.message } });
+  // ---- (1) plan: one cache key per pairing, in flat battle order ----------
+  const planKeys = [];
+  const pendingKeys = [];
+  const pendingSpecs = [];
+  const pendingBattles = []; // serial-mode inputs, parallel to pendingSpecs
+  const queued = new Set();
+  for (const { members, teamASpec, oppPlans } of prepared) {
+    const teamA = members.map((m) => m.pokemon);
+    for (const { opp, pairings } of oppPlans) {
+      const teamBSpec = opp.members.map((m) => m.spec);
+      const teamB = opp.members.map((m) => m.pokemon);
+      for (const { leadA, leadB } of pairings) {
+        const key = cache.keyFor(teamASpec, leadA, teamBSpec, leadB, difficulty);
+        planKeys.push(key);
+        if (cache.get(key) !== undefined || queued.has(key)) continue;
+        queued.add(key);
+        pendingKeys.push(key);
+        pendingSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
+        pendingBattles.push({ teamA, teamB, leadA, leadB });
       }
     }
   }
-  let cursor = 0;
 
+  // ---- (2) run only the distinct, uncached pairings -----------------------
+  /** @type {Map<string, {ok:true, value:object}|{ok:false, message:string}>} */
+  const outcomes = new Map();
+  if (threaded) {
+    let slots = [];
+    if (pendingSpecs.length > 0) {
+      try {
+        slots = await executor.run(pendingSpecs);
+      } catch (err) {
+        onLog?.(`battle batch error (whole generation's ${pendingSpecs.length} battles skipped): ${err.message}`);
+        slots = new Array(pendingSpecs.length).fill({ ok: false, error: { message: err.message } });
+      }
+    }
+    slots.forEach((slot, i) => {
+      if (slot.ok) {
+        cache.set(pendingKeys[i], slot.value);
+        outcomes.set(pendingKeys[i], { ok: true, value: slot.value });
+      } else {
+        outcomes.set(pendingKeys[i], { ok: false, message: slot.error.message });
+      }
+    });
+  } else {
+    pendingBattles.forEach((b, i) => {
+      try {
+        const value = battleTeams(ctx, { ...b, difficulty });
+        cache.set(pendingKeys[i], value);
+        outcomes.set(pendingKeys[i], { ok: true, value });
+      } catch (err) {
+        outcomes.set(pendingKeys[i], { ok: false, message: err.message });
+      }
+    });
+  }
+
+  /** Resolve one planned pairing: this batch's fresh result, or the memo. */
+  function outcomeFor(key) {
+    const fresh = outcomes.get(key);
+    if (fresh) return fresh;
+    const hit = cache.get(key);
+    return hit === undefined ? { ok: false, message: 'no result produced for this pairing' } : { ok: true, value: hit, cached: true };
+  }
+
+  // ---- (3) accumulate --------------------------------------------------
+  const opponentTally = opponents.map(() => ({ winPoints: 0, battles: 0 }));
+  let cursor = 0;
   const results = [];
   for (let idx = 0; idx < prepared.length; idx++) {
     const { members, oppPlans } = prepared[idx];
-    const teamA = members.map((m) => m.pokemon);
 
     let winPoints = 0;
     let hpSum = 0;
@@ -766,8 +1117,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     const swapHpSum = [0, 0, 0];
     const swapHpCount = [0, 0, 0];
 
-    for (const { opp, pairings } of oppPlans) {
-      const teamB = opp.members.map((m) => m.pokemon);
+    for (const { opp, oppIndex, pairings } of oppPlans) {
       let oppWinPoints = 0;
       let oppHpSum = 0;
       let oppBattles = 0;
@@ -776,34 +1126,20 @@ async function evaluateTeamsInOrder(ctx, params) {
       let oppTies = 0;
 
       for (const { leadA, leadB } of pairings) {
-        let r;
-        if (threaded) {
-          const slot = allResults[cursor++];
-          if (!slot.ok) {
-            errorCount += 1;
-            candidateErrors += 1;
-            onLog?.(
-              `battle error (skipped): team=[${members.map((m) => m.name).join('/')}] ` +
-                `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${slot.error.message}`
-            );
-            continue;
-          }
-          r = slot.value;
-        } else {
-          try {
-            r = battleTeams(ctx, { teamA, teamB, leadA, leadB, difficulty });
-          } catch (err) {
-            errorCount += 1;
-            candidateErrors += 1;
-            onLog?.(
-              `battle error (skipped): team=[${members.map((m) => m.name).join('/')}] ` +
-                `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${err.message}`
-            );
-            continue;
-          }
+        const outcome = outcomeFor(planKeys[cursor++]);
+        if (!outcome.ok) {
+          errorCount += 1;
+          candidateErrors += 1;
+          onLog?.(
+            `battle error (skipped): team=[${members.map((m) => m.name).join('/')}] ` +
+              `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${outcome.message}`
+          );
+          continue;
         }
+        const r = outcome.value;
+        if (outcome.cached) cachedCount += 1;
+        else battleCount += 1;
 
-        battleCount += 1;
         battles += 1;
         oppBattles += 1;
         const margin = r.survivorsHp.a - r.survivorsHp.b;
@@ -851,6 +1187,8 @@ async function evaluateTeamsInOrder(ctx, params) {
       }
 
       if (oppBattles > 0) {
+        opponentTally[oppIndex].winPoints += oppWinPoints;
+        opponentTally[oppIndex].battles += oppBattles;
         perMeta.push({
           metaTeamId: opp.id,
           name: opp.name,
@@ -921,7 +1259,16 @@ async function evaluateTeamsInOrder(ctx, params) {
     results.push(entry); // positional -- NOT sorted, unlike tournament.mjs's runFunnelStage
   }
 
-  return { results, battleCount, errorCount, elapsedMs: Date.now() - startedAt, startedAt, finishedAt: Date.now() };
+  return {
+    results,
+    opponentTally,
+    battleCount,
+    cachedCount,
+    errorCount,
+    elapsedMs: Date.now() - startedAt,
+    startedAt,
+    finishedAt: Date.now(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -941,8 +1288,10 @@ function renderEvolveReport(result) {
   out.push(
     'Genetic-algorithm search: a population of candidate teams is repeatedly battled, the ' +
       'worst performers die, some survivors mutate one team member, fresh immigrant teams keep the gene pool ' +
-      "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. Every " +
-      "battle runs through pvpoke's own 3v3 emulate engine (`battleTeams`, `src/engine/teamBattle.js`) -- no " +
+      "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. The " +
+      'OPPONENT pool evolves the same way, on its own gentler schedule, around a protected core of real curated ' +
+      'teams -- so "good" means "beats an opponent pool that is itself getting harder", not "beats one fixed list". ' +
+      "Every battle runs through pvpoke's own 3v3 emulate engine (`battleTeams`, `src/engine/teamBattle.js`) -- no " +
       'battle math is reimplemented here.'
   );
   out.push('');
@@ -955,13 +1304,19 @@ function renderEvolveReport(result) {
 
   out.push('## Settings');
   out.push('');
-  out.push(`- Seed: \`${config.seed}\` (per-generation opponent draws: \`-gen<N>\`; population sampling: \`-gen0\`)`);
+  out.push(`- Seed: \`${config.seed}\` (gen-0 population: \`-gen0\`; gen-0 opponent pool: \`-opponents-gen0\`; per-generation advances: \`-next<N>\` / \`-opponents-next<N>\`)`);
   out.push(`- League: ${league.name} (cp=${config.cp})`);
   out.push(
     `- population=${config.population}, opponents-per-gen=${config.opponentsPerGen}, generations cap=${config.generations}, ` +
       `elites=${config.eliteCount}${config.fixedOpponents ? ', fixed-opponents (one draw reused every generation)' : ''}`
   );
   out.push(`- score-meta=${config.scoreMeta}, pool=${config.pool}, curated-ratio=${config.curatedRatio}` + (config.evolutions === false ? ', evolutions=off' : ''));
+  out.push(
+    `- schedule: population ${config.population} -> ${Math.round(config.population * config.populationFinalRatio)} ` +
+      `(final ratio ${config.populationFinalRatio}), opponents ${config.opponentsPerGen} -> ` +
+      `${opponentsAt(config.generations - 1, config)} (derived to hold the per-generation battle grid flat)`
+  );
+  out.push(`- opponent meta pool: top ${config.opponentMetaPool} species by pvpoke's overall ranking score${config.fixedOpponents ? ' (opponent evolution disabled by --fixed-opponents)' : ''}`);
   out.push(`- fitness: ${config.fitness}${config.fitness === 'battle-reality' ? ` (weights: winRate=${DEFAULT_FITNESS_WEIGHTS.winRate}, snowball=${DEFAULT_FITNESS_WEIGHTS.snowball}, closer=${DEFAULT_FITNESS_WEIGHTS.closer})` : ''}`);
   const threadsLabel = (r) => (r.threadsUsed ? `${r.threadsUsed} (worker-pool executor)` : 'serial');
   out.push(`- threads: ${generationRecords.length ? threadsLabel(generationRecords[generationRecords.length - 1]) : 'n/a'}`);
@@ -972,25 +1327,40 @@ function renderEvolveReport(result) {
   out.push('## Run summary');
   out.push('');
   const totalBattles = generationRecords.reduce((s, r) => s + r.timing.battleCount, 0) + result.eliteTiming.battleCount;
+  const totalCached = generationRecords.reduce((s, r) => s + (r.timing.cachedCount ?? 0), 0) + (result.eliteTiming.cachedCount ?? 0);
   const totalErrors = generationRecords.reduce((s, r) => s + r.timing.errorCount, 0) + result.eliteTiming.errorCount;
   out.push(`- Generations run: ${generationRecords.length} of a ${config.generations} cap`);
   out.push(`- Stop reason: ${stopReason}`);
-  out.push(`- Total battles: ${totalBattles} (${totalErrors} errors, skip-and-continue)`);
+  out.push(`- Total battles simulated: ${totalBattles} (${totalErrors} errors, skip-and-continue)`);
+  if (totalCached > 0) {
+    out.push(
+      `- Pairings served from the memo cache: ${totalCached} of ${totalBattles + totalCached} ` +
+        `(${Math.round((100 * totalCached) / (totalBattles + totalCached))}% -- identical pairings are deterministic, so these were not re-simulated)`
+    );
+  }
   out.push(`- Total elapsed: ${formatDuration(result.totalElapsedMs)}`);
   out.push('');
 
   out.push('## Generation-by-generation summary');
   out.push('');
-  out.push('| Gen | Mean fitness | Max fitness | Battles | Errors | Survived | Mutant | Immigrant | Elapsed |');
-  out.push('| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  out.push('| Gen | Teams | Opponents | Mean fitness | Max fitness | Opp. mean fitness | Battles | Cached | Errors | Survived | Mutant | Immigrant | Elapsed |');
+  out.push('| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const r of generationRecords) {
     const oc = r.analytics.originCounts;
     out.push(
-      `| ${r.generation}${r.resumed ? ' _(resumed)_' : ''} | ${(r.analytics.meanFitness * 100).toFixed(1)}% | ` +
-        `${(r.analytics.maxFitness * 100).toFixed(1)}% | ${r.timing.battleCount} | ${r.timing.errorCount} | ` +
+      `| ${r.generation}${r.resumed ? ' _(resumed)_' : ''} | ${r.population.length} | ${r.opponentCount} | ` +
+        `${(r.analytics.meanFitness * 100).toFixed(1)}% | ` +
+        `${(r.analytics.maxFitness * 100).toFixed(1)}% | ${pct(r.analytics.opponentMeanFitness)} | ` +
+        `${r.timing.battleCount} | ${r.timing.cachedCount ?? 0} | ${r.timing.errorCount} | ` +
         `${oc ? oc.survived : '-'} | ${oc ? oc.mutant : '-'} | ${oc ? oc.immigrant : '-'} | ${formatDuration(r.timing.elapsedMs)} |`
     );
   }
+  out.push('');
+  out.push(
+    '_Opponent mean fitness is the opponent pool\'s share of the generation\'s battles: 50% means the pool and the ' +
+      'population are evenly matched, and a rising number means the opponents are pulling ahead. The pool evolves too ' +
+      '(cull / mutate / immigrate), so this is a moving target by design -- see the opponent-pool section below._'
+  );
   out.push('');
 
   const lastAnalytics = generationRecords.length ? generationRecords[generationRecords.length - 1].analytics : null;
@@ -1017,6 +1387,27 @@ function renderEvolveReport(result) {
   }
   out.push('');
 
+  out.push('## Opponent pool (final generation)');
+  out.push('');
+  const fop = result.finalOpponentPool;
+  if (!fop || fop.size === 0) {
+    out.push('_No opponent-pool data available._');
+  } else {
+    out.push(
+      `The opponent pool is a population in its own right: ${fop.size} teams, of which the ` +
+        `\`curated\` ones are real observed teams that are never culled and never modified in place. ` +
+        'Everything else is culled, mutated and replaced by immigrants each generation, so the ' +
+        'candidates cannot converge on beating one fixed list.'
+    );
+    out.push('');
+    out.push(`- Composition: ${Object.entries(fop.originCounts).map(([k, v]) => `${v} ${k}`).join(', ')}`);
+    out.push('');
+    out.push('| Toughest opponents | Origin | Win% vs. the population |');
+    out.push('| --- | --- | ---: |');
+    for (const o of fop.toughest) out.push(`| ${o.name} | ${o.origin ?? '-'} | ${pct(o.fitness)} |`);
+  }
+  out.push('');
+
   out.push('## Top cores (elite 2-species pairs, final generation)');
   out.push('');
   if (!lastAnalytics || lastAnalytics.topCores.length === 0) {
@@ -1028,16 +1419,36 @@ function renderEvolveReport(result) {
   }
   out.push('');
 
-  out.push(`## Top ${elites.length} teams (final-generation elites, own lead vs. opponent's 3 leads)`);
+  const eo = result.eliteOpponents ?? { total: 0, curated: 0, evolved: 0 };
+  const rk = result.ranking ?? { weights: RANKING_WEIGHTS, recentWindow: 0, generationsRun: generationRecords.length };
+  out.push(`## Top ${elites.length} teams (final-generation elites)`);
+  out.push('');
+  out.push(
+    `Each elite fought all ${eo.total} elites-pass opponents once: every one of the ${eo.curated} curated teams, ` +
+      `untouched and at its own established lead, plus the ${eo.evolved} strongest teams the opponent pool evolved ` +
+      'over the run. Both sides lead with their designated lead -- no averaging over leads nobody plays.'
+  );
+  out.push('');
+  out.push(
+    `**Score** is what the ranking sorts on: ${rk.weights.elitePass} x the elites-pass win% above plus ` +
+      `${rk.weights.recent} x the team's mean win% over the last ${rk.recentWindow} generation(s) ` +
+      `(${rk.generationsRun} ran${rk.generationsRun < 20 ? ', so the window is the last quarter of the run' : ''}). ` +
+      'The elites pass is the only apples-to-apples measurement, so it carries the majority; the trailing average ' +
+      'covers several independent opponent pools, which is what filters out a team that simply drew a friendly ' +
+      'final generation. A team newer than the window has no trailing average and ranks on the elites pass alone.'
+  );
   out.push('');
   if (elites.length === 0) {
     out.push('_No elite teams were produced._');
     out.push('');
   } else {
-    out.push('| Rank | Team (Lead / Back / Back) | Win% | Best lead | Avg HP margin |');
-    out.push('| --- | --- | ---: | --- | ---: |');
+    out.push('| Rank | Team (Lead / Back / Back) | Score | Elites-pass win% | Last-gens win% | Gens | Avg HP margin |');
+    out.push('| --- | --- | ---: | ---: | ---: | ---: | ---: |');
     elites.forEach((t, i) => {
-      out.push(`| ${i + 1} | ${formatTeamMembers(t.members)} | ${pct(t.winRate)} | ${t.bestLead.name} | ${signed(t.avgHpMargin)} |`);
+      out.push(
+        `| ${i + 1} | ${formatTeamMembers(t.members)} | **${pct(t.combinedScore)}** | ${pct(t.winRate)} | ` +
+          `${pct(t.recentWinRate)} | ${t.recentGenerations} | ${signed(t.avgHpMargin)} |`
+      );
     });
     out.push('');
   }
@@ -1047,8 +1458,13 @@ function renderEvolveReport(result) {
   elites.forEach((t, i) => {
     out.push(`### ${i + 1}. ${formatTeamMembers(t.members)}`);
     out.push('');
-    out.push(`- **Win rate:** ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)`);
-    out.push(`- **Best lead:** ${t.bestLead.name} (${pct(t.bestLead.winRate)} when leading)`);
+    out.push(`- **Score (ranking number):** ${pct(t.combinedScore)}`);
+    out.push(`- **Elites-pass win rate:** ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)`);
+    out.push(
+      `- **Last-${rk.recentWindow}-generation win rate:** ${pct(t.recentWinRate)}` +
+        (t.recentGenerations ? ` (averaged over the ${t.recentGenerations} of those generations this team was alive for)` : ' (newer than the window)')
+    );
+    out.push(`- **Lead:** ${t.bestLead.name}`);
     if (t.safeSwap) {
       out.push(`- **Safest first switch:** ${t.safeSwap.name} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)`);
     }
@@ -1110,6 +1526,9 @@ function renderEvolveReportHtml(result) {
     `score-meta=${config.scoreMeta}`,
     `pool=${config.pool}`,
     `curated-ratio=${config.curatedRatio}`,
+    `population ${config.population} -> ${Math.round(config.population * config.populationFinalRatio)}`,
+    `opponents ${config.opponentsPerGen} -> ${opponentsAt(config.generations - 1, config)}`,
+    `opponent meta pool=top ${config.opponentMetaPool}`,
     `fitness=${config.fitness}${config.fitness === 'battle-reality' ? ` (weights: winRate=${DEFAULT_FITNESS_WEIGHTS.winRate}, snowball=${DEFAULT_FITNESS_WEIGHTS.snowball}, closer=${DEFAULT_FITNESS_WEIGHTS.closer})` : ''}`,
     `threads=${generationRecords.length ? threadsLabel(generationRecords[generationRecords.length - 1]) : 'n/a'}`,
     config.excludeSpecies.length ? `excluded species: ${config.excludeSpecies.map(escapeHtml).join(', ')}` : null,
@@ -1119,7 +1538,10 @@ function renderEvolveReportHtml(result) {
     .join(', ');
 
   const totalBattles = generationRecords.reduce((s, r) => s + r.timing.battleCount, 0) + result.eliteTiming.battleCount;
+  const totalCached = generationRecords.reduce((s, r) => s + (r.timing.cachedCount ?? 0), 0) + (result.eliteTiming.cachedCount ?? 0);
   const totalErrors = generationRecords.reduce((s, r) => s + r.timing.errorCount, 0) + result.eliteTiming.errorCount;
+  const eo = result.eliteOpponents ?? { total: 0, curated: 0, evolved: 0 };
+  const rk = result.ranking ?? { weights: RANKING_WEIGHTS, recentWindow: 0, generationsRun: generationRecords.length };
 
   const out = [];
   out.push('<!doctype html>');
@@ -1155,8 +1577,11 @@ function renderEvolveReportHtml(result) {
   out.push(
     '<p>Genetic-algorithm search: a population of candidate teams is repeatedly battled, the ' +
       'worst performers die, some survivors mutate one team member, fresh immigrant teams keep the gene pool ' +
-      "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. Every " +
-      "battle runs through pvpoke's own 3v3 emulate engine (<code>battleTeams</code>, " +
+      "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. The " +
+      'OPPONENT pool evolves the same way, on its own gentler schedule, around a protected core of real curated ' +
+      'teams -- so &ldquo;good&rdquo; means &ldquo;beats an opponent pool that is itself getting harder&rdquo;, not ' +
+      '&ldquo;beats one fixed list&rdquo;. ' +
+      "Every battle runs through pvpoke's own 3v3 emulate engine (<code>battleTeams</code>, " +
       '<code>src/engine/teamBattle.js</code>) -- no battle math is reimplemented here.</p>'
   );
   out.push(
@@ -1167,8 +1592,9 @@ function renderEvolveReportHtml(result) {
   );
 
   out.push('<h2>Settings</h2>');
-  out.push(`<p class="settings">Seed: <code>${escapeHtml(config.seed)}</code> (per-generation opponent draws: ` +
-    `<code>-gen&lt;N&gt;</code>; population sampling: <code>-gen0</code>)<br>` +
+  out.push(`<p class="settings">Seed: <code>${escapeHtml(config.seed)}</code> (gen-0 population: ` +
+    `<code>-gen0</code>; gen-0 opponent pool: <code>-opponents-gen0</code>; per-generation advances: ` +
+    `<code>-next&lt;N&gt;</code> / <code>-opponents-next&lt;N&gt;</code>)<br>` +
     `League: ${escapeHtml(league.name)} (cp=${config.cp})<br>` +
     `${escapeHtml(settingsLine)}</p>`);
 
@@ -1176,27 +1602,41 @@ function renderEvolveReportHtml(result) {
   out.push('<ul>');
   out.push(`<li>Generations run: ${generationRecords.length} of a ${config.generations} cap</li>`);
   out.push(`<li>Stop reason: ${escapeHtml(stopReason)}</li>`);
-  out.push(`<li>Total battles: ${totalBattles} (${totalErrors} errors, skip-and-continue)</li>`);
+  out.push(`<li>Total battles simulated: ${totalBattles} (${totalErrors} errors, skip-and-continue)</li>`);
+  if (totalCached > 0) {
+    out.push(
+      `<li>Pairings served from the memo cache: ${totalCached} of ${totalBattles + totalCached} ` +
+        `(${Math.round((100 * totalCached) / (totalBattles + totalCached))}% -- identical pairings are deterministic, so these were not re-simulated)</li>`
+    );
+  }
   out.push(`<li>Total elapsed: ${escapeHtml(formatDuration(result.totalElapsedMs))}</li>`);
   out.push('</ul>');
 
   out.push('<h2>Generation-by-generation summary</h2>');
   out.push('<table>');
-  out.push('<thead><tr><th>Gen</th><th>Mean fitness</th><th>Max fitness</th><th>Battles</th>' +
+  out.push('<thead><tr><th>Gen</th><th>Teams</th><th>Opponents</th><th>Mean fitness</th><th>Max fitness</th>' +
+    '<th>Opp. mean fitness</th><th>Battles</th><th>Cached</th>' +
     '<th>Errors</th><th>Survived</th><th>Mutant</th><th>Immigrant</th><th>Elapsed</th></tr></thead>');
   out.push('<tbody>');
   for (const r of generationRecords) {
     const oc = r.analytics.originCounts;
     out.push(
       `<tr><td>${r.generation}${r.resumed ? ' <em>(resumed)</em>' : ''}</td>` +
+        `<td>${r.population.length}</td><td>${r.opponentCount}</td>` +
         `<td>${(r.analytics.meanFitness * 100).toFixed(1)}%</td>` +
         `<td>${(r.analytics.maxFitness * 100).toFixed(1)}%</td>` +
-        `<td>${r.timing.battleCount}</td><td>${r.timing.errorCount}</td>` +
+        `<td>${pct(r.analytics.opponentMeanFitness)}</td>` +
+        `<td>${r.timing.battleCount}</td><td>${r.timing.cachedCount ?? 0}</td><td>${r.timing.errorCount}</td>` +
         `<td>${oc ? oc.survived : '-'}</td><td>${oc ? oc.mutant : '-'}</td><td>${oc ? oc.immigrant : '-'}</td>` +
         `<td>${escapeHtml(formatDuration(r.timing.elapsedMs))}</td></tr>`
     );
   }
   out.push('</tbody></table>');
+  out.push(
+    '<p><em>Opponent mean fitness is the opponent pool&#39;s share of the generation&#39;s battles: 50% means the pool ' +
+      'and the population are evenly matched, and a rising number means the opponents are pulling ahead. The pool ' +
+      'evolves too (cull / mutate / immigrate), so this is a moving target by design.</em></p>'
+  );
 
   const lastAnalytics = generationRecords.length ? generationRecords[generationRecords.length - 1].analytics : null;
   out.push('<h2>Species trajectory (representation per generation)</h2>');
@@ -1221,6 +1661,27 @@ function renderEvolveReportHtml(result) {
     }
   }
 
+  out.push('<h2>Opponent pool (final generation)</h2>');
+  const fop = result.finalOpponentPool;
+  if (!fop || fop.size === 0) {
+    out.push('<p><em>No opponent-pool data available.</em></p>');
+  } else {
+    out.push(
+      `<p>The opponent pool is a population in its own right: ${fop.size} teams, of which the ` +
+        '<code>curated</code> ones are real observed teams that are never culled and never modified in place. ' +
+        'Everything else is culled, mutated and replaced by immigrants each generation, so the candidates cannot ' +
+        'converge on beating one fixed list.</p>'
+    );
+    out.push(`<p>Composition: ${escapeHtml(Object.entries(fop.originCounts).map(([k, v]) => `${v} ${k}`).join(', '))}</p>`);
+    out.push('<table>');
+    out.push('<thead><tr><th>Toughest opponents</th><th>Origin</th><th>Win% vs. the population</th></tr></thead>');
+    out.push('<tbody>');
+    for (const o of fop.toughest) {
+      out.push(`<tr><td>${escapeHtml(o.name)}</td><td>${escapeHtml(o.origin ?? '-')}</td><td>${pct(o.fitness)}</td></tr>`);
+    }
+    out.push('</tbody></table>');
+  }
+
   out.push('<h2>Top cores (elite 2-species pairs, final generation)</h2>');
   if (!lastAnalytics || lastAnalytics.topCores.length === 0) {
     out.push('<p><em>No core data available.</em></p>');
@@ -1232,17 +1693,32 @@ function renderEvolveReportHtml(result) {
     out.push('</tbody></table>');
   }
 
-  out.push(`<h2>Top ${elites.length} teams (final-generation elites, own lead vs. opponent's 3 leads)</h2>`);
+  out.push(`<h2>Top ${elites.length} teams (final-generation elites)</h2>`);
+  out.push(
+    `<p>Each elite fought all ${eo.total} elites-pass opponents once: every one of the ${eo.curated} curated teams, ` +
+      `untouched and at its own established lead, plus the ${eo.evolved} strongest teams the opponent pool evolved ` +
+      'over the run. Both sides lead with their designated lead -- no averaging over leads nobody plays.</p>'
+  );
+  out.push(
+    `<p><strong>Score</strong> is what the ranking sorts on: ${rk.weights.elitePass} x the elites-pass win% plus ` +
+      `${rk.weights.recent} x the team&#39;s mean win% over the last ${rk.recentWindow} generation(s) ` +
+      `(${rk.generationsRun} ran${rk.generationsRun < 20 ? ', so the window is the last quarter of the run' : ''}). ` +
+      'The elites pass is the only apples-to-apples measurement, so it carries the majority; the trailing average ' +
+      'covers several independent opponent pools, which is what filters out a team that simply drew a friendly ' +
+      'final generation. A team newer than the window has no trailing average and ranks on the elites pass alone.</p>'
+  );
   if (elites.length === 0) {
     out.push('<p><em>No elite teams were produced.</em></p>');
   } else {
     out.push('<table>');
-    out.push('<thead><tr><th>Rank</th><th>Team (Lead / Back / Back)</th><th>Win%</th><th>Best lead</th><th>Avg HP margin</th></tr></thead>');
+    out.push('<thead><tr><th>Rank</th><th>Team (Lead / Back / Back)</th><th>Score</th><th>Elites-pass win%</th>' +
+      '<th>Last-gens win%</th><th>Gens</th><th>Avg HP margin</th></tr></thead>');
     out.push('<tbody>');
     elites.forEach((t, i) => {
       out.push(
         `<tr><td>${i + 1}</td><td>${formatTeamMembersHtml(t.members)}</td>` +
-          `<td>${pct(t.winRate)}</td><td>${escapeHtml(t.bestLead.name)}</td><td>${signed(t.avgHpMargin)}</td></tr>`
+          `<td><strong>${pct(t.combinedScore)}</strong></td><td>${pct(t.winRate)}</td>` +
+          `<td>${pct(t.recentWinRate)}</td><td>${t.recentGenerations}</td><td>${signed(t.avgHpMargin)}</td></tr>`
       );
     });
     out.push('</tbody></table>');
@@ -1253,8 +1729,14 @@ function renderEvolveReportHtml(result) {
     out.push('<section class="team">');
     out.push(`<h3>${i + 1}. ${formatTeamMembersHtml(t.members)}</h3>`);
     out.push('<ul class="team-stats">');
-    out.push(`<li><strong>Win rate:</strong> ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)</li>`);
-    out.push(`<li><strong>Best lead:</strong> ${escapeHtml(t.bestLead.name)} (${pct(t.bestLead.winRate)} when leading)</li>`);
+    out.push(`<li><strong>Score (ranking number):</strong> ${pct(t.combinedScore)}</li>`);
+    out.push(`<li><strong>Elites-pass win rate:</strong> ${pct(t.winRate)} across ${t.battles} battles (${t.errors} errors)</li>`);
+    out.push(
+      `<li><strong>Last-${rk.recentWindow}-generation win rate:</strong> ${pct(t.recentWinRate)}` +
+        (t.recentGenerations ? ` (averaged over the ${t.recentGenerations} of those generations this team was alive for)` : ' (newer than the window)') +
+        '</li>'
+    );
+    out.push(`<li><strong>Lead:</strong> ${escapeHtml(t.bestLead.name)}</li>`);
     if (t.safeSwap) {
       out.push(
         `<li><strong>Safest first switch:</strong> ${escapeHtml(t.safeSwap.name)} ` +
@@ -1312,7 +1794,10 @@ function renderDoneMarker(result) {
   lines.push(`Evolution complete: ${result.generationRecords.length} generation(s) run (${result.stopReason}).`);
   const top = result.elites[0];
   if (top) {
-    lines.push(`Top team: ${formatTeamMembers(top.members)} (${pct(top.winRate)} win rate, best lead ${top.bestLead.name}).`);
+    lines.push(
+      `Top team: ${formatTeamMembers(top.members)} (score ${pct(top.combinedScore)} = ` +
+        `${pct(top.winRate)} elites-pass / ${pct(top.recentWinRate)} last-${result.ranking?.recentWindow ?? '?'}-generations).`
+    );
   } else {
     lines.push('No elite teams were produced.');
   }
@@ -1340,6 +1825,12 @@ function renderDoneMarker(result) {
  *   curatedRatio?:number, excludeSpecies?:string[], difficulty?:number,
  *   population?:number, opponentsPerGen?:number, generations?:number,
  *   fixedOpponents?:boolean, eliteCount?:number,
+ *   populationFinalRatio?:number, - candidate population at the last
+ *     generation, as a fraction of `population` (see populationAt).
+ *   opponentMetaPool?:number, - top-N species cap on the composed half of the
+ *     opponent pool (see src/meta/sampleTeams.js).
+ *   battleCache?:boolean, - memoize identical pairings (default true).
+ *     NOT part of the checkpoint fingerprint (pure performance knob).
  *   deadlineMinutes?:number, - simple stop-before-next-generation budget;
  *     NOT part of the checkpoint config fingerprint (see buildRunConfig).
  *   threads?:number, - when set, ONE persistent
@@ -1390,7 +1881,17 @@ export async function runEvolution(csvPath, opts = {}) {
   const weights = loadUsageWeights(ctx);
   const pool = buildSamplingPool(deduped, config.pool, config.excludeSpecies);
   const roleScores = loadRoleScores(ctx); // lead/closer/switch priors, cheap local-file read
-  log(`evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, league=${league.name}`);
+  // The opponent side's two fixed inputs, both loaded once for the whole run:
+  // every curated team for this CP cap (the pool the opponent GA's protected
+  // entries are drawn from, and the opponent set the final elites pass uses in
+  // full), and the meta-capped species pool composed teams are built out of.
+  const curatedPool = loadMetaTeams(ctx);
+  const movesetPool = loadMovesetPool(ctx, { metaPoolSize: config.opponentMetaPool });
+  const battleCache = opts.battleCache === false ? createNullBattleCache() : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
+  log(
+    `evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, ` +
+      `${curatedPool.length} curated opponent teams, opponent meta pool of ${movesetPool.length} species, league=${league.name}`
+  );
 
   const threaded = typeof threads === 'number' && threads > 0;
   const executor = threaded ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true }) : null;
@@ -1406,6 +1907,7 @@ export async function runEvolution(csvPath, opts = {}) {
     let generation = 0;
     let population = null;
     let runStartedAtMs = null;
+    let opponentPool = null; // live (rehydrated or freshly built) opponent entries for the NEXT generation
     const history = []; // [{population, fitness}], oldest-first -- for hasConverged
     const generationRecords = []; // full per-generation records for the report
 
@@ -1416,9 +1918,10 @@ export async function runEvolution(csvPath, opts = {}) {
         throw new Error(
           `evolve: ${checkpointPath(outDir, generation)} is checkpoint format ` +
             `${cp.formatVersion ?? '(unversioned, pre-lead-lock)'} but this code expects format ` +
-            `${CHECKPOINT_FORMAT_VERSION} (locked-lead team representation). ` +
-            'Old-format checkpoints cannot be resumed -- their population entries have no defined ' +
-            'lead-slot convention. Delete out/evolve-gen*.json, out/evolve-generations.json, and ' +
+            `${CHECKPOINT_FORMAT_VERSION} (evolving opponent pool + per-signature win-rate history). ` +
+            'Old-format checkpoints cannot be resumed -- they carry no opponent pool to continue from, ' +
+            'and (pre-v2) their population entries have no defined lead-slot convention. ' +
+            'Delete out/evolve-gen*.json, out/evolve-generations.json, and ' +
             'out/evolve-DONE, then re-run from scratch.'
         );
       }
@@ -1426,6 +1929,7 @@ export async function runEvolution(csvPath, opts = {}) {
       generationRecords.push({ ...cp, resumed: true });
       if (generation === 0) runStartedAtMs = new Date(cp.runStartedAt).getTime();
       population = cp.nextPopulation;
+      opponentPool = cp.nextOpponentPool ? rehydrateOpponentPool(ctx, cp.nextOpponentPool, curatedPool, log) : null;
       generation += 1;
     }
 
@@ -1437,16 +1941,34 @@ export async function runEvolution(csvPath, opts = {}) {
         matrix: deduped,
         pool,
         weights,
-        count: config.population,
+        count: populationAt(0, config),
         seed: `${config.seed}-gen0`,
         excludeSpecies: config.excludeSpecies,
       });
-      log(`evolve: starting fresh -- population ${population.length} (requested ${config.population}), seed ${config.seed}`);
+      opponentPool = initOpponentPool(ctx, {
+        size: opponentsAt(0, config),
+        weights,
+        curated: curatedPool,
+        curatedRatio: config.curatedRatio,
+        roleScores,
+        movesetPool,
+        seed: `${config.seed}-opponents-gen0`,
+      });
+      log(
+        `evolve: starting fresh -- population ${population.length} (requested ${config.population}), ` +
+          `opponent pool ${opponentPool.length} ` +
+          `(${opponentPool.filter(isProtectedOpponent).length} curated), seed ${config.seed}`
+      );
     }
 
     let stopReason = null;
-    let fixedOpponentsPool = null;
     let lastEvaluated = generationRecords.length ? generationRecords[generationRecords.length - 1] : null;
+    // Live opponent pool + fitness for the generation `lastEvaluated` describes
+    // -- the final elites pass needs the strongest EVOLVED opponents, and
+    // rebuilding them from the checkpoint is only necessary on a run that
+    // resumed straight past its last generation.
+    let lastOpponentPool = null;
+    let lastOpponentFitness = null;
 
     while (generation < config.generations) {
       if (deadlineMs !== null && Date.now() - runStartedAtMs >= deadlineMs) {
@@ -1460,30 +1982,22 @@ export async function runEvolution(csvPath, opts = {}) {
         break;
       }
 
-      const opponents = config.fixedOpponents
-        ? (fixedOpponentsPool ??= sampleOpponentTeams(ctx, {
-            count: config.opponentsPerGen,
-            weights,
-            seed: `${config.seed}-opponents`,
-            curatedRatio: config.curatedRatio,
-          }))
-        : sampleOpponentTeams(ctx, {
-            count: config.opponentsPerGen,
-            weights,
-            seed: `${config.seed}-gen${generation}`,
-            curatedRatio: config.curatedRatio,
-          });
-
-      log(`generation ${generation}: battling ${population.length} teams against ${opponents.length} opponents`);
+      const opponents = opponentPool;
+      const curatedInPool = opponents.filter(isProtectedOpponent).length;
+      log(
+        `generation ${generation}: battling ${population.length} teams against ${opponents.length} opponents ` +
+          `(${curatedInPool} curated, ${opponents.length - curatedInPool} evolved)`
+      );
       const run = await evaluateTeamsInOrder(ctx, {
         teams: population,
         matrix: deduped,
         opponents,
-        pairingsFor: (sig, opp) => ownLeadPairing(`${config.seed}-gen${generation}`, opp),
+        pairingsFor: ownLeadPairing,
         difficulty,
         executor,
         onLog: log,
         roleScores,
+        cache: battleCache,
       });
       // 'classic' (default) keeps today's plain win-rate
       // fitness; 'battle-reality' uses the blend (see computeBlendFitness) --
@@ -1491,12 +2005,19 @@ export async function runEvolution(csvPath, opts = {}) {
       // never changes what a generation's battles measure, only which number
       // selection/mutation/convergence act on.
       const fitness = run.results.map((r) => (config.fitness === 'battle-reality' ? r.blendFitness : r.winRate));
+      // An opponent's fitness is the other side of the same ledger the
+      // candidates just produced -- no extra battles. A team nobody fought
+      // (impossible today, but a zero-population generation would do it)
+      // scores 0.5 rather than 0, so "unmeasured" never reads as "terrible".
+      const opponentFitness = run.opponentTally.map((t) => (t.battles > 0 ? 1 - t.winPoints / t.battles : 0.5));
 
       history.push({ population, fitness });
       const isLastAllowedGeneration = generation === config.generations - 1;
 
       let lineage = null;
       let nextPopulation = [];
+      let opponentLineage = null;
+      let nextOpponents = [];
       if (!isLastAllowedGeneration) {
         const advanced = nextGeneration({
           population,
@@ -1505,10 +2026,30 @@ export async function runEvolution(csvPath, opts = {}) {
           matrix: deduped,
           weights,
           seed: `${config.seed}-next${generation}`,
-          opts: { excludeSpecies: config.excludeSpecies },
+          opts: { excludeSpecies: config.excludeSpecies, targetSize: populationAt(generation + 1, config) },
         });
         lineage = advanced.lineage;
         nextPopulation = advanced.population;
+
+        if (config.fixedOpponents) {
+          // One draw, reused verbatim for the whole run: no culling, no
+          // mutation, no immigration, and no schedule-driven growth either.
+          nextOpponents = opponents;
+        } else {
+          const advancedOpponents = nextOpponentPool(ctx, {
+            pool: opponents,
+            fitness: opponentFitness,
+            targetSize: opponentsAt(generation + 1, config),
+            weights,
+            curated: curatedPool,
+            curatedRatio: config.curatedRatio,
+            roleScores,
+            movesetPool,
+            seed: `${config.seed}-opponents-next${generation}`,
+          });
+          nextOpponents = advancedOpponents.pool;
+          opponentLineage = advancedOpponents.lineage;
+        }
       }
 
       const record = {
@@ -1519,27 +2060,45 @@ export async function runEvolution(csvPath, opts = {}) {
         threadsUsed: threaded ? threads : null,
         population,
         fitness,
+        // Per-team win rate keyed by the SAME lead-aware signature
+        // src/teams/evolve.js uses for identity, so the final ranking can
+        // average a team's win rate across the generations it survived even
+        // though its index in `population` moves generation to generation.
+        winRateBySignature: Object.fromEntries(
+          population.map((team, i) => [teamSignature(team), run.results[i].winRate])
+        ),
         opponentCount: opponents.length,
+        opponentPool: serializeOpponentPool(opponents),
+        opponentFitness,
+        opponentLineage: opponentLineage ? { diedCount: opponentLineage.died.length, originCounts: opponentLineage.originCounts } : null,
         lineage,
         nextPopulation,
+        nextOpponentPool: serializeOpponentPool(nextOpponents),
         timing: {
           startedAt: new Date(run.startedAt).toISOString(),
           finishedAt: new Date(run.finishedAt).toISOString(),
           elapsedMs: run.elapsedMs,
           battleCount: run.battleCount,
+          cachedCount: run.cachedCount,
           errorCount: run.errorCount,
           msPerBattle: run.battleCount > 0 ? run.elapsedMs / run.battleCount : FALLBACK_MS_PER_BATTLE,
         },
-        analytics: computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),
+        analytics: {
+          ...computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),
+          ...computeOpponentAnalytics({ opponents, opponentFitness }),
+        },
         resumed: false,
       };
       writeCheckpoint(outDir, generation, record);
       generationRecords.push(record);
       writeGenerationsAnalytics(outDir, generationRecords);
       lastEvaluated = record;
+      lastOpponentPool = opponents;
+      lastOpponentFitness = opponentFitness;
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
-          `${run.battleCount} battles (${run.errorCount} errors), ${formatDuration(run.elapsedMs)} elapsed`
+          `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
+          `${formatDuration(run.elapsedMs)} elapsed`
       );
 
       const conv = hasConverged(history);
@@ -1553,6 +2112,7 @@ export async function runEvolution(csvPath, opts = {}) {
         stopReason = `generations cap reached (${config.generations})`;
       }
       population = nextPopulation;
+      opponentPool = nextOpponents;
     }
 
     if (!stopReason) stopReason = `generations cap reached (${config.generations})`;
@@ -1560,33 +2120,111 @@ export async function runEvolution(csvPath, opts = {}) {
       throw new Error('evolve: no generation was ever evaluated (population sampling produced 0 teams from the start)');
     }
 
-    // ---- Final elites pass: top --elites of the LAST EVALUATED generation, own lead vs. the opponent's 3 leads. ----
+    // ---- Final elites pass ------------------------------------------------
+    // Opponent set (Jaxon 2026-08-26): EVERY curated team, untouched and at
+    // its own declared lead, plus the strongest teams the opponent GA evolved
+    // over the run. The curated half is the reality check (these are the teams
+    // actually being played); the evolved half is the hardest opposition the
+    // run was able to construct, which is what stops the headline number being
+    // a score against a fixed list the population has had every generation to
+    // memorize. One battle per (elite, opponent) -- the elite at its locked
+    // lead, the opponent at ITS designated lead -- rather than the old spread
+    // across the opponent's 3 possible leads: now that every opponent carries
+    // a real designated lead, fighting it at the other two is measuring a team
+    // that nobody plays.
     const rankedIdx = lastEvaluated.population
       .map((_, i) => i)
       .sort((a, b) => lastEvaluated.fitness[b] - lastEvaluated.fitness[a] || a - b);
     const eliteTeams = rankedIdx.slice(0, config.eliteCount).map((i) => lastEvaluated.population[i]);
 
-    const eliteOpponents = sampleOpponentTeams(ctx, {
-      count: config.opponentsPerGen,
-      weights,
-      seed: `${config.seed}-elites`,
-      curatedRatio: config.curatedRatio,
-    });
-    log(`evolve: final elites pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents, own lead vs. opponent's 3 leads`);
+    const finalOpponentPool =
+      lastOpponentPool ?? rehydrateOpponentPool(ctx, lastEvaluated.opponentPool ?? [], curatedPool, log);
+    const finalOpponentFitness = lastOpponentFitness ?? lastEvaluated.opponentFitness ?? [];
+    const evolvedRanked = finalOpponentPool
+      .map((entry, i) => ({ entry, fitness: finalOpponentFitness[i] ?? 0 }))
+      .filter(({ entry }) => !isProtectedOpponent(entry))
+      .sort((a, b) => b.fitness - a.fitness);
+    // Aim for the run's own curated:evolved ratio, so the headline win% is
+    // weighted the same way the generations that produced these teams were --
+    // but this is a CEILING, not a quota. Every curated team is in the pass by
+    // definition (all ~110 of them), and the live opponent pool only ever
+    // holds a couple dozen evolvable entries, so in practice the pass takes
+    // every evolved opponent there is and lands well short of the ratio. That
+    // is the intended trade: an elites-pass win% that leans curated is the
+    // number worth reporting, because the curated teams are the real ones.
+    const evolvedWanted = Math.round((curatedPool.length * (1 - config.curatedRatio)) / Math.max(config.curatedRatio, 1e-9));
+    const eliteEvolved = evolvedRanked.slice(0, Math.min(evolvedWanted, evolvedRanked.length)).map(({ entry }) => entry);
+    const eliteCurated = curatedPool.map((t) => ({ ...t, label: 'curated', leadIndex: t.leadIndex ?? 0 }));
+    const eliteOpponents = [...eliteCurated, ...eliteEvolved];
+
+    log(
+      `evolve: final elites pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents ` +
+        `(${eliteCurated.length} curated in full, ${eliteEvolved.length} strongest evolved), each at its own lead`
+    );
     const eliteRun = await evaluateTeamsInOrder(ctx, {
       teams: eliteTeams,
       matrix: deduped,
       opponents: eliteOpponents,
-      pairingsFor: () => ownLeadEliteSpread(),
+      pairingsFor: ownLeadPairing,
       difficulty,
       trackLeads: true,
       executor,
       onLog: log,
       roleScores,
+      cache: battleCache,
     });
+
+    // ---- Final ranking (Jaxon 2026-08-26) ---------------------------------
+    // The elites pass measures every elite against one broad, identical
+    // opponent set -- comparable, but a single sample. A team's mean win rate
+    // across the last few generations is measured against a moving pool, so it
+    // is not comparable in absolute terms, but it averages several independent
+    // opponent draws and so carries information one pass cannot: whether the
+    // team is durably good. Rank on a weighted blend of the two, favoring the
+    // elites pass. See RANKING_WEIGHTS / recentWindowSize.
+    const recentWindow = recentWindowSize(generationRecords.length);
+    const recentRecords = generationRecords.slice(-recentWindow);
+    const recentWinRateFor = (signature) => {
+      let sum = 0;
+      let n = 0;
+      for (const r of recentRecords) {
+        const v = r.winRateBySignature?.[signature];
+        if (typeof v === 'number') {
+          sum += v;
+          n += 1;
+        }
+      }
+      return n > 0 ? { mean: sum / n, generations: n } : null;
+    };
+
     const elites = eliteRun.results
-      .map((r, i) => ({ ...r, sourceIndex: rankedIdx[i] }))
-      .sort((a, b) => b.winRate - a.winRate || b.avgHpMargin - a.avgHpMargin);
+      .map((r, i) => {
+        // A team newer than the window (an immigrant in the final generation)
+        // has no trailing history to average; it ranks on its elites-pass win
+        // rate alone rather than being penalized for being new.
+        const recent = recentWinRateFor(teamSignature(eliteTeams[i]));
+        const combinedScore = recent
+          ? RANKING_WEIGHTS.elitePass * r.winRate + RANKING_WEIGHTS.recent * recent.mean
+          : r.winRate;
+        return {
+          ...r,
+          sourceIndex: rankedIdx[i],
+          recentWinRate: recent?.mean ?? null,
+          recentGenerations: recent?.generations ?? 0,
+          combinedScore,
+        };
+      })
+      .sort((a, b) => b.combinedScore - a.combinedScore || b.winRate - a.winRate || b.avgHpMargin - a.avgHpMargin);
+
+    const cacheStats = battleCache.stats();
+    if (cacheStats.hits + cacheStats.misses > 0) {
+      log(
+        `evolve: battle cache -- ${cacheStats.hits} hits / ${cacheStats.hits + cacheStats.misses} lookups ` +
+          `(${Math.round((100 * cacheStats.hits) / (cacheStats.hits + cacheStats.misses))}%), ` +
+          `${cacheStats.size} entries held${cacheStats.dropped ? `, ${cacheStats.dropped} dropped at the cap` : ''}`
+      );
+    }
+
 
     const result = {
       collectionPath: csvPath,
@@ -1603,9 +2241,24 @@ export async function runEvolution(csvPath, opts = {}) {
       elites,
       eliteTiming: {
         battleCount: eliteRun.battleCount,
+        cachedCount: eliteRun.cachedCount,
         errorCount: eliteRun.errorCount,
         elapsedMs: eliteRun.elapsedMs,
       },
+      // Everything the report needs about how the headline number was
+      // measured and how the ranking was formed.
+      eliteOpponents: {
+        total: eliteOpponents.length,
+        curated: eliteCurated.length,
+        evolved: eliteEvolved.length,
+      },
+      ranking: {
+        weights: RANKING_WEIGHTS,
+        recentWindow,
+        generationsRun: generationRecords.length,
+      },
+      finalOpponentPool: summarizeOpponentPool(finalOpponentPool, finalOpponentFitness),
+      battleCacheStats: cacheStats,
       totalElapsedMs: Date.now() - runStartedAtMs,
     };
 
@@ -1649,14 +2302,26 @@ Options:
   --deadline-minutes D    optional wall-clock budget (stop before the next
                             generation once past it; no self-tuning)   (default: none)
   --cp N                  CP cap / league                            (default ${DEFAULTS.cp})
-  --fixed-opponents        reuse ONE opponent draw for every generation
-                            instead of a fresh draw per generation     (default: off)
+  --fixed-opponents        freeze the opponent pool: one draw, never evolved
+                            and never resized                          (default: off)
   --elites N               final-generation teams given the final evaluation
-                            pass (own lead vs. opponent's 3 leads) for the
-                            report                                     (default ${DEFAULTS.elites})
+                            pass (all curated teams + the strongest evolved
+                            opponents, each at its own lead)           (default ${DEFAULTS.elites})
   --score-meta S           1v1-pruning meta size                      (default ${DEFAULTS.scoreMeta})
   --pool P                 sampling pool size                         (default ${DEFAULTS.pool})
-  --curated-ratio R        curated-vs-sampled opponent mix             (default ${DEFAULTS.curatedRatio})
+  --curated-ratio R        curated-vs-evolved opponent mix             (default ${DEFAULTS.curatedRatio})
+  --population-final-ratio R  candidate population at the LAST generation as
+                            a fraction of --population; the opponent count
+                            grows to match, holding the per-generation
+                            battle grid flat                           (default ${DEFAULTS.populationFinalRatio})
+  --opponent-meta-pool N   composed opponents are built from the top N species
+                            of pvpoke's own overall ranking (0 = the full
+                            field, the pre-2026-08-26 behavior)        (default ${DEFAULTS.opponentMetaPool})
+  --no-battle-cache        re-simulate every pairing instead of memoizing
+                            identical ones (identical pairings are
+                            deterministic, so the memo returns the same
+                            numbers -- this is an escape hatch, not a
+                            correctness knob)                          (default: cache on)
   --exclude a,b            species ids excluded from candidate teams   (default: none)
   --difficulty D           AI difficulty 0-3 override                 (default: engine default, 3)
   --out PATH               final Markdown report path                 (default <out-dir>/my-teams-evolve.md)
@@ -1720,6 +2385,9 @@ async function main(argv) {
         'score-meta': { type: 'string' },
         pool: { type: 'string' },
         'curated-ratio': { type: 'string' },
+        'population-final-ratio': { type: 'string' },
+        'opponent-meta-pool': { type: 'string' },
+        'no-battle-cache': { type: 'boolean' },
         exclude: { type: 'string' },
         difficulty: { type: 'string' },
         out: { type: 'string' },
@@ -1759,6 +2427,9 @@ async function main(argv) {
     evolutions: !values['no-evolutions'],
     pool: intFlag(values.pool, 'pool', DEFAULTS.pool),
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
+    populationFinalRatio: fractionFlag(values['population-final-ratio'], 'population-final-ratio', DEFAULTS.populationFinalRatio),
+    opponentMetaPool: intFlag(values['opponent-meta-pool'], 'opponent-meta-pool', DEFAULTS.opponentMetaPool),
+    battleCache: !values['no-battle-cache'],
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],
     difficulty: values.difficulty !== undefined ? intFlag(values.difficulty, 'difficulty', undefined) : undefined,
     outDir: values['out-dir'] ?? DEFAULTS.outDir,
@@ -1787,7 +2458,10 @@ async function main(argv) {
   say(`Evolution complete. ${result.generationRecords.length} generation(s) run (${result.stopReason}).`);
   if (result.elites[0]) {
     const top = result.elites[0];
-    say(`Top team: ${formatTeamMembers(top.members)} -- ${pct(top.winRate)} win rate.`);
+    say(
+      `Top team: ${formatTeamMembers(top.members)} -- score ${pct(top.combinedScore)} ` +
+        `(${pct(top.winRate)} elites-pass win rate, ${pct(top.recentWinRate)} over the last ${result.ranking.recentWindow} generation(s)).`
+    );
   }
   say('');
   say(`Full report written to ${result.reportPath}`);

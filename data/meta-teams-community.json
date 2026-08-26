@@ -2,7 +2,7 @@
   "source": "https://www.reddit.com/r/TheSilphRoad/comments/1tv2140/great_league_recommended_teams_gbl_season_27/",
   "curator": "YonkouJean PGO infographic — Great League teams recommended/used by top GBL players, GBL Season 27 (Aug 2026)",
   "collectedAt": "2026-08-21",
-  "extraction": "Orchestrator read team images supplied by Jaxon (2026-08-21). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve, dropping a team whole if ANY member fails (2 mons isn't a team). Core-breaker strips in the YonkouJean images are the teams' counters, deliberately NOT included. Teams with tier:'off-meta' come from a second batch (Japanese Nature-Cup party infographics + player battle-party screenshots + one English player party): Jaxon wants them in the opponent pool for surface diversity, at reduced sampling weight vs the untagged (meta) teams. JP entries were identified primarily from printed katakana names (high confidence); in-game screenshots use a nickname-of-base-stage pattern resolved via CP feasibility (e.g. 'Frillish' at CP 1498 = Jellicent, pink female sprite). Entries id-prefixed 'yasseraleed-' are a third batch (GOALS T26, 2026-08-21): 13 untagged (meta) teams visually transcribed from stream screenshots by GBL streamer Yasser Aleed (twitch.tv/YasserAleed, YouTube aleed_yasser, Discord /thecoolkidz), supplied by Jaxon; where an on-screen team-builder card was visible its text is authoritative over a visual read (recorded in each team's 'notes'), and species-level shadow status is recorded only where the stream explicitly showed it (a shiny/cosmetic render is never treated as shadow). Entries id-prefixed 'jaxon-ladder-' are a fourth batch (GOALS T31, 2026-08-23): 7 untagged (meta, full weight — real opponents Jaxon actually faces on the GBL ladder) teams Jaxon reported directly from his own ladder games, speciesIds resolved and verified against the pinned gamemaster before being committed. FILE-WIDE LEAD DOCTRINE (Jaxon, 2026-08-23): for EVERY entry in this file, `members[0]` IS that team's established lead — for the pre-existing 46 entries that ordering came from the source images/screenshots (best available at the time); for 'jaxon-ladder-' entries it is Jaxon's own directly-observed opponent lead. src/meta/teams.js's loadCommunityTeams stamps `leadIndex: 0` on every returned team so scripts/evolve.mjs's opponentLeadIndex() reads it as declared data rather than falling through to its own index-0 default. The same first-member-is-lead convention applies to pvpoke's vendored gobattleleague training presets (no code change needed there — the loader's existing default already reads member index 0). Entries id-prefixed 'jaxon-ladder-13'/'jaxon-ladder-14' continue the fourth batch (2026-08-26): 2 more teams Jaxon reported from his own ladder games. Entries id-prefixed 'pvpoke-top-' are a fifth batch (2026-08-26): 2 Great League teams Jaxon took from PvPoke's own top-performing team listings — untagged (meta), same full weight as the rest. Entries id-prefixed 'high-ladder-' are a sixth batch (2026-08-26): 21 teams Jaxon supplied as high-ladder Great League compositions — untagged (meta), full weight. Every speciesId in all three of those batches was verified against the pinned gamemaster before commit, and each entry checked for duplication against both the pre-existing community entries and the 25 vendor gobattleleague presets (none were duplicates). Where a batch entry named an explicit moveset, the file has no per-member move-override plumbing (buildRecommendedMon builds from pvpoke’s recommended moveset alone), so the moveset is recorded in that entry’s `notes` and the divergence, if any, is stated there. Ambiguous forms in the high-ladder batch were resolved to Kanto (marowak_shadow, ninetales_shadow) per that batch’s own habit of naming regionals explicitly; the Marowak read is flagged in its notes for confirmation. TIER DOCTRINE (Jaxon, 2026-08-26): the 27 second-hand entries that predate the ladder batches (omarchm10 through yasseraleed-13 — YonkouJean infographic + Yasser Aleed stream transcriptions) are tagged tier:'recommended' and draw at HALF weight in the curated pool: they are teams a top player said to run, transcribed from an image, not opponents observed across the ladder. The 'jaxon-ladder-'/'jet-ladder-'/'pvpoke-top-'/'high-ladder-' batches stay untagged (meta, full weight), and tier:'off-meta' (surface diversity only) drops to a quarter weight — see src/meta/teams.js's CURATED_TIER_WEIGHTS. loadMetaTeams orders the merged pool by descending tier weight, so a small --meta limit reaches full-weight teams first. MEMBER MOVESETS: a member may now be an object ({speciesId, fastMove?, chargedMoves?}) instead of a bare speciesId, recording what an opponent was actually seen carrying when it differs from pvpoke’s recommendation; either move field may be omitted and merges independently over the recommendation. Three entries use it (high-ladder-11/16/19); every other member stays a bare string.",
+  "extraction": "Orchestrator read team images supplied by Jaxon (2026-08-21). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve, dropping a team whole if ANY member fails (2 mons isn't a team). Core-breaker strips in the YonkouJean images are the teams' counters, deliberately NOT included. Teams with tier:'off-meta' come from a second batch (Japanese Nature-Cup party infographics + player battle-party screenshots + one English player party): Jaxon wants them in the opponent pool for surface diversity, at reduced sampling weight vs the untagged (meta) teams. JP entries were identified primarily from printed katakana names (high confidence); in-game screenshots use a nickname-of-base-stage pattern resolved via CP feasibility (e.g. 'Frillish' at CP 1498 = Jellicent, pink female sprite). Entries id-prefixed 'yasseraleed-' are a third batch (GOALS T26, 2026-08-21): 13 untagged (meta) teams visually transcribed from stream screenshots by GBL streamer Yasser Aleed (twitch.tv/YasserAleed, YouTube aleed_yasser, Discord /thecoolkidz), supplied by Jaxon; where an on-screen team-builder card was visible its text is authoritative over a visual read (recorded in each team's 'notes'), and species-level shadow status is recorded only where the stream explicitly showed it (a shiny/cosmetic render is never treated as shadow). Entries id-prefixed 'jaxon-ladder-' are a fourth batch (GOALS T31, 2026-08-23): 7 untagged (meta, full weight — real opponents Jaxon actually faces on the GBL ladder) teams Jaxon reported directly from his own ladder games, speciesIds resolved and verified against the pinned gamemaster before being committed. FILE-WIDE LEAD DOCTRINE (Jaxon, 2026-08-23): for EVERY entry in this file, `members[0]` IS that team's established lead — for the pre-existing 46 entries that ordering came from the source images/screenshots (best available at the time); for 'jaxon-ladder-' entries it is Jaxon's own directly-observed opponent lead. src/meta/teams.js's loadCommunityTeams stamps `leadIndex: 0` on every returned team so scripts/evolve.mjs's opponentLeadIndex() reads it as declared data rather than falling through to its own index-0 default. The same first-member-is-lead convention applies to pvpoke's vendored gobattleleague training presets (no code change needed there — the loader's existing default already reads member index 0). Entries id-prefixed 'jaxon-ladder-13'/'jaxon-ladder-14' continue the fourth batch (2026-08-26): 2 more teams Jaxon reported from his own ladder games. Entries 'jaxon-ladder-15' through 'jaxon-ladder-19' continue it again (2026-08-26, same day, later session): 5 more teams Jaxon reported from his own ladder games, untagged (meta, full weight), every speciesId verified against the pinned gamemaster and each team checked against the existing entries for duplication before commit. Entries id-prefixed 'pvpoke-top-' are a fifth batch (2026-08-26): 2 Great League teams Jaxon took from PvPoke's own top-performing team listings — untagged (meta), same full weight as the rest. Entries id-prefixed 'high-ladder-' are a sixth batch (2026-08-26): 21 teams Jaxon supplied as high-ladder Great League compositions — untagged (meta), full weight. Every speciesId in all three of those batches was verified against the pinned gamemaster before commit, and each entry checked for duplication against both the pre-existing community entries and the 25 vendor gobattleleague presets (none were duplicates). Where a batch entry named an explicit moveset, the file has no per-member move-override plumbing (buildRecommendedMon builds from pvpoke’s recommended moveset alone), so the moveset is recorded in that entry’s `notes` and the divergence, if any, is stated there. Ambiguous forms in the high-ladder batch were resolved to Kanto (marowak_shadow, ninetales_shadow) per that batch’s own habit of naming regionals explicitly; the Marowak read is flagged in its notes for confirmation. TIER DOCTRINE (Jaxon, 2026-08-26): the 27 second-hand entries that predate the ladder batches (omarchm10 through yasseraleed-13 — YonkouJean infographic + Yasser Aleed stream transcriptions) are tagged tier:'recommended' and draw at HALF weight in the curated pool: they are teams a top player said to run, transcribed from an image, not opponents observed across the ladder. The 'jaxon-ladder-'/'jet-ladder-'/'pvpoke-top-'/'high-ladder-' batches stay untagged (meta, full weight), and tier:'off-meta' (surface diversity only) drops to a quarter weight — see src/meta/teams.js's CURATED_TIER_WEIGHTS. loadMetaTeams orders the merged pool by descending tier weight, so a small --meta limit reaches full-weight teams first. MEMBER MOVESETS: a member may now be an object ({speciesId, fastMove?, chargedMoves?}) instead of a bare speciesId, recording what an opponent was actually seen carrying when it differs from pvpoke’s recommendation; either move field may be omitted and merges independently over the recommendation. Three entries use it (high-ladder-11/16/19); every other member stays a bare string.",
   "teams": [
     {
       "id": "omarchm10",
@@ -816,6 +816,54 @@
         "corviknight"
       ],
       "notes": "Source read “Coviknight”; resolved to corviknight"
+    },
+    {
+      "id": "jaxon-ladder-15",
+      "name": "Real team fought 15 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "ninetales_alolan_shadow",
+        "marowak",
+        "lickilicky"
+      ],
+      "notes": "Jaxon named the forms explicitly (Alolan Ninetales, Kanto Marowak), so no form inference was needed."
+    },
+    {
+      "id": "jaxon-ladder-16",
+      "name": "Real team fought 16 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "camerupt_shadow",
+        "aegislash_shield",
+        "kingdra_shadow"
+      ],
+      "notes": "Aegislash resolved to aegislash_shield: the pinned gamemaster has no bare 'aegislash', and Shield is the form pvpoke ranks at cp 1500 (aegislash_blade is not in the Great League field)."
+    },
+    {
+      "id": "jaxon-ladder-17",
+      "name": "Real team fought 17 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "morpeko_full_belly",
+        "venusaur_shadow",
+        "jellicent"
+      ],
+      "notes": "Morpeko form resolved to morpeko_full_belly (bare 'morpeko' is not a valid speciesId in the pinned gamemaster), same as jaxon-ladder-8/13."
+    },
+    {
+      "id": "jaxon-ladder-18",
+      "name": "Real team fought 18 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "swampert_shadow",
+        "jumpluff",
+        "lanturn"
+      ]
+    },
+    {
+      "id": "jaxon-ladder-19",
+      "name": "Real team fought 19 (Jaxon's GBL ladder, Aug 2026)",
+      "members": [
+        "annihilape_shadow",
+        "tinkaton",
+        "corviknight"
+      ]
     }
   ]
 }

@@ -218,6 +218,19 @@ function buildLeadRotation(parentTeam, usedSignatures, rng, maxAttempts) {
  *     deathRate?: number, mutationFloor?: number, mutationCeil?: number,
  *     leadRotationRate?: number, immigrantFraction?: number, alpha?: number,
  *     excludeSpecies?: string[],
+ *     targetSize?: number, - size of the RETURNED population (default: the
+ *       input population's length, i.e. hold steady). A smaller value shrinks
+ *       the population by killing the extra individuals off the
+ *       worst-performing end IN ADDITION to the normal `deathRate` churn, so
+ *       a long run can concentrate its battle budget on progressively fewer,
+ *       progressively better teams. Larger values are honored too, filled
+ *       with mutants/immigrants, subject to the same pool-exhaustion cap --
+ *       though growth only ADDS slots, it does not deepen the cull, so a
+ *       target above P can leave the whole input population alive. That
+ *       asymmetry is fine here because scripts/evolve.mjs's schedule only ever
+ *       shrinks the candidate side; the opponent GA, which only ever grows,
+ *       takes its churn off the live headcount instead (see
+ *       src/meta/opponentPool.js).
  *   },
  * }} params
  * @returns {{
@@ -232,7 +245,7 @@ function buildLeadRotation(parentTeam, usedSignatures, rng, maxAttempts) {
  *     >,
  *   },
  * }}
- *   `population` is held at exactly `population.length` (the input P) UNLESS
+ *   `population` is held at exactly `opts.targetSize` (default the input P) UNLESS
  *   the pool is too small to supply enough distinct new teams, in which case
  *   it gracefully falls short (mirrors sampleCandidateTeams' own cap
  *   behavior) rather than throwing or looping forever. `lineage.died` lists
@@ -248,6 +261,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const P = population.length;
   if (P === 0) return { population: [], lineage: { died: [], entries: [] } };
 
+  const targetSize = Math.max(0, opts.targetSize ?? P);
   const deathRate = opts.deathRate ?? DEFAULT_DEATH_RATE;
   const mutationFloor = opts.mutationFloor ?? DEFAULT_MUTATION_FLOOR;
   const mutationCeil = opts.mutationCeil ?? DEFAULT_MUTATION_CEIL;
@@ -259,14 +273,23 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
 
   // Worst-fitness-first ranking (ties broken by original index for determinism).
   const rankedWorstFirst = population.map((_, i) => i).sort((a, b) => fitness[a] - fitness[b] || a - b);
-  const deathCount = Math.min(P, Math.round(deathRate * P));
+  // `churn` is the share of the NEXT generation that is newly created
+  // (mutants + immigrants); everything else is a survivor carried over. When
+  // `targetSize` equals P this is exactly the historical `round(deathRate*P)`
+  // death count -- the shrink path only adds the extra `P - targetSize`
+  // individuals on top, taken from the worst-performing end, so a shrinking
+  // run keeps the same PROPORTIONAL churn as a fixed-size one rather than
+  // spending its whole death budget on the shrink.
+  const churn = Math.min(targetSize, Math.round(deathRate * targetSize));
+  const survivorsWanted = Math.max(0, targetSize - churn);
+  const deathCount = Math.max(0, Math.min(P, P - survivorsWanted));
   const died = rankedWorstFirst.slice(0, deathCount);
   const survivorIndicesAsc = rankedWorstFirst.slice(deathCount); // still worst-to-best among survivors
 
   const mutationSuccesses = rollMutations(survivorIndicesAsc, fitness, mutationFloor, mutationCeil, leadRotationRate, rng);
 
-  const deadSlots = P - survivorIndicesAsc.length;
-  const immigrantFloor = Math.min(deadSlots, Math.round(immigrantFraction * P));
+  const deadSlots = Math.max(0, targetSize - survivorIndicesAsc.length);
+  const immigrantFloor = Math.min(deadSlots, Math.round(immigrantFraction * targetSize));
   const mutantSlotsAvailable = Math.max(deadSlots - immigrantFloor, 0);
 
   let chosenMutants;

@@ -254,6 +254,15 @@ describe('runBattles is bit-identical to a serial battleTeams loop', () => {
     { teamAIds: STRONG_IDS, teamBIds: WEAK_IDS, leadA: 2, leadB: 1, seed: 42 },
     { teamAIds: STRONG_IDS, teamBIds: STRONG_IDS, leadA: 1, leadB: 0, seed: 7 },
     { teamAIds: WEAK_IDS, teamBIds: WEAK_IDS, leadA: 2, leadB: 2 },
+    // The last three exist to put the executor's tail work-stealing under the
+    // same assertion: 7 specs over 2 workers is an uneven split of unequal-cost
+    // battles (a strong-vs-weak blowout is much shorter than a mirror), so a
+    // worker finishes its chunk early and raids the other's tail. Which worker
+    // ends up running which spec is timing-dependent by design now -- the
+    // results must not be. See src/engine/parallel.js's "Tail work-stealing".
+    { teamAIds: WEAK_IDS, teamBIds: STRONG_IDS, leadA: 0, leadB: 2, seed: 11 },
+    { teamAIds: STRONG_IDS, teamBIds: WEAK_IDS, leadA: 1, leadB: 1, seed: 3 },
+    { teamAIds: STRONG_IDS, teamBIds: STRONG_IDS, leadA: 2, leadB: 2, seed: 19 },
   ];
 
   test('identical winner/survivorsHp/summary for every spec, in spec order', async () => {
@@ -281,6 +290,32 @@ describe('runBattles is bit-identical to a serial battleTeams loop', () => {
     threaded.forEach((r, i) => {
       assert.deepEqual(r, serial[i], `battle ${i} (leadA=${PLAN[i].leadA}, leadB=${PLAN[i].leadB}) mismatched`);
     });
+  });
+
+  // The property the battle memo cache in scripts/evolve.mjs and the executor's
+  // tail work-stealing BOTH rest on: a battle's result depends on its own spec
+  // and seed and nothing else -- not on what its Pokemon instances did in an
+  // earlier battle. That was not always true (src/engine/README.md's "Resolved:
+  // battle order and reused-instance state" documents four uninitialized bench
+  // fields that made it false, fixed 2026-08-22), and the tests that pinned it
+  // lived in test/teamBattle.test.js, which the consolidation folded away. The
+  // memo cache turns a regression here from "rare HP drift" into "wrong number
+  // served for the rest of the run", so it is pinned again, here, cheaply.
+  test('a battle result does not depend on what its instances fought before', () => {
+    const spec = { leadA: 1, leadB: 2, seed: 5150 };
+    const baseline = battleTeams(ctx, { teamA: team(STRONG_IDS), teamB: team(WEAK_IDS), ...spec });
+
+    // Same two instance sets, deliberately reused -- and dirtied first against
+    // a different opponent, at different leads, in both team slots.
+    const reusedA = team(STRONG_IDS);
+    const reusedB = team(WEAK_IDS);
+    const noise = team(STRONG_IDS);
+    battleTeams(ctx, { teamA: reusedA, teamB: noise, leadA: 0, leadB: 2 });
+    battleTeams(ctx, { teamA: noise, teamB: reusedB, leadA: 2, leadB: 0, seed: 11 });
+    battleTeams(ctx, { teamA: reusedA, teamB: reusedB, leadA: 2, leadB: 1, seed: 99 });
+
+    const afterUse = battleTeams(ctx, { teamA: reusedA, teamB: reusedB, ...spec });
+    assert.deepEqual(afterUse, baseline, 'reused instances produced a different battle than fresh ones');
   });
 
   test('empty specs resolve to [] without spawning a worker', async () => {

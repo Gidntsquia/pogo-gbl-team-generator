@@ -89,19 +89,20 @@ test('limit caps how many teams are built', () => {
 
 // Community-curated opponent teams (data/meta-teams-community.json).
 
-test('community file loads and its teams resolve fully battle-ready (>=79 of 82)', () => {
+test('community file loads and its teams resolve fully battle-ready (>=84 of 87)', () => {
   // 2026-08-26 (Jaxon): the 12 JP Nature Cup + 3 JP player-party teams and all 3
   // Mimikyu teams were deleted (Mimikyu is banned in Competitor's Cup, the GL
   // format he plays), and 17 teams he fought on ladder that day were added.
   // 58 - 18 + 17 = 57. Later that day 25 more went in: 2 Jaxon ladder teams
   // (jaxon-ladder-13/14), 2 PvPoke top-performer teams (pvpoke-top-*), and 21
-  // high-ladder teams (high-ladder-*). 57 + 25 = 82.
-  assert.equal(communityRaw.teams.length, 82, 'source file has 82 entries under the pinned data (57, plus 2 Jaxon ladder + 2 PvPoke top-performer + 21 high-ladder teams)');
+  // high-ladder teams (high-ladder-*). 57 + 25 = 82. Later still, 5 more
+  // ladder teams (jaxon-ladder-15..19). 82 + 5 = 87.
+  assert.equal(communityRaw.teams.length, 87, 'source file has 87 entries under the pinned data (57, plus 7 Jaxon ladder + 2 PvPoke top-performer + 21 high-ladder teams)');
 
   const teams = loadCommunityTeams(ctx);
   assert.ok(
-    teams.length >= 79,
-    `expected >=79/82 community teams to resolve (the JP ids that used to fail here, e.g. arctibax, went out with the JP-cup teams), got ${teams.length}`
+    teams.length >= 84,
+    `expected >=84/87 community teams to resolve (the JP ids that used to fail here, e.g. arctibax, went out with the JP-cup teams), got ${teams.length}`
   );
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
@@ -224,7 +225,7 @@ test('every community team is stamped leadIndex: 0 (declared-lead doctrine)', ()
 // and must resolve whole -- one parameterized test over the batches, not one
 // test each.
 const JAXON_BATCHES = [
-  ['jaxon-ladder-', 14],
+  ['jaxon-ladder-', 19],
   ['jet-ladder-', 17],
   ['pvpoke-top-', 2],
   ['high-ladder-', 21],
