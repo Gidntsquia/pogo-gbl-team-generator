@@ -8,6 +8,8 @@
 // a hang.
 //
 // Run with: node --test test/parallel.test.js
+//
+// @slow -- 15s alone: spawns worker_threads executor pools.
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';

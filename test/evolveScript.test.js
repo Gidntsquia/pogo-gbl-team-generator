@@ -3,6 +3,8 @@
 // with tiny knobs (ticket-specified: pop 6, 2 gens, 2 opponents) so the real
 // pvpoke 3v3 engine still runs but the battle count stays small -- mirrors
 // test/tournament.test.js's approach to scripts/tournament.mjs.
+//
+// @slow -- 30s alone: drives the scripts/evolve-*.mjs harness end to end.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

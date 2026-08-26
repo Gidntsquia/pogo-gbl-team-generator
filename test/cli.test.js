@@ -6,6 +6,8 @@
 // hand in the manual verify steps, not here (too slow for the suite). Covers
 // BOTH the sampled path (now the default) and the --exhaustive path (the old
 // behavior, still available).
+//
+// @slow -- 19s alone: runs the full pipeline and writes report.md to disk.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -5,6 +5,8 @@
 // one-off run, not asserted here.
 //
 // Run with: node --test test/shieldWeightReview.test.js
+//
+// @slow -- 8s alone: runs the shield-weight-review harness end to end.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

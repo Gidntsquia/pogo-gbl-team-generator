@@ -6,6 +6,8 @@
 // to preserve, and the parallel executor will need to preserve too.
 //
 // Run with: node --test test/bench.test.js
+//
+// @slow -- 7s alone: runs the scripts/bench.mjs harness end to end.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

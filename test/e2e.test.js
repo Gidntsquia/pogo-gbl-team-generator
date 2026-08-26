@@ -7,6 +7,8 @@
 // This does NOT spawn a subprocess (that path is covered by the manual
 // acceptance runs); it drives the same runPipeline the
 // CLI entry point calls, then checks the on-disk report file it writes.
+//
+// @slow -- 10s alone: fixture CSV through the whole pipeline to report.md on disk.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

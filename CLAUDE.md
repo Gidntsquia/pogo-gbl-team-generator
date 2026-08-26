@@ -59,6 +59,17 @@ If you genuinely can't tell which test covers a change, run `npm run test:change
 
 The tier is a marker, not a list: a file is slow when its header comment contains `@slow`, and `scripts/tests.mjs` reads that and nothing else. `grep -l @slow test/` answers "what does `npm test` skip?".
 
+**Where the line sits:** the fast tier is unit tests — a module, its inputs, its
+outputs. A file goes `@slow` when it drives a `scripts/*.mjs` harness end to end,
+spawns `worker_threads`, writes a report to disk, or runs enough real pvpoke
+battles to cost seconds. Every `@slow` marker carries its measured solo cost and
+the reason, so the line stays checkable rather than a matter of taste.
+
+Tiering costs no coverage on the narrow path: `test:changed` maps changed modules
+to test files without consulting the marker, so editing `src/engine/teamBattle.js`
+still runs `teamBattle.test.js` and the nine other files that touch it. The tier
+only decides what the *unfiltered* run skips.
+
 `node --test test/<file>.test.js` bypasses `scripts/tests.mjs` entirely, so it
 runs an `@slow` file too when you name it. That is deliberate — it is the one
 form that never silently skips.

@@ -8,6 +8,8 @@
 // both-players-are-AI wiring, and those are exactly what these tests pin down.
 //
 // Run with: node --test test/teamBattle.test.js
+//
+// @slow -- 26s alone: thousands of real pvpoke 3v3 battles.
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';

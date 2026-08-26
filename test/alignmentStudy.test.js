@@ -6,6 +6,8 @@
 // larger, one-off run, not asserted here.
 //
 // Run with: node --test test/alignmentStudy.test.js
+//
+// @slow -- 21s alone: runs the alignment-study harness and builds its report.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
