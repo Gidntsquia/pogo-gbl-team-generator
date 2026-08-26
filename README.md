@@ -102,6 +102,7 @@ handles both rather than trusting any single frame:
 | `atk` / `def` / `sta` | the three appraisal bars, measured in pixels |
 | `level` | not shown on screen — solved for from species + IVs + CP + max HP |
 | `shadow` | the caption, when it says so (*"This **Shadow** Machamp…"*) |
+| the *form* | not stated anywhere — settled from CP + max HP + IVs, then the type badges |
 
 A Pokemon is identified across frames by species + max HP, so two of the same
 species scan as two rows as long as their HP differs.
@@ -114,6 +115,21 @@ Because CP, max HP and the three IVs over-determine each other, every row is
 checked before it is written: if no level in the game's range produces the
 CP *and* the HP that were read, the scan misread something and the row is
 flagged as a warning instead of quietly landing in your CSV.
+
+**Forms.** The caption gives the base species and nothing else: a Galarian
+Corsola says *"This **Corsola** was caught on…"* just like an ordinary one,
+and species the game only has forms of (Oricorio, Lycanroc, Morpeko) used to
+be dropped entirely. So the form is *solved for* the same way the level is —
+by asking which form has a level that produces the CP and the max HP that
+were read. Usually exactly one does: a Corsola with 101 HP and 13/10/15 is
+Galarian at level 20, and an ordinary one is nothing at all.
+
+When two forms are stat-for-stat identical the type badges under the HP text
+break the tie — that is the only thing separating Oricorio's four dance
+forms, which differ solely by type. And when even that cannot (Morpeko's two
+forms; a Galarian Stunfisk, whose *"GROUND"* badge Vision reads without the
+*"STEEL"* one beside it) the row is written as the form Pokemon GO stores by
+default **and says so in a warning**, so those are the rows worth a glance.
 
 ```
 node scripts/scan-video.mjs <video.mp4> [options]

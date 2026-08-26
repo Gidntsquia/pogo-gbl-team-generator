@@ -11,7 +11,7 @@
 // show the same Pokemon standing still anyway.
 
 import { readAppraisal } from './bars.js';
-import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions } from './text.js';
+import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes } from './text.js';
 
 /**
  * @param {import('./probe.js').Frame} frame
@@ -33,6 +33,17 @@ export function readFrame(frame, { resolveCaption }) {
     return { reading: null, reason: 'unrecognized species', detail: captions[0] };
   }
 
+  // The type badges belong to the card the CP and HP were read off. If they
+  // name a type this species cannot have, the caption and the card are two
+  // different Pokemon: the swipe has moved one card far enough that its CP
+  // text is unreadable (so the two-CP check above missed it) while the
+  // incoming card's caption is already legible.
+  const types = readTypes(frame.text);
+  const possible = new Set(species.candidates.flatMap((c) => c.types));
+  if (types.length > 0 && possible.size > 0 && !types.every((t) => possible.has(t))) {
+    return { reading: null, reason: 'mid-swipe (type badge belongs to another Pokemon)' };
+  }
+
   const appraisal = readAppraisal(frame.rows, frame.w);
   if (!appraisal) return { reading: null, reason: 'appraisal bars not readable' };
 
@@ -41,6 +52,8 @@ export function readFrame(frame, { resolveCaption }) {
       t: frame.t,
       speciesId: species.speciesId,
       name: species.name,
+      candidates: species.candidates,
+      types,
       shadow: species.shadow,
       purified: species.purified,
       // Both optional. The Pokemon's own animation is drawn *over* the CP

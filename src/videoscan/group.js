@@ -17,6 +17,9 @@ const DEFAULT_GAP_TOLERANCE = 3;
  * @property {number} t
  * @property {string} speciesId
  * @property {string} name
+ * @property {{speciesId: string, name: string, types: string[]}[]} candidates - every
+ *   species the caption could mean (see species.js); one entry for almost all.
+ * @property {string[]} types - the type badges read off this frame.
  * @property {boolean} shadow
  * @property {boolean} purified
  * @property {number} cp
@@ -89,6 +92,12 @@ function summarize(group) {
   return {
     speciesId: group.first.speciesId,
     name: group.first.name,
+    candidates: group.first.candidates ?? [],
+    // Vision drops one of a dual type's two badges on most frames and reads
+    // both on a few, so the fullest reading wins rather than the commonest:
+    // "psychic + flying" seen once says strictly more about which Oricorio
+    // this is than "psychic" seen three times.
+    types: bestTypes(rs.map((r) => r.types ?? [])),
     shadow: group.first.shadow,
     purified: group.first.purified,
     // Every distinct CP the frames offered, commonest first -- index.js picks
@@ -119,6 +128,24 @@ function votes(values) {
     counts.set(value, { value, count: seen.count + 1, last: i });
   });
   return [...counts.values()].sort((a, b) => b.count - a.count || b.last - a.last);
+}
+
+/**
+ * The type-badge reading to keep for a Pokemon: the longest one seen, ties
+ * broken by how often it was seen.
+ *
+ * @param {string[][]} readings - one per frame, often empty.
+ * @returns {string[]}
+ */
+function bestTypes(readings) {
+  const seen = readings.filter((t) => t.length > 0);
+  if (seen.length === 0) return [];
+  const counts = new Map();
+  for (const types of seen) {
+    const key = types.join('+');
+    counts.set(key, { types, count: (counts.get(key)?.count ?? 0) + 1 });
+  }
+  return [...counts.values()].sort((a, b) => b.types.length - a.types.length || b.count - a.count)[0].types;
 }
 
 function mode(values, keyOf) {

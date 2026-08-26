@@ -17,8 +17,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { classifyRun, readBarRow, readAppraisal } from '../src/videoscan/bars.js';
-import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions } from '../src/videoscan/text.js';
+import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes } from '../src/videoscan/text.js';
 import { createCaptionResolver } from '../src/videoscan/species.js';
+import { createFormResolver, DEFAULT_FORMS } from '../src/videoscan/forms.js';
 import { readFrame } from '../src/videoscan/frame.js';
 import { chooseCp, scanFrames } from '../src/videoscan/index.js';
 import { groupReadings, mergeDuplicates } from '../src/videoscan/group.js';
@@ -239,6 +240,7 @@ test('createCaptionResolver maps caption wording onto gamemaster species', () =>
     name: 'Trevenant',
     shadow: false,
     purified: false,
+    candidates: [{ speciesId: 'trevenant', name: 'Trevenant', types: ['ghost', 'grass'] }],
   });
   assert.equal(resolve('Galarian Weezing').speciesId, 'weezing_galarian');
   assert.equal(resolve('Alolan Ninetales').speciesId, 'ninetales_alolan');
@@ -252,6 +254,7 @@ test('createCaptionResolver reads shadow and purified off the caption', () => {
     name: 'Machamp',
     shadow: true,
     purified: false,
+    candidates: [{ speciesId: 'machamp', name: 'Machamp', types: ['fighting'] }],
   });
   const purified = resolve('Purified Shadow Machamp');
   assert.equal(purified.purified, true);
@@ -571,4 +574,142 @@ test('createLevelDeriver needs something to solve against', async () => {
   const ctx = await initEngine();
   const deriveLevel = createLevelDeriver(ctx);
   assert.throws(() => deriveLevel({ speciesId: 'trevenant', ivs: TREVENANT.ivs }), /cp, maxHp/);
+});
+
+// ------------------------------------------------------------------ forms --
+
+// Seven frames covering the four ways a form gets settled: a species with no
+// unqualified gamemaster entry whose forms differ only by type (Oricorio), one
+// the CP/HP arithmetic settles outright (Galarian Corsola), one nothing on
+// screen can settle (Morpeko), and a mid-swipe frame whose caption and card
+// are two different Pokemon (Honchkrow's caption over Omanyte's card).
+const FORM_FRAMES = readFrames('form-frames.jsonl');
+const scanForms = () => scanFrames(FORM_FRAMES);
+
+test('readTypes reads the badge row however Vision truncates it', () => {
+  const card = (...badges) => [
+    { x: 0.42, y: 0.469, w: 0.17, h: 0.02, c: 1, s: '101 / 101 HP' },
+    ...badges.map((s, i) => ({ x: 0.2 + i * 0.2, y: 0.565, w: 0.1, h: 0.02, c: 1, s })),
+  ];
+  assert.deepEqual(readTypes(card('GHOST')), ['ghost']);
+  // A dot-below on the O, a three-letter stump, and a dual type in one box.
+  assert.deepEqual(readTypes(card('GHỌ')), ['ghost']);
+  assert.deepEqual(readTypes(card('ROC')), ['rock']);
+  assert.deepEqual(readTypes(card('ROCK / WATER|')), ['rock', 'water']);
+});
+
+test('readTypes ignores the labels that share the badge row', () => {
+  const boxes = [
+    { x: 0.42, y: 0.469, w: 0.17, h: 0.02, c: 1, s: '101 / 101 HP' },
+    { x: 0.13, y: 0.565, w: 0.14, h: 0.02, c: 1, s: 'HEAVIEST' },
+    { x: 0.4, y: 0.565, w: 0.12, h: 0.02, c: 1, s: 'DARK' },
+    { x: 0.8, y: 0.565, w: 0.14, h: 0.02, c: 1, s: 'SHORTEST' },
+    { x: 0.15, y: 0.663, w: 0.2, h: 0.02, c: 1, s: 'STARDUST' },
+  ];
+  assert.deepEqual(readTypes(boxes), ['dark']);
+});
+
+test('readTypes needs the HP text to know where the badge row is', () => {
+  assert.deepEqual(readTypes([{ x: 0.4, y: 0.565, w: 0.12, h: 0.02, c: 1, s: 'DARK' }]), []);
+});
+
+test('createFormResolver lists the forms a bare species name could mean', () => {
+  const forms = createFormResolver();
+  // The unqualified entry first: an ordinary Rattata is likelier than an
+  // Alolan one, and it is what the caption literally said.
+  assert.deepEqual(
+    forms.byName('Raticate').map((f) => f.speciesId),
+    ['raticate', 'raticate_alolan']
+  );
+  // No unqualified entry exists, so the documented default leads instead.
+  assert.equal(forms.byName('Morpeko')[0].speciesId, DEFAULT_FORMS.morpeko);
+  assert.equal(forms.byName('Lycanroc')[0].speciesId, DEFAULT_FORMS.lycanroc);
+  assert.equal(forms.byName('Nidoran').length, 0);
+});
+
+test('createFormResolver leaves out forms you could never have caught', () => {
+  const ids = (name) => createFormResolver().byName(name).map((f) => f.speciesId);
+  // Megas are a battle transformation ...
+  assert.deepEqual(ids('Charizard'), ['charizard']);
+  // ... and `lanturnw` is pvpoke's second copy of Lanturn for an alternative
+  // moveset, not a form of anything.
+  assert.deepEqual(ids('Lanturn'), ['lanturn']);
+});
+
+test('createCaptionResolver offers every form a bare caption could mean', () => {
+  const resolve = createCaptionResolver();
+  assert.deepEqual(
+    resolve('Corsola').candidates.map((c) => c.speciesId),
+    ['corsola', 'corsola_galarian']
+  );
+  // A caption that named the form for itself leaves nothing to settle.
+  assert.deepEqual(
+    resolve('Galarian Corsola').candidates.map((c) => c.speciesId),
+    ['corsola_galarian']
+  );
+});
+
+test('createCaptionResolver keeps a species gamemaster only knows by its forms', () => {
+  // These used to be dropped as "unrecognized species": gamemaster has no
+  // unqualified "Oricorio", only its four dance forms.
+  const oricorio = createCaptionResolver()('Oricorio');
+  assert.equal(oricorio.candidates.length, 4);
+  assert.ok(oricorio.candidates.every((c) => c.speciesId.startsWith('oricorio_')));
+});
+
+test('scanFrames settles a form the caption never states from the CP and HP', async () => {
+  const { mons } = await scanForms();
+  const corsola = mons.find((m) => /Corsola/.test(m.name));
+  // Read off the screen: CP 831, 101 max HP, 13/10/15. No level of an
+  // ordinary Corsola produces those; a Galarian one does, at level 20.
+  assert.equal(corsola.speciesId, 'corsola_galarian');
+  assert.equal(corsola.cp, 831);
+  assert.equal(corsola.level, 20);
+});
+
+test('scanFrames settles stat-identical forms by the type badge on the card', async () => {
+  const { mons, warnings } = await scanForms();
+  const oricorio = mons.find((m) => /Oricorio/.test(m.name));
+  // All four Oricorio are 196/145/181, so the numbers cannot choose; the
+  // electric badge means this is the Pom-Pom one.
+  assert.equal(oricorio.speciesId, 'oricorio_pom_pom');
+  assert.deepEqual(oricorio.types, ['electric']);
+  assert.ok(
+    warnings.some((w) => /Oricorio \(Pom-Pom\).*electric.*badge/.test(w)),
+    warnings.join('\n')
+  );
+});
+
+test('scanFrames says so when nothing on screen can pick the form', async () => {
+  const { mons, warnings } = await scanForms();
+  const morpeko = mons.find((m) => /Morpeko/.test(m.name));
+  // Full Belly and Hangry are identical in stats and in type, so the row is
+  // written as the form Pokemon GO stores and the guess is declared.
+  assert.equal(morpeko.speciesId, 'morpeko_full_belly');
+  assert.ok(
+    warnings.some((w) => /Morpeko \(Full Belly\).*nothing on screen separates/.test(w)),
+    warnings.join('\n')
+  );
+});
+
+test('readFrame rejects a frame whose caption and card are different Pokemon', () => {
+  const resolveCaption = createCaptionResolver();
+  // Mid-swipe: Honchkrow's caption has scrolled in over Omanyte's card, and
+  // Omanyte's CP text is already too mangled for the two-CP check to catch.
+  const midSwipe = FORM_FRAMES.find((f) => Math.abs(f.t - 219.3333) < 0.01);
+  const result = readFrame(midSwipe, { resolveCaption });
+  assert.equal(result.reading, null);
+  assert.match(result.reason, /type badge/);
+});
+
+test('scanFrames does not invent a Pokemon out of a mid-swipe frame', async () => {
+  const { mons } = await scanForms();
+  // One Honchkrow, at the CP and HP its own card showed -- not a second,
+  // CP-less one carrying the HP of the card it was swiping past.
+  const honchkrow = mons.filter((m) => /Honchkrow/.test(m.name));
+  assert.equal(honchkrow.length, 1);
+  assert.deepEqual(
+    { cp: honchkrow[0].cp, maxHp: honchkrow[0].maxHp, level: honchkrow[0].level },
+    { cp: 1143, maxHp: 123, level: 15 }
+  );
 });

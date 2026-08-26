@@ -14,6 +14,19 @@ const CAPTION_RE = /\bthis\s+(.+?)\s+(?:was|is|were)\b/i;
 const CP_RE = /^cp\s*([0-9]{1,5})$/i;
 const HP_RE = /^([0-9]{1,4})\s*[/|]\s*([0-9]{1,4})\s*hp\b/i;
 
+/** pvpoke gamemaster type names, as printed on the appraisal screen badges. */
+const POKEMON_TYPES = [
+  'normal', 'fire', 'water', 'electric', 'grass', 'ice', 'fighting', 'poison', 'ground',
+  'flying', 'psychic', 'bug', 'rock', 'ghost', 'dragon', 'dark', 'steel', 'fairy',
+];
+/**
+ * How far below the HP text the type badges sit, as a fraction of frame
+ * height. Measured at 0.10 on a downscaled 384x832 recording and 0.14 on a
+ * full-resolution 1206x2622 one (which fits an extra league tag in between);
+ * 0.16 clears both and still stops above the stardust/candy row.
+ */
+const TYPE_BAND_DEPTH = 0.16;
+
 /**
  * @typedef {{x: number, y: number, w: number, h: number, c: number, s: string}} TextBox
  *   x/y/w/h normalized 0-1 with a TOP-LEFT origin.
@@ -105,6 +118,45 @@ export function readSpeciesCaptions(boxes) {
       .replace(/\s+/g, ' ')
       .trim();
     if (words) found.push(words);
+  }
+  return found;
+}
+
+/**
+ * Every Pokemon type name Pokemon GO prints on the badge row just under the
+ * HP text ("FIRE", "GHOST"). Used two ways downstream: to pick between a
+ * species' forms when their stats cannot (Oricorio's four forms differ only
+ * by type), and to catch a frame whose caption and card belong to different
+ * Pokemon (frame.js).
+ *
+ * Vision truncates these badges constantly -- "GHOST" comes back as "GHỌ",
+ * "ROCK" as "ROC", and a dual type as one box, "ROCK / WATER" -- so each box
+ * is split on the separator, stripped to bare letters, and matched as a
+ * prefix either way round. A token that could be two types is dropped rather
+ * than guessed at.
+ *
+ * @param {TextBox[]} boxes
+ * @returns {string[]} lowercase pvpoke type names, in reading order.
+ */
+export function readTypes(boxes) {
+  const hp = boxes.find((b) => HP_RE.test(clean(b.s)));
+  if (!hp) return [];
+  const found = [];
+  // The badge row sits a fixed fraction of the card below the HP text; the
+  // window stops short of the stardust/candy row beneath it.
+  const inBand = boxes
+    .filter((b) => b.y > hp.y && b.y < hp.y + TYPE_BAND_DEPTH)
+    .sort((a, b) => a.x - b.x);
+  for (const box of inBand) {
+    for (const raw of String(box.s ?? '').split(/[/|,·•]+/)) {
+      const token = raw
+        .normalize('NFD')
+        .replace(/[^A-Za-z]/g, '')
+        .toLowerCase();
+      if (token.length < 3) continue;
+      const hits = POKEMON_TYPES.filter((t) => t.startsWith(token) || token.startsWith(t));
+      if (hits.length === 1 && !found.includes(hits[0])) found.push(hits[0]);
+    }
   }
   return found;
 }
