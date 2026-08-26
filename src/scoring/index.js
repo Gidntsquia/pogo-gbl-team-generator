@@ -11,9 +11,8 @@
 // applyGroupMoveset below), the same call sequence pvpoke's own
 // Pokemon#selectRecommendedMoveset uses internally.
 //
-// See PLAN.md's "Interfaces" section for the Matrix contract this module's
-// scoreCollection produces, and src/engine/README.md for the engine API
-// (buildPokemon/simBattle) this module builds on.
+// See src/engine/README.md for the engine API (buildPokemon/simBattle) this
+// module builds on.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -24,15 +23,15 @@ const SHADOW_SUFFIX = '_shadow';
 
 // [ratingsKey, shields1, shields2] -- shields are symmetric (user mon is
 // always p1, so shields[0] applies to the user mon and shields[1] to the
-// meta mon in every scenario) per PLAN.md's "shields 0v0 / 1v1 / 2v2".
+// meta mon in every scenario).
 const SHIELD_SCENARIOS = [
   ['s00', 0, 0],
   ['s11', 1, 1],
   ['s22', 2, 2],
 ];
 
-// PLAN.md: "Per-mon score = mean over meta of weighted battle rating
-// (0.25*s00 + 0.50*s11 + 0.25*s22)."
+// Per-mon score = mean over meta of weighted battle rating
+// (0.25*s00 + 0.50*s11 + 0.25*s22).
 const SCORE_WEIGHTS = Object.freeze({ s00: 0.25, s11: 0.5, s22: 0.25 });
 
 /**
@@ -82,13 +81,13 @@ const SCORE_WEIGHTS = Object.freeze({ s00: 0.25, s11: 0.5, s22: 0.25 });
  *   instance (moveset already applied), safe to reuse across many simBattle
  *   calls.
  * @property {{speciesId:string, ivs:IVSpread, shadow:boolean, bestBuddy:boolean}} spec
- *   plain-data mirror of the params `pokemon` was built from (GOALS T15b) --
+ *   plain-data mirror of the params `pokemon` was built from --
  *   this is exactly the `MonSpec` shape src/engine/parallel.js's runBattles
  *   needs, since a live Pokemon instance can't cross a worker_thread boundary.
  *   Meta mons are never Best Buddy, so this is always `bestBuddy: false` here.
  */
 
-/** The meta group file for ctx's CP cap (GOALS T18c): "great" at 1500, "ultra" at 2500, etc. */
+/** The meta group file for ctx's CP cap: "great" at 1500, "ultra" at 2500, etc. */
 function defaultGroupFile(ctx) {
   return leagueForCp(ctx.cp).group;
 }
@@ -114,14 +113,14 @@ function resolveLookupId(gm, baseSpeciesId, shadow) {
 }
 
 /**
- * pvpoke's own default (max-stat-product) IV spread for ctx's CP cap (GOALS
- * T18b: 1500 by default, or whatever `initEngine({ cp })` was called with),
- * read directly from gamemaster data rather than recomputed. Layout verified
+ * pvpoke's own default (max-stat-product) IV spread for ctx's CP cap (1500 by
+ * default, or whatever `initEngine({ cp })` was called with), read directly
+ * from gamemaster data rather than recomputed. Layout verified
  * in vendor/pvpoke/src/js/pokemon/Pokemon.js (the "gamemaster" IV-strategy
  * branch of Pokemon#initialize): `defaultIVs.cp<N> == [level, atk, def, hp]`.
  *
  * Note: gamemaster also carries an alternate `cp2500l40` spread (a
- * level-40-capped variant) for some species alongside `cp2500` -- T18's own
+ * level-40-capped variant) for some species alongside `cp2500` -- an existing
  * engine test already settled which one `rankings-2500.json` assumes by
  * reproducing its ratings bit-for-bit using `cp2500` (not `cp2500l40`), so
  * this function uses the plain `cp<N>` key for every cap, matching that
@@ -145,7 +144,7 @@ function defaultIvsForCp(ctx, lookupId) {
  * instead of one read from pvpoke's rankings data. No move-selection logic
  * (which move is "best", movepool legality, etc.) is reimplemented here.
  *
- * Exported (GOALS T15b) so src/engine/parallelWorker.js can reapply the same
+ * Exported so src/engine/parallelWorker.js can reapply the same
  * explicit moveset after rebuilding a Pokemon from a plain-data MonSpec --
  * buildPokemon alone always applies pvpoke's RECOMMENDED moveset, which is
  * not necessarily what a buildMetaMon-built mon (e.g. a curated preset team
@@ -165,7 +164,7 @@ export function applyGroupMoveset(pokemon, { fastMove, chargedMoves }) {
 /**
  * Build ONE meta/group entry (`{speciesId, fastMove, chargedMoves}`) into a
  * battle-ready pvpoke Pokemon with that exact moveset, at pvpoke's own default
- * IV spread for ctx's CP cap (GOALS T18b). Shared with src/meta/teams.js so the "_shadow" suffix
+ * IV spread for ctx's CP cap. Shared with src/meta/teams.js so the "_shadow" suffix
  * handling, default-IV lookup and moveset application exist in exactly one
  * place.
  *
@@ -199,7 +198,7 @@ export function buildMetaMon(ctx, entry) {
 /**
  * Build ONE Pokemon from a bare speciesId (no explicit moveset), for opponent
  * sources that name only team membership rather than a full preset (e.g.
- * GOALS T10b's community-curated team file) -- unlike buildMetaMon, this
+ * the community-curated team file) -- unlike buildMetaMon, this
  * doesn't call applyGroupMoveset; buildPokemon already applies pvpoke's own
  * recommended moveset internally (Pokemon#selectRecommendedMoveset), so no
  * moveset logic is duplicated here either.
@@ -312,11 +311,10 @@ export function computeLeadIn(ratingsBySpecies) {
  * Skip-with-warning: a user mon whose speciesId isn't in the vendored
  * gamemaster, or that throws out of buildPokemon for any other reason (e.g.
  * an out-of-range IV), is left out of both `mons` and `ratings` and reported
- * in `warnings` instead of crashing the run. (Design choice, since PLAN.md
- * leaves the exact shape open: `warnings` is a field on the same object
- * scoreCollection returns, rather than a separate `{matrix, warnings}` pair
- * -- so the return value IS the Matrix from PLAN.md's Interfaces section,
- * with one additional field.)
+ * in `warnings` instead of crashing the run. (Design choice, since the Matrix
+ * contract leaves the exact shape open: `warnings` is a field on the same
+ * object scoreCollection returns, rather than a separate `{matrix, warnings}`
+ * pair -- so the return value IS the Matrix, with one additional field.)
  *
  * @param {object} ctx - from initEngine (src/engine/harness.js)
  * @param {NormalizedMon[]} mons
@@ -328,7 +326,7 @@ export function computeLeadIn(ratingsBySpecies) {
  *   currentMoves?: boolean,
  *   onProgress?: (progress: {completed: number, total: number, speciesId: string}) => void,
  * }} [opts]
- *   `currentMoves` (GOALS T17, default false = today's behavior): when true,
+ *   `currentMoves` (default false = today's behavior): when true,
  *   a user mon carrying a resolved `moves` field (src/importer's
  *   current-moves column parsing) gets that EXACT moveset applied via
  *   `applyGroupMoveset` instead of pvpoke's recommended moveset (mirrors
@@ -353,9 +351,9 @@ export function computeLeadIn(ratingsBySpecies) {
  * }}
  *   `builtMons` is keyed by the same userMonKey as `ratings` and exposes the
  *   already-built, battle-ready Pokemon instance for each scored user mon --
- *   an addition to PLAN.md's Matrix shape (backward compatible: an additive
+ *   an addition to the Matrix shape (backward compatible: an additive
  *   field, existing consumers of mons/meta/ratings/warnings are unaffected).
- *   `spec` (GOALS T15b) is the plain-data `{speciesId, ivs, shadow, bestBuddy}`
+ *   `spec` is the plain-data `{speciesId, ivs, shadow, bestBuddy}`
  *   `pokemon` was built from -- src/engine/parallel.js's runBattles needs
  *   plain-data MonSpecs (a live Pokemon can't cross a worker_thread boundary),
  *   and `bestBuddy` specifically is otherwise unrecoverable from a built
@@ -365,13 +363,13 @@ export function computeLeadIn(ratingsBySpecies) {
  *   is the level the simulator plays it at; the gap between the two is what
  *   src/cost/powerup.js turns into the Stardust/Candy build cost reported per
  *   ranked team.
- *   PLAN.md's team evaluator (src/teams/index.js, GOALS T4) takes `matrix` as
+ *   The team evaluator (src/teams/index.js) takes `matrix` as
  *   one of its inputs and needs to resolve a userMonKey to something it can
  *   hand to battleTeams; the Matrix shape as originally specified had no such
  *   path (mons/ratings carry ratings data, not IVs or instances), so rather
  *   than have the evaluator re-derive/rebuild Pokemon from raw collection
  *   rows a second time, scoreCollection now reuses the instances it already
- *   builds once here. See PROGRESS.md's T4 entry for this interface note.
+ *   builds once here.
  */
 export function scoreCollection(ctx, mons, opts = {}) {
   const { gm } = ctx;

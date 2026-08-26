@@ -114,7 +114,7 @@ test('Aug 2026 meta anchors resolve via the gamemaster and sit above the median 
   const presentAnchors = anchorIds.filter((id) => weights.has(id));
   // Mandibuzz/Gastrodon aren't in great.json or the curated training teams
   // under the pinned vendor commit -- absent from the weight universe by
-  // design (T9: "drop any absent from the pinned data").
+  // design (the loader drops any species absent from the pinned data).
   assert.ok(presentAnchors.length >= 6, `expected most anchors present, got ${presentAnchors.length}`);
 
   const sorted = [...weights.values()].sort((a, b) => a - b);

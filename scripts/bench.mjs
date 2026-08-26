@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// GOALS T14: benchmark harness for battleTeams throughput. Times N repeated,
+// Benchmark harness for battleTeams throughput. Times N repeated,
 // fully deterministic battles between two fixed, competitively-matched teams
 // (built ONCE and reused -- battleTeams.fullReset()s them per call, same as
 // evaluateTeams/tournament.mjs's own build-once-battle-many usage pattern) and
@@ -17,27 +17,26 @@
 //   node --prof-process isolate-*.log > out/bench-profile.txt
 //   rm isolate-*.log
 // (ticks attributed to files under src/engine/ are OUR overhead; ticks under
-// vendor/pvpoke/src/js/ are the engine itself -- see PROGRESS.md for the T14
-// findings from one such run.)
+// vendor/pvpoke/src/js/ are the engine itself.)
 //
 // Usage: node scripts/bench.mjs [--n 200] [--difficulty 3] [--threads N]
 //          [--batches B] [--json]
 //
-// GOALS T15: --threads N runs the same N deterministic battles through
+// --threads N runs the same N deterministic battles through
 // src/engine/parallel.js's runBattles() instead of a serial loop, so the two
 // modes are directly comparable (same teams, same lead cycling, same seeds).
 //
-// GOALS T22: --threads N --batches B (B > 1) instead drives the same N
+// --threads N --batches B (B > 1) instead drives the same N
 // battles, split into B roughly-equal batches, through ONE persistent
 // createExecutor() pool via repeated run() calls -- the "amortized across
 // many run() calls" scenario src/engine/README.md's Performance section
 // flagged as unmeasured (bench.mjs previously only ever made one runBattles()
 // call per process, so every measurement paid pool-boot cost exactly once
 // per invocation regardless of N; this mode shows what real multi-call
-// callers like scripts/tournament.mjs (T21) and a future evolve driver (T24)
+// callers like scripts/tournament.mjs and a future evolve driver
 // actually experience: boot cost paid ONCE, then amortized across every
 // subsequent batch). --batches is ignored (and --threads alone reproduces
-// the pre-T22 one-shot runBattles() behavior byte-for-byte) unless > 1.
+// the earlier one-shot runBattles() behavior byte-for-byte) unless > 1.
 
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
@@ -160,10 +159,10 @@ export async function runBenchThreaded(opts = {}) {
 /**
  * Same N deterministic battles as runBench/runBenchThreaded, but split into
  * `batches` roughly-equal groups and run through repeated `run()` calls
- * against ONE persistent `createExecutor()` pool (GOALS T22), instead of one
+ * against ONE persistent `createExecutor()` pool, instead of one
  * `runBattles()` call that boots and tears down a pool per invocation. This
  * is what lets a caller SEE the pool-reuse amortization `createExecutor`
- * (GOALS T19/T21) was built for: the first batch pays lazy pool-boot cost,
+ * was built for: the first batch pays lazy pool-boot cost,
  * every batch after it does not. Per-batch timings are returned so a caller
  * can compare batch 0 (boot included) against later batches (amortized).
  *

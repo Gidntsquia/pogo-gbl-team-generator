@@ -1,8 +1,8 @@
-// Tests for scripts/alignment-study.mjs (GOALS T27, PLAN.md Rev 6).
+// Tests for scripts/alignment-study.mjs.
 // Keeps the battle count tiny (2 candidates x 2 opponents x 9 pairings x 1
 // seed variant) so this stays fast while still exercising the real pvpoke
 // engine -- the actual "does winning the lead exchange predict winning the
-// game" numbers at a realistic scale are recorded in PROGRESS.md from a
+// game" numbers at a realistic scale come from a
 // larger, one-off run, not asserted here.
 //
 // Run with: node --test test/alignmentStudy.test.js
@@ -14,7 +14,7 @@ import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { loadMetaTeams } from '../src/meta/teams.js';
 import { initEngine } from '../src/engine/harness.js';
 
-test('battleTeams summary exposes lead-exchange and shield-banking ground truth (T27)', async () => {
+test('battleTeams summary exposes lead-exchange and shield-banking ground truth', async () => {
   const ctx = await initEngine();
   initTeamBattle(ctx);
   const pool = loadMetaTeams(ctx);

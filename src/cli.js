@@ -1,6 +1,6 @@
 // JavaScript Document
 //
-// CLI entry point (GOALS T5, sampling wired in T12). Wires the whole
+// CLI entry point. Wires the whole
 // pipeline together:
 //
 //   collection.csv
@@ -14,7 +14,7 @@
 //     -> evaluator     (src/teams)         real 3v3 battles, ranked teams
 //     -> report        (src/report)        terminal summary + out/report.md
 //                                            + out/report.html (self-contained,
-//                                            no build step -- ROADMAP "HTML report")
+//                                            no build step)
 //
 // No battle math lives here -- this file only parses args, sequences the
 // modules above, dedupes the candidate pool to one instance per species, and
@@ -39,13 +39,13 @@
 //                       identical either way; HP-margin figures can drift
 //                       slightly, see src/engine/README.md)
 //   --current-moves    score/battle each mon with its OWN moveset from the
-//                       CSV's move columns (GOALS T17) instead of pvpoke's
+//                       CSV's move columns instead of pvpoke's
 //                       recommended moveset -- a mon with no resolvable
 //                       move data still falls back to recommended (with a
 //                       warning), never dropped from the run.
 //   --help             print this help and exit
 //
-// Sampling (default path -- GOALS T9-T12, PLAN.md Rev 3):
+// Sampling (default path):
 //   --candidates N     candidate teams to sample             (default 15)
 //   --opponents M      opponent teams to sample               (default 7)
 //   --pool P           user-mon pool sampled from (best-scoring, deduped
@@ -65,7 +65,7 @@
 // pool. Both samplers are pure list generators (src/teams/sample.js,
 // src/meta/sampleTeams.js) -- evaluateTeams itself is unchanged either way.
 //
-// Exhaustive path (old T5 behavior, opt-in via --exhaustive):
+// Exhaustive path (the original behavior, opt-in via --exhaustive):
 //   --exhaustive       use C(topK,3) exhaustive candidates + a fixed curated
 //                       opponent list instead of sampling
 //   --topK K           candidate pool size (best-scoring)  (default 5, exhaustive only)
@@ -73,13 +73,13 @@
 //
 // Budget math: 3v3 battles run = candidates x opponents x 9 lead pairings
 // (sampled) or C(topK,3) x meta x 9 (exhaustive). Measured ~172ms/battle in
-// the sandbox (PROGRESS.md 2026-08-20T18:03Z). Sampled defaults (15
+// the sandbox (2026-08-20T18:03Z). Sampled defaults (15
 // candidates x 7 opponents x 9 = 945 battles) land at roughly 945 x 172ms =~
 // 2.7 min, inside the ~3 min sandbox budget with margin; exhaustive defaults
 // (C(5,3)=10 candidates x 5 meta x 9 = 450 battles =~ 77s) are unchanged from
-// T5/T6. Raising --candidates/--opponents (sampled) or --topK/--meta
-// (exhaustive) grows runtime roughly linearly (sampled) or combinatorially
-// (--topK, exhaustive) -- raise gradually.
+// the original exhaustive path. Raising --candidates/--opponents (sampled)
+// or --topK/--meta (exhaustive) grows runtime roughly linearly (sampled) or
+// combinatorially (--topK, exhaustive) -- raise gradually.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -198,9 +198,9 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  * Run the full pipeline and return the pieces the report needs. Exported so
  * test/cli.test.js can drive it with tiny knobs without spawning a subprocess.
  *
- * Sampling (GOALS T12, default) vs exhaustive (`opts.exhaustive: true`) only
+ * Sampling (default) vs exhaustive (`opts.exhaustive: true`) only
  * changes how `candidates`/`metaTeams` are produced; evaluateTeams itself
- * (src/teams/index.js) is identical either way -- see PLAN.md Rev 3.
+ * (src/teams/index.js) is identical either way.
  *
  * @param {string} csvPath
  * @param {{ cp?:number, top?:number, scoreMeta?:number, difficulty?:number,
@@ -210,20 +210,20 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  *           seed?:number|string, curatedRatio?:number, threads?:number,
  *           currentMoves?:boolean, evolutions?:boolean,
  *           onProgress?:(p:{completed:number,total:number})=>void }} [opts]
- *   `cp` (GOALS T18c) picks the league: 1500 = Great League (default), 2500 =
+ *   `cp` picks the league: 1500 = Great League (default), 2500 =
  *   Ultra League. It reaches every layer through initEngine's ctx.cp -- meta
  *   group, rankings, curated team presets, default IV spreads and the battle's
  *   own CP cap all follow it. The Great-League-curated community teams
  *   (data/meta-teams-community.json) are only part of the opponent pool at
  *   cp 1500 (see src/meta/teams.js).
- *   `currentMoves` (GOALS T17) is forwarded verbatim to scoreCollection's
+ *   `currentMoves` is forwarded verbatim to scoreCollection's
  *   opts.currentMoves -- omitted/falsy keeps today's behavior (every mon
  *   scored/battled with pvpoke's recommended moveset).
  *   `evolutions` (default true) expands the collection with the species each mon
  *   could evolve into (src/evolution/index.js) before scoring, so a mon that
  *   isn't viable in the form you own can still earn a place as its evolved
  *   form. Set false to score only the forms you actually own.
- *   `threads` (GOALS T15b) is forwarded verbatim to evaluateTeams' opts.threads
+ *   `threads` is forwarded verbatim to evaluateTeams' opts.threads
  *   -- omitted/falsy keeps the serial battleTeams loop (today's behavior,
  *   default); a positive integer runs battles through src/engine/parallel.js's
  *   worker-thread pool instead. Win rates and team ranking are identical
@@ -237,7 +237,7 @@ export async function runPipeline(csvPath, opts = {}) {
   const scoreMeta = opts.scoreMeta ?? DEFAULTS.scoreMeta;
   const excludeSpecies = opts.excludeSpecies ?? [];
   const exhaustive = opts.exhaustive ?? false;
-  // Throws on an unsupported cap before any work happens (GOALS T18c).
+  // Throws on an unsupported cap before any work happens.
   const league = leagueForCp(opts.cp ?? DEFAULTS.cp);
 
   const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
@@ -330,7 +330,7 @@ export async function runPipeline(csvPath, opts = {}) {
   const warnings = [...importWarnings, ...expanded.warnings, ...matrix.warnings];
   settings.candidateCount = candidates.length;
 
-  // GOALS T28: pvpoke's own vendored lead/closer/switch role priors, cp-aware.
+  // pvpoke's own vendored lead/closer/switch role priors, cp-aware.
   // Local file reads only (no network) -- cheap enough to always compute and
   // surface in the report appendix.
   const roleScores = loadRoleScores(ctx);

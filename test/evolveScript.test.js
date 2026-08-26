@@ -1,4 +1,4 @@
-// Tests for scripts/evolve.mjs (GOALS T24: evolutionary team search driver).
+// Tests for scripts/evolve.mjs (the evolutionary team search driver).
 // Drives the exported `runEvolution` in-process (no subprocess, no network)
 // with tiny knobs (ticket-specified: pop 6, 2 gens, 2 opponents) so the real
 // pvpoke 3v3 engine still runs but the battle count stays small -- mirrors
@@ -238,13 +238,13 @@ test('opts.noHtml skips writing the HTML report; opts.html sends it to a custom 
   assert.ok(existsSync(customHtmlPath), 'HTML written to the custom path');
 });
 
-test('locked leads (GOALS T29): every elite team\'s bestLead is its team[0] (member order preserved end to end)', () => {
+test('locked leads : every elite team\'s bestLead is its team[0] (member order preserved end to end)', () => {
   for (const t of shared.elites) {
     assert.equal(t.bestLead.key, t.members[0].key, 'bestLead resolves to the first-listed member, the designated lead');
   }
 });
 
-test('GOALS T29 part 2: resuming refuses an old-format (pre-lock) checkpoint instead of silently misreading it', async () => {
+test('resuming refuses an old-format (pre-lock) checkpoint instead of silently misreading it', async () => {
   const outDir = tmpOutDir('gbl-evolve-oldformat-');
   const out = path.join(outDir, 'r.md');
   await runEvolution(FIXTURE, { ...TINY, outDir, out });
@@ -252,7 +252,7 @@ test('GOALS T29 part 2: resuming refuses an old-format (pre-lock) checkpoint ins
   const gen0Path = path.join(outDir, 'evolve-gen0.json');
   const cp = JSON.parse(readFileSync(gen0Path, 'utf8'));
   assert.equal(cp.formatVersion, 2, 'sanity: a freshly-written checkpoint carries the current format version');
-  delete cp.formatVersion; // simulate a pre-T29 checkpoint (config schema is unchanged, so it would otherwise match)
+  delete cp.formatVersion; // simulate a pre-lock checkpoint (config schema is unchanged, so it would otherwise match)
   writeFileSync(gen0Path, JSON.stringify(cp, null, 2), 'utf8');
   rmSync(path.join(outDir, 'evolve-DONE'));
 
@@ -263,10 +263,10 @@ test('GOALS T29 part 2: resuming refuses an old-format (pre-lock) checkpoint ins
   );
 });
 
-// GOALS T29 item 3 (PLAN.md Rev 6): battle-reality fitness blend (snowball +
-// closer terms), --fitness classic|battle-reality. GOALS T30 flipped the
+// Battle-reality fitness blend (snowball +
+// closer terms), --fitness classic|battle-reality. A later change flipped the
 // DEFAULT to 'battle-reality' (see DEFAULTS.fitness's own comment + the A/B
-// in PROGRESS.md) -- `shared` (no explicit `fitness` in TINY) now runs
+// measurement) -- `shared` (no explicit `fitness` in TINY) now runs
 // battle-reality by default; classic is tested explicitly below.
 test('battle-reality fitness components (snowball/closer/blendFitness) are always computed, regardless of --fitness mode', () => {
   for (const t of shared.elites) {
@@ -280,7 +280,7 @@ test('battle-reality fitness components (snowball/closer/blendFitness) are alway
   const md = readFileSync(SHARED_REPORT, 'utf8');
   assert.match(md, /Snowball score:/, 'report surfaces the snowball score');
   assert.match(md, /Closer score:/, 'report surfaces the closer score');
-  assert.match(md, /fitness: battle-reality/, 'Settings line names the default fitness mode (GOALS T30: flipped to battle-reality)');
+  assert.match(md, /fitness: battle-reality/, 'Settings line names the default fitness mode (flipped to battle-reality)');
 });
 
 test('--fitness classic still computes the battle-reality components (report-only; the GA itself consumes plain winRate)', async () => {
@@ -321,7 +321,7 @@ test('--fitness battle-reality: config fingerprint records the mode, run complet
   // resumed as if it were the requested mode (fitness is part of buildRunConfig,
   // so configsMatch already diverges -- this just confirms the resume scan
   // correctly starts fresh rather than reusing generation 0's population).
-  // Explicit 'classic' here (GOALS T30 flipped TINY's implicit default to
+  // Explicit 'classic' here (TINY's implicit default is now
   // battle-reality, same as `blended` above -- an implicit-default second run
   // would now MATCH and legitimately resume rather than exercise the mismatch).
   const classicOnSameDir = await runEvolution(FIXTURE, { ...TINY, outDir, out: path.join(outDir, 'r2.md'), fitness: 'classic' });
@@ -336,10 +336,10 @@ test('--fitness with an unrecognized value throws a clear error', async () => {
   );
 });
 
-// GOALS T30 (PLAN Rev 6): "Lead / Back / Back" report naming, plus the
-// snowballIndex/comebackIndex/designatedCloser metrics distinct from T29's
-// own snowballScore/closerScore fitness-blend components.
-test('T30: reports name teams "Lead / Back / Back" (member[0] first, marked as lead)', () => {
+// "Lead / Back / Back" report naming, plus the
+// snowballIndex/comebackIndex/designatedCloser metrics distinct from the
+// fitness blend's own snowballScore/closerScore components.
+test('reports name teams "Lead / Back / Back" (member[0] first, marked as lead)', () => {
   const top = shared.elites[0];
   const [lead, ...backs] = top.members;
 
@@ -351,7 +351,7 @@ test('T30: reports name teams "Lead / Back / Back" (member[0] first, marked as l
   assert.ok(html.includes(`${lead.name} <em>(Lead)</em> / ${backs.map((b) => b.name).join(' / ')}`), 'HTML report uses the same Lead/Back/Back format');
 });
 
-test('T30: snowballIndex/comebackIndex/designatedCloser are present on every elite (null when unmeasured, else in [0,1])', () => {
+test('snowballIndex/comebackIndex/designatedCloser are present on every elite (null when unmeasured, else in [0,1])', () => {
   for (const t of shared.elites) {
     assert.ok(t.snowballIndex === null || (t.snowballIndex >= 0 && t.snowballIndex <= 1), 'snowballIndex is null or in [0,1]');
     assert.ok(t.comebackIndex === null || (t.comebackIndex >= 0 && t.comebackIndex <= 1), 'comebackIndex is null or in [0,1]');
@@ -362,7 +362,7 @@ test('T30: snowballIndex/comebackIndex/designatedCloser are present on every eli
     if (t.designatedCloser) {
       const backKeys = t.members.slice(1).map((m) => m.key);
       assert.ok(backKeys.includes(t.designatedCloser.key), 'designatedCloser is one of the two back members, never the lead');
-      assert.ok(t.designatedCloser.closer >= 0 && t.designatedCloser.closer <= 1, 'designatedCloser.closer is a normalized T28 role prior');
+      assert.ok(t.designatedCloser.closer >= 0 && t.designatedCloser.closer <= 1, 'designatedCloser.closer is a normalized role prior');
     }
   }
 
@@ -376,7 +376,7 @@ test('T30: snowballIndex/comebackIndex/designatedCloser are present on every eli
   assert.match(html, /Designated closer:/);
 });
 
-test('T30: out/evolve-generations.json carries per-generation topTeams with the new fields', () => {
+test('out/evolve-generations.json carries per-generation topTeams with the new fields', () => {
   const p = path.join(SHARED_DIR, 'evolve-generations.json');
   const analytics = JSON.parse(readFileSync(p, 'utf8'));
   for (const g of analytics) {

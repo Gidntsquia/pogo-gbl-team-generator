@@ -1,7 +1,7 @@
 /**
  * Collection importer: reads a Poke Genie export CSV or a simple generic
  * CSV and normalizes every row into a NormalizedMon ready for the engine
- * packet (see PLAN.md's Interfaces section).
+ * packet.
  *
  * No level/CP math happens here -- IVs, level, and CP are passed through
  * exactly as the source CSV states them (or omitted if the CSV doesn't
@@ -38,8 +38,8 @@ import { parseNumber, parseBoolFlag, parseShadowPurified } from './util.js';
  * @property {number} sourceRow - 1-based row number in the source CSV,
  *   counting the header as row 1 (i.e. matches what a spreadsheet app
  *   would show), for tracing a warning or a mon back to its CSV line.
- * @property {{fastMove: string, chargedMoves: string[]}} [moves] - GOALS T17
- *   current-moves mode: this mon's actual moveset, resolved from the CSV's
+ * @property {{fastMove: string, chargedMoves: string[]}} [moves] - current-moves
+ *   mode: this mon's actual moveset, resolved from the CSV's
  *   move-name columns to pvpoke moveIds. Present ONLY when the CSV named a
  *   fast move and at least one charged move AND both resolved against this
  *   species' own gamemaster move pool -- absent otherwise (no move columns
@@ -109,7 +109,7 @@ function detectFormat(headerIndex) {
   // deliberately excluded from this signature (and from the IV mapping
   // below -- see mapPokeGenieRow).
   if (has('atk iv') && has('def iv') && has('sta iv')) return 'pokegenie';
-  // Generic format, exactly per PLAN.md: name,atk,def,sta[,shadow][,level][,cp]
+  // Generic format: name,atk,def,sta[,shadow][,level][,cp]
   if (has('name') && has('atk') && has('def') && has('sta')) return 'generic';
   return null;
 }
@@ -132,7 +132,7 @@ function readPokeGenieLevel(row, headerIndex) {
 }
 
 /**
- * GOALS T17: resolve a row's move-name columns against the mon's already-
+ * Resolve a row's move-name columns against the mon's already-
  * resolved species, returning `undefined` when the CSV states no move names
  * at all (no columns / all blank -- not an error, just no data), or the
  * resolved `{fastMove, chargedMoves}` -- pushing a fallback-note warning (not
@@ -255,8 +255,8 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, re
   }
 
   const shadow = parseBoolFlag(cell(row, headerIndex, 'shadow'));
-  // Not in PLAN.md's documented generic column list either -- recognized
-  // opportunistically like purified/bestBuddy below, mirroring GOALS T8's
+  // Not in the documented generic column list either -- recognized
+  // opportunistically like purified/bestBuddy below, mirroring the existing
   // precedent for this format.
   const fastMoveName = cell(row, headerIndex, 'fast move', 'fastmove', 'quick move');
   const chargedMoveNames = [
@@ -281,7 +281,7 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, re
     cp: parseNumber(cell(row, headerIndex, 'cp')),
     level: parseNumber(cell(row, headerIndex, 'level')),
     shadow,
-    // purified/bestBuddy aren't in PLAN.md's documented generic column
+    // purified/bestBuddy aren't in the documented generic column
     // list ([,shadow][,level][,cp] only); recognized opportunistically if
     // present, and default to false (matching the documented shape)
     // otherwise -- never fabricated.

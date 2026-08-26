@@ -1,5 +1,5 @@
 /**
- * Move-name-to-pvpoke-moveId resolver, for GOALS T17's current-moves mode.
+ * Move-name-to-pvpoke-moveId resolver, for current-moves mode.
  *
  * Resolves a CSV's human-readable move name (e.g. "Ice Beam") against ONE
  * species' own `fastMoves`/`chargedMoves` pool from the vendored gamemaster

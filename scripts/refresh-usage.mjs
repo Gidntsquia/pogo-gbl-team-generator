@@ -40,7 +40,7 @@ async function main() {
   }
 
   // `cp` records which CP cap these scores are for: loadUsageWeights ignores
-  // a snapshot whose cap doesn't match the run's (GOALS T18c), so a `--cp
+  // a snapshot whose cap doesn't match the run's, so a `--cp
   // 2500` run never silently gets Great League usage weights.
   const snapshot = { fetchedAt: new Date().toISOString(), source: SOURCE_URL, cp: SOURCE_CP, entries };
   mkdirSync(path.dirname(OUT_PATH), { recursive: true });

@@ -1,7 +1,7 @@
-// Tests for scripts/shield-weight-review.mjs (ROADMAP "Shield-scenario
-// weighting review"). Keeps battle counts tiny (small topK/opponents/schemes)
+// Tests for scripts/shield-weight-review.mjs (the shield-scenario
+// weighting review). Keeps battle counts tiny (small topK/opponents/schemes)
 // so this stays fast while still exercising the real pvpoke engine end to
-// end -- the actual larger-scale findings are recorded in PROGRESS.md from a
+// end -- the actual larger-scale findings come from a
 // one-off run, not asserted here.
 //
 // Run with: node --test test/shieldWeightReview.test.js

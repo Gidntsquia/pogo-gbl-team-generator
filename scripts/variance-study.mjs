@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// ROADMAP "TrainingAI variance study": quantifies how much team-battle
+// TrainingAI variance study: quantifies how much team-battle
 // results move when the SAME set of battles runs in a DIFFERENT ORDER,
 // isolating that from AI/seed randomness (which is already pinned -- see
 // below) so the ticket's actual open question gets a real number instead of
 // an anecdote.
 //
-// Background (see src/engine/README.md's "Known limitation" section, GOALS
-// T15b/T15c): vendor/pvpoke's own TrainingAI makes plenty of Math.random()
+// Background (see src/engine/README.md's "Known limitation" section):
+// vendor/pvpoke's own TrainingAI makes plenty of Math.random()
 // calls (energy estimation, move-option selection, IV-combo picks, buff
 // rolls -- see vendor/pvpoke/src/js/training/TrainingAI.js), but
 // src/engine/teamBattle.js already patches the vm's Math.random with a
@@ -16,12 +16,12 @@
 // test/bench.test.js already verifies battleTeams is bit-identical for a
 // FIXED battle order under a fixed seed. So "AI randomness" itself
 // contributes ZERO variance once pinned; the actual variance source found
-// during T15b/T15c is different: pvpoke's own Pokemon#resetMoves() reads a
+// earlier is different: pvpoke's own Pokemon#resetMoves() reads a
 // stale `self.index` (this Pokemon's battle SLOT from whichever Battle it
 // last fought in) when picking its bestChargedMove tie-break, so a REUSED
 // Pokemon instance's chosen moveset -- and therefore that battle's winner --
 // can depend on which OTHER battle it fought immediately before, i.e. on
-// BATTLE ORDER, not on the seed. T15c found one such flip by hand (1 battle
+// BATTLE ORDER, not on the seed. One such flip was found by hand (1 battle
 // out of 90). This script quantifies it properly: run the SAME real battle
 // set (K candidates x M opponents x all 9 lead pairings) through several
 // different, seeded-deterministic orderings of that same list, and measure:

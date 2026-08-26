@@ -1,9 +1,9 @@
-// Tests for scripts/bench.mjs (GOALS T14: profile + benchmark harness).
+// Tests for scripts/bench.mjs (the profile + benchmark harness).
 // Two things are pinned down here: (1) the bench harness itself runs a tiny
 // N deterministically and returns a well-formed timing/turns report, and (2)
 // battleTeams results are bit-identical across repeat calls with the same
-// inputs -- the invariant T14's "single-thread wins" (if any) are required
-// to preserve, and T15's parallel executor will need to preserve too.
+// inputs -- the invariant profiling's "single-thread wins" (if any) are required
+// to preserve, and the parallel executor will need to preserve too.
 //
 // Run with: node --test test/bench.test.js
 
@@ -62,7 +62,7 @@ test('battleTeams itself is bit-identical for a fixed battle set (guards single-
   assert.deepEqual(second, first, 'same teams/leads/seeds must reproduce identical results');
 });
 
-test('runBenchThreaded (GOALS T15) reproduces the same turn counts as the serial runBench, at threads=1 and threads=4', async () => {
+test('runBenchThreaded reproduces the same turn counts as the serial runBench, at threads=1 and threads=4', async () => {
   const serial = await runBench({ n: 6, difficulty: 3 });
   const single = await runBenchThreaded({ n: 6, difficulty: 3, threads: 1 });
   const quad = await runBenchThreaded({ n: 6, difficulty: 3, threads: 4 });
@@ -70,7 +70,7 @@ test('runBenchThreaded (GOALS T15) reproduces the same turn counts as the serial
   assert.deepEqual(quad.turns, serial.turns, 'threads=4 must match the serial loop exactly');
 });
 
-test('runBenchPersistent (GOALS T22) produces a well-formed multi-batch report for a tiny N', async () => {
+test('runBenchPersistent produces a well-formed multi-batch report for a tiny N', async () => {
   const result = await runBenchPersistent({ n: 6, difficulty: 3, threads: 2, batches: 3 });
 
   assert.equal(result.n, 6);
@@ -90,7 +90,7 @@ test('runBenchPersistent (GOALS T22) produces a well-formed multi-batch report f
   assert.ok(Number.isFinite(result.msPerBattle) && result.msPerBattle > 0);
 });
 
-test('runBenchPersistent (GOALS T22) reproduces the same turn counts as the serial runBench across batch splits', async () => {
+test('runBenchPersistent reproduces the same turn counts as the serial runBench across batch splits', async () => {
   const serial = await runBench({ n: 8, difficulty: 3 });
   const oneBatch = await runBenchPersistent({ n: 8, difficulty: 3, threads: 3, batches: 1 });
   const threeBatches = await runBenchPersistent({ n: 8, difficulty: 3, threads: 3, batches: 3 });
@@ -102,7 +102,7 @@ test('runBenchPersistent (GOALS T22) reproduces the same turn counts as the seri
   );
 });
 
-test('runBenchPersistent (GOALS T22) closes its executor -- process can exit without lingering workers', async () => {
+test('runBenchPersistent closes its executor -- process can exit without lingering workers', async () => {
   // No explicit assertion beyond "this resolves" -- if close() were skipped,
   // a worker_threads handle would keep the test process alive past its
   // timeout instead of node:test moving on cleanly.

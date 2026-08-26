@@ -1,8 +1,8 @@
 // JavaScript Document
 //
-// CP cap -> league identity (GOALS T18c). One place to answer the two
-// questions T18b deliberately deferred as design decisions rather than
-// mechanical path substitutions:
+// CP cap -> league identity. One place to answer the two questions the
+// earlier CP-cap plumbing deliberately deferred as design decisions rather
+// than mechanical path substitutions:
 //   - which vendor/pvpoke meta GROUP file represents "the meta" at this cap
 //     (src/data/groups/<group>.json -- used by src/scoring/index.js's loadMeta
 //     for the 1v1 pruning meta and by src/meta/usage.js's weight universe), and

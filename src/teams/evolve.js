@@ -1,11 +1,11 @@
 // JavaScript Document
 //
-// GA core module (GOALS T23, PLAN.md Rev 5 "survival of the fittest"; locked
-// -lead representation added GOALS T29, PLAN.md Rev 6). Pure generational
+// GA core module ("survival of the fittest"; the locked-lead representation
+// was a later addition). Pure generational
 // logic -- selection, mutation, immigration, convergence -- with NO battles
 // inside, so it is unit-testable against fake fitness arrays without booting
-// the pvpoke engine. `scripts/evolve.mjs` (T24) is the driver that actually
-// runs battles (via the Rev 4 executor) to produce each generation's
+// the pvpoke engine. `scripts/evolve.mjs` is the driver that actually
+// runs battles (via the persistent executor) to produce each generation's
 // `fitness` array and feeds it back into `nextGeneration`.
 //
 // A "team" here is the same shape used throughout src/teams/*: an array of 3
@@ -15,7 +15,7 @@
 // sampleCandidateTeams). GA code is sampling machinery, not battle math --
 // vendor stays untouched, no pvpoke import here at all.
 //
-// LOCKED LEADS (PLAN Rev 6, Jaxon): a team is (lead, back1, back2), not an
+// LOCKED LEADS (Jaxon): a team is (lead, back1, back2), not an
 // unordered trio -- by convention `team[0]` is the designated lead and
 // `team[1]`/`team[2]` are the backs (their relative order carries no
 // meaning). Individual IDENTITY for dedup/uniqueness purposes is therefore
@@ -25,7 +25,7 @@
 // lead-rotation (promote a back to lead), alongside the pre-existing member
 // -swap type -- see `DEFAULT_LEAD_ROTATION_RATE`. Downstream battle-driving
 // code (scripts/evolve.mjs) deciding to evaluate a team ONLY at its own
-// `team[0]` lead (PLAN Rev 6's ~3x battle-count saving) is NOT this module's
+// `team[0]` lead (a ~3x battle-count saving) is NOT this module's
 // concern -- this module only defines and evolves the representation.
 
 import { rngFromSeed, pickWeighted } from '../util/rng.js';
@@ -39,7 +39,7 @@ import {
 const TEAM_SIZE = 3;
 const BACK_SLOTS = [1, 2];
 
-// Selection defaults, revised 2026-08-21 by Jaxon (PLAN Rev 5): bottom-50%
+// Selection defaults, revised 2026-08-21 by Jaxon: bottom-50%
 // death was judged "too harsh" -- only a quarter of the population dies each
 // generation, and mutation is a probabilistic roll (not a deterministic
 // top-quartile entitlement) whose odds simply rise with fitness percentile.
@@ -48,14 +48,14 @@ export const DEFAULT_MUTATION_FLOOR = 0.05;
 export const DEFAULT_MUTATION_CEIL = 0.4;
 // Of the mutation successes rolled via mutationFloor/Ceil above, this share
 // become a LEAD-ROTATION (promote a back to lead, same species-set) instead
-// of a member-swap (replace one slot's species) -- PLAN Rev 6: "NEW lead
-// -rotation mutation ... alongside member-swap". 0.3 is a documented
-// judgment call (T29, no value specified upstream): common enough that lead
+// of a member-swap (replace one slot's species): lead-rotation is a mutation
+// type in its own right, alongside member-swap. 0.3 is a documented
+// judgment call (no value was specified for it): common enough that lead
 // -assignment is genuinely explored by evolution, but member-swap (which
 // still explores species composition, including at the lead slot) stays the
 // majority of mutations, matching its pre-existing primacy.
 export const DEFAULT_LEAD_ROTATION_RATE = 0.3;
-// "a floor of ~10% of P fresh IMMIGRANT teams is always reserved" (PLAN Rev 5).
+// A floor of ~10% of P fresh IMMIGRANT teams is always reserved.
 export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 export const DEFAULT_CONVERGENCE_WINDOW = 3;
 export const DEFAULT_CONVERGENCE_TOP_N = 10;
@@ -71,7 +71,7 @@ const MAX_ATTEMPTS_FLOOR = 50;
  * Identity signature for a LOCKED-LEAD team: `team[0]` (the lead) plus the
  * sorted set of `team[1]`/`team[2]` (the backs, unordered). Two teams with
  * the same 3 species but a DIFFERENT lead produce DIFFERENT signatures --
- * PLAN Rev 6's "same trio, different lead = different individual" -- so
+ * same trio, different lead = different individual -- so
  * every uniqueness/dedup check in this module (population fill, mutant/
  * immigrant collision checks, convergence's top-N set) is lead-aware for
  * free by routing through this one function.
@@ -98,10 +98,10 @@ function assignLead(team, rng) {
 
 /**
  * Gen 0: delegate straight to `sampleCandidateTeams` for WHICH 3 species
- * make up each team (PLAN Rev 5's `initPopulation` is explicitly a thin
+ * make up each team (`initPopulation` is deliberately a thin
  * wrapper -- the weighted 1v1-score / meta-usage blend that seeds candidate
  * teams elsewhere in the app is exactly what should seed generation zero
- * too), then assign each team a seeded-random lead (PLAN Rev 6 locked
+ * too), then assign each team a seeded-random lead (locked
  * leads) -- `sampleCandidateTeams` already guarantees unique species-sets,
  * and a single lead-assignment per gen-0 team can't collide with itself, so
  * no retry loop is needed here.
@@ -125,7 +125,7 @@ export function initPopulation({ matrix, pool, weights, count, seed, excludeSpec
  * mutation TYPE it rolled (a second, immediately-following rng() draw on
  * success only, so the sequence stays fully deterministic under a fixed
  * seed): `'leadRotation'` with probability `leadRotationRate`, else
- * `'memberSwap'` (PLAN Rev 6's two mutation types).
+ * `'memberSwap'` (the two mutation types).
  */
 function rollMutations(survivorIndicesByFitnessAsc, fitness, mutationFloor, mutationCeil, leadRotationRate, rng) {
   const n = survivorIndicesByFitnessAsc.length;
@@ -146,10 +146,10 @@ function rollMutations(survivorIndicesByFitnessAsc, fitness, mutationFloor, muta
 /**
  * Attempt to build one member-swap mutant of `parentTeam`: pick a uniform
  * -random slot (any of the 3, including the lead slot 0 -- replacing the
- * lead's species still counts as a member swap; PLAN Rev 6's dedicated
+ * lead's species still counts as a member swap; the dedicated
  * lead-ROTATION mutation below is the one that changes only WHO leads, not
  * WHICH species are on the team), replace it with a DIFFERENT eligible pool
- * mon (P(new mon) proportional to the Rev 3 score/usage blend), retrying a
+ * mon (P(new mon) proportional to the score/usage blend), retrying a
  * bounded number of times if the result collides with an already-used team
  * signature (`usedSignatures`) or no eligible replacement exists for the
  * chosen slot. Returns `{team, swappedSlot}` or `null` if no valid mutant
@@ -175,7 +175,7 @@ function buildMutant(parentTeam, matrix, scoredPool, weightFn, usedSignatures, r
 }
 
 /**
- * Attempt to build one lead-rotation mutant of `parentTeam` (PLAN Rev 6):
+ * Attempt to build one lead-rotation mutant of `parentTeam`:
  * promote a uniform-random BACK slot (index 1 or 2) into the lead slot
  * (index 0), demoting the current lead into that back slot -- same 3
  * species, a different designated lead, hence a different individual under
@@ -205,7 +205,7 @@ function buildLeadRotation(parentTeam, usedSignatures, rng, maxAttempts) {
  * undersubscribes), and dedupe the whole next population by species-set
  * composition. Pure -- no battles run here; `fitness[i]` must already be
  * `population[i]`'s measured win rate for THIS generation (elites are always
- * re-evaluated by the caller, never carried over stale, per PLAN Rev 5).
+ * re-evaluated by the caller, never carried over stale, by design).
  *
  * @param {{
  *   population: string[][],
@@ -242,7 +242,7 @@ function buildLeadRotation(parentTeam, usedSignatures, rng, maxAttempts) {
  *   the OLD population), a mutant (with its OLD-population parent index and
  *   which mutation it got -- a member-swap's changed slot, or a lead
  *   -rotation's promoted slot), or a fresh immigrant. Every returned team
- *   still has `team[0]` as its designated lead (PLAN Rev 6).
+ *   still has `team[0]` as its designated lead.
  */
 export function nextGeneration({ population, fitness, pool, matrix, weights, seed, opts = {} }) {
   const P = population.length;
@@ -377,10 +377,10 @@ function setsEqual(a, b) {
 }
 
 /**
- * Convergence per PLAN Rev 5: converged once the top-N (default 10, by
+ * Convergence: converged once the top-N (default 10, by
  * fitness) team-composition set has been IDENTICAL for `window` (default 3)
  * consecutive generations. Deliberately does NOT know about `--generations`
- * caps or `--deadline-minutes` -- those are scripts/evolve.mjs's (T24) job,
+ * caps or `--deadline-minutes` -- those are scripts/evolve.mjs's job,
  * driven by wall-clock/config concerns this pure module has no business
  * touching.
  *

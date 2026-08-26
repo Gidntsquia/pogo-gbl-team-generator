@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// GOALS T13: multi-stage overnight tournament runner. A 3-stage funnel that
+// Multi-stage overnight tournament runner. A 3-stage funnel that
 // ranks the user's candidate teams with progressively more opponents, so the
 // final ranking rests on far more battles per finalist than a single flat
 // run could afford in a fixed time budget:
@@ -16,8 +16,8 @@
 //                       pairings for fine-grained final rankings + bestLead.
 //
 // Shared setup mirrors src/cli.js's sampled path exactly (importer ->
-// scoreCollection -> dedupeBestPerSpecies -> loadUsageWeights -> sampling),
-// per PLAN.md Rev 3. No battle math is reimplemented anywhere in this file:
+// scoreCollection -> dedupeBestPerSpecies -> loadUsageWeights -> sampling).
+// No battle math is reimplemented anywhere in this file:
 // every win/loss/HP number comes from battleTeams (src/engine/teamBattle.js,
 // pvpoke's own emulate engine). `evaluateTeams` (src/teams/index.js) is
 // intentionally NOT used here even though it exists and is frozen -- its
@@ -57,7 +57,7 @@
 //                           after stage 2 (see "DEADLINE SELF-TUNING" below) (450)
 //   --exclude a,b          species ids excluded from candidate teams (none)
 //   --difficulty D         AI difficulty 0-3 override               (engine default, 3)
-//   --threads N            GOALS T21: battle through ONE persistent worker-pool
+//   --threads N            battle through ONE persistent worker-pool
 //                           executor shared across all 3 stages (src/engine/
 //                           parallel.js); this CLI defaults to max(1, cpus-1)
 //                           (--threads 1 for the old serial reference mode)
@@ -69,7 +69,7 @@
 // random leadB) or x 9 (stage 3, full leadA x leadB). At the flag defaults:
 // stage1 500x50x3=75,000, stage2 100x200x3=60,000, stage3 10x500x9=45,000 --
 // 180,000 battles total. Measured rates vary by machine (~172ms/battle in
-// the sandbox, ~73ms/battle on Jaxon's local Mac per PROGRESS.md's T14 note)
+// the sandbox, ~73ms/battle on Jaxon's local Mac)
 // -- at the sandbox rate that's ~8.6h, MORE than the 450-minute (7.5h)
 // default deadline; deadline self-tuning (stage 2/3 only -- stage 1 is
 // NEVER scaled, see below) is what keeps an overnight run from blowing past
@@ -141,7 +141,7 @@ const S3_MIN_OPPONENTS = 100;
 const S3_SCALE_UP_CAP = 2; // stage 3 opponents may scale up to at most 2x its flag value
 // Used only if a stage somehow measures 0 battles (e.g. every battle in it
 // errored) -- keeps tuning math finite rather than dividing by zero. Close
-// to the sandbox-measured ~172ms/battle figure (PROGRESS.md 2026-08-20),
+// to the sandbox-measured ~172ms/battle figure (2026-08-20),
 // rounded up for a conservative (slower) fallback assumption.
 const FALLBACK_MS_PER_BATTLE = 200;
 
@@ -249,8 +249,8 @@ function ninePairings() {
  * only actually influences stages 2-3) share one fingerprint, so changing any
  * flag between runs invalidates every stage rather than trying to reason
  * about which stages a given flag could possibly affect. Simpler to reason
- * about and never silently wrong; documented in the T13 report as a
- * deliberate simplicity-over-cleverness tradeoff.
+ * about and never silently wrong; a deliberate simplicity-over-cleverness
+ * tradeoff.
  */
 function buildRunConfig(csvPath, opts) {
   return {
@@ -403,12 +403,12 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  *   difficulty?: number,
  *   trackLeads?: boolean, - compute bestLead/safeSwap/perMeta/hardestOpponents/curated-vs-sampled (stage 3 only)
  *   executor?: {run(specs):Promise<Array<{ok:true,value:object}|{ok:false,error:{message:string}}>>}, -
- *     GOALS T21: when supplied (a src/engine/parallel.js createExecutor()
+ *     When supplied (a src/engine/parallel.js createExecutor()
  *     instance created with `continueOnError: true`), every battle for the
  *     WHOLE STAGE (every candidate x every opponent x every pairing) is
  *     submitted as ONE `executor.run()` call instead of driving battleTeams()
  *     serially -- per-STAGE batching against runTournament's ONE persistent
- *     pool, not per-candidate (T15c's now-superseded design): continueOnError
+ *     pool, not per-candidate (the now-superseded design): continueOnError
  *     means a single bad spec only costs THAT battle (a `{ok:false}` result
  *     slot), matching the serial path's own per-battle skip-and-continue
  *     exactly, while still letting the pool spread the WHOLE stage's battles
@@ -469,13 +469,13 @@ async function runFunnelStage(ctx, params) {
     return { members, teamASpec, oppPlans };
   });
 
-  // ---- Threaded path (GOALS T21): submit the WHOLE STAGE's battles (every
+  // ---- Threaded path: submit the WHOLE STAGE's battles (every
   // candidate x every opponent x every pairing) as ONE executor.run() call,
   // in the exact (candidate, opponent, pairing) order the tally loop below
   // walks, so results line up 1:1 by position. `executor` is created with
   // `continueOnError: true` by runTournament, so a single bad spec only
   // fails ITS OWN result slot ({ok:false}) -- the serial path's per-battle
-  // skip-and-continue, preserved exactly, not T15c's coarser per-candidate
+  // skip-and-continue, preserved exactly, not the earlier coarser per-candidate
   // batch-reject. A worker CRASH is still fatal to the whole run() call
   // (src/engine/parallel.js's documented crash policy, even under
   // continueOnError, since there's no way to know what state the crashed
@@ -876,7 +876,7 @@ function renderDoneMarker(result) {
  *   s2Top?:number, s2Opponents?:number,
  *   s3Top?:number, s3Opponents?:number,
  *   deadlineMinutes?:number,
- *   threads?:number, - GOALS T21 (supersedes T15c): when set, ONE persistent
+ *   threads?:number, - when set, ONE persistent
  *     src/engine/parallel.js createExecutor() pool is booted for the WHOLE
  *     run and reused across all 3 stages (each stage submits its entire
  *     battle set as one continueOnError run() call -- see runFunnelStage),
@@ -921,7 +921,7 @@ export async function runTournament(csvPath, opts = {}) {
   const pool = buildSamplingPool(deduped, config.pool, config.excludeSpecies);
   log(`tournament: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species`);
 
-  // GOALS T21: ONE persistent executor for the whole run (all 3 stages share
+  // ONE persistent executor for the whole run (all 3 stages share
   // it -- see runFunnelStage), continueOnError so a bad spec only fails its
   // own battle rather than a whole stage. Always closed below, success or
   // failure, so no worker_thread outlives this function.
@@ -1311,7 +1311,7 @@ async function main(argv) {
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],
     difficulty: values.difficulty !== undefined ? intFlag(values.difficulty, 'difficulty', undefined) : undefined,
-    // GOALS T21: this CLI's own --threads default flips to max(1, cpus-1) --
+    // This CLI's own --threads default flips to max(1, cpus-1) --
     // tournament-scale runs are exactly the "big run" case threading pays off
     // for; runTournament()'s own programmatic default (opts.threads omitted
     // entirely) stays serial, since e.g. src/cli.js's small interactive runs

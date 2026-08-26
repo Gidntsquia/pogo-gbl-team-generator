@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// GOALS T24: evolutionary team search driver ("survival of the fittest",
-// PLAN.md Rev 5), sibling of scripts/tournament.mjs (which stays -- this is
+// Evolutionary team search driver ("survival of the fittest"),
+// sibling of scripts/tournament.mjs (which stays -- this is
 // an alternate search strategy, not a replacement). Where the tournament
 // funnel narrows a WIDE fixed sample down through progressively deeper
 // opponent pools, this instead runs a genetic algorithm: a population of
@@ -13,19 +13,19 @@
 // static sample.
 //
 // All GA bookkeeping (selection/mutation/immigration/convergence) is
-// src/teams/evolve.js (GOALS T23) -- pure, no battles. This file's only job
+// src/teams/evolve.js -- pure, no battles. This file's only job
 // is the battle-driving glue: shared collection->matrix setup (mirrors
 // scripts/tournament.mjs's sampled path exactly), per-generation opponent
-// sampling, running every team's battles through the Rev 4 persistent
+// sampling, running every team's battles through the persistent
 // executor, checkpointing, and rendering the report. No battle math is
 // reimplemented anywhere here -- every win/loss/HP number comes from
 // battleTeams (src/engine/teamBattle.js, pvpoke's own emulate engine).
 //
 // EVERY team in the population is battled every generation (elites included
-// -- PLAN Rev 5 is explicit: "no stale fitness carryover, no overfitting to
-// one opponent sample"), against a FRESH seeded opponent draw each
+// -- by design: no stale fitness carryover, no overfitting to
+// one opponent sample), against a FRESH seeded opponent draw each
 // generation by default (`--fixed-opponents` opts out and reuses one draw
-// for the whole run, per PLAN Rev 5's own wording of that flag).
+// for the whole run).
 //
 // Fixed-side convention (same as scripts/tournament.mjs / src/teams/
 // index.js): every population member is always battled as team A, so
@@ -42,26 +42,26 @@
 //   --seed S               PRNG seed                                 ("pogo-gbl-team-generator-evolve")
 //   --threads N             battle via ONE persistent worker-pool executor
 //                            shared across every generation (src/engine/
-//                            parallel.js), like scripts/tournament.mjs's T21
-//                            adoption; this CLI defaults to max(1, cpus-1)
+//                            parallel.js), like scripts/tournament.mjs's own
+//                            persistent-executor adoption; this CLI defaults
+//                            to max(1, cpus-1)
 //                            (--threads 1 for the serial reference mode)
 //   --deadline-minutes D   optional wall-clock budget -- if set, the run
 //                            stops BEFORE starting a generation once already
 //                            past the deadline (no opponent-count self-
-//                            tuning like tournament.mjs's stages; simpler,
-//                            since PLAN Rev 5 never asked for that here --
+//                            tuning like tournament.mjs's stages; simpler --
 //                            see the header note below). Omitted = no
 //                            deadline, only --generations/convergence stop it. (none)
 //   --cp N                 CP cap / league, forwarded to initEngine like
-//                            every other CLI in this repo (T18c)          (1500)
+//                            every other CLI in this repo                 (1500)
 //   --fixed-opponents       draw ONE opponent set (seed `${seed}-opponents`)
 //                            and reuse it every generation, instead of a
 //                            fresh draw per generation                    (off)
 //   --elites N              how many of the final generation's top-fitness
 //                            teams get the final evaluation pass (own lead
-//                            vs. the opponent's 3 leads, GOALS T29 part 2/N)
-//                            + bestLead/safeSwap for the report (a count PLAN
-//                            Rev 5 doesn't specify -- documented judgment
+//                            vs. the opponent's 3 leads)
+//                            + bestLead/safeSwap for the report (an
+//                            unspecified count -- documented judgment
 //                            call, mirrors tournament.mjs's s3Top default)  (10)
 //   --score-meta S          1v1-pruning meta size (candidate-pool ranking
 //                            only, mirrors tournament.mjs)                (20)
@@ -72,8 +72,8 @@
 //   --out PATH               final Markdown report path            (<out-dir>/my-teams-evolve.md)
 //   --html PATH              final HTML report path (self-contained, no
 //                            build step, mirrors src/cli.js's --html /
-//                            src/report/index.js's renderReportHtml pattern,
-//                            GOALS T25)              (<out-dir>/my-teams-evolve.html)
+//                            src/report/index.js's renderReportHtml pattern)
+//                                                    (<out-dir>/my-teams-evolve.html)
 //   --no-evolutions          score mons only in the form you own (never evolve them)
 //   --no-html                skip writing the HTML report                 (off)
 //   --out-dir DIR            checkpoints + DONE marker + default reports  ("out")
@@ -81,18 +81,18 @@
 //                            convergence act on -- 'classic' is today's
 //                            plain win-rate; 'battle-reality' blends win rate
 //                            with a snowball term (this team's own lead
-//                            -exchange conversion, T27) and a closer term
-//                            (T28's species-level role priors), see
+//                            -exchange conversion) and a closer term
+//                            (species-level role priors), see
 //                            DEFAULT_FITNESS_WEIGHTS. Both are always
 //                            computed and reported regardless of which one
 //                            drives the GA.                                ("classic")
 //   --help                   print this help and exit
 //
-// LOCKED LEADS (PLAN Rev 6, GOALS T29 part 2/N): a population member's
+// LOCKED LEADS: a population member's
 // `team[0]` is its designated lead (src/teams/evolve.js's representation,
 // landed by the prior fire) -- so every per-generation battle now runs the
 // candidate at leadA=0 ONLY, never averaged over its own 3 members. Opponent
-// leads: per GOALS T31 / Jaxon 2026-08-23, member index 0 IS the established
+// leads: per Jaxon 2026-08-23, member index 0 IS the established
 // lead for EVERY curated/preset opponent team -- both pvpoke's vendored
 // gobattleleague training presets and data/meta-teams-community.json (whose
 // loader, src/meta/teams.js's loadCommunityTeams, stamps an explicit
@@ -102,13 +102,13 @@
 // seeded-random pick keyed to the opponent's OWN id -- see opponentLeadIndex()
 // below.
 //
-// BUDGET MATH (revised from PLAN Rev 5's original x3 estimate now that own
+// BUDGET MATH (revised from the original x3 estimate now that own
 // -lead averaging is gone): battles/generation = population x opponents-per
 // -gen x 1. At the flag defaults: 100 x 20 = 2,000 battles/generation (was
-// 6,000 pre-T29); 15 generations (if run to the cap, no early convergence) =
+// 6,000 pre-lead-lock); 15 generations (if run to the cap, no early convergence) =
 // 30,000 battles (was 90,000), plus a final elites pass spread across the
 // opponent's 3 possible leads (elites x opponents-per-gen x 3 = 10 x 20 x 3
-// = 600; was a 9-pairing grid = 1,800 pre-T29, since the elite's OWN lead no
+// = 600; was a 9-pairing grid = 1,800 pre-lead-lock, since the elite's OWN lead no
 // longer varies either). REINVESTMENT (ticket-mandated to document, not to
 // auto-apply): this is a ~3x battle-count reduction for the SAME
 // --population/--opponents-per-gen/--generations -- callers can raise
@@ -118,19 +118,17 @@
 // its own judgment call with its own acceptance run, not an automatic
 // consequence of a mechanical speedup -- a future ticket/fire can raise them
 // once there's a real run to point to. Measured rates vary by machine
-// (~172ms/battle in the sandbox, ~73ms/battle on Jaxon's local Mac per
-// PROGRESS.md's T14 note, both MUCH faster threaded -- see T22's measured
-// numbers) -- size --population/--opponents-per-gen/--generations to your
-// own time budget; --deadline-minutes is a simple stop-before-the-next
+// (~172ms/battle in the sandbox, ~73ms/battle on Jaxon's local Mac, both
+// MUCH faster threaded) -- size --population/--opponents-per-gen/--generations
+// to your own time budget; --deadline-minutes is a simple stop-before-the-next
 // -generation safety net, not a self-tuning scaler (unlike tournament.mjs's
-// stage 2/3 tuning -- PLAN Rev 5's own flag list never asks for that here,
+// stage 2/3 tuning -- self-tuning isn't needed here,
 // and per-generation opponent/population counts don't have tournament's
 // "narrowing funnel" structure to tune against, so a flat stop is the
 // honest, simple choice).
 //
 // GA TUNABLES (deathRate/mutationFloor/mutationCeil/immigrantFraction/alpha,
 // convergence window/topN): deliberately NOT exposed as CLI flags here --
-// PLAN Rev 5's own flag list for this ticket doesn't mention them, and
 // src/teams/evolve.js's exported DEFAULT_* constants (bottom-quarter death,
 // 0.05->0.40 percentile-scaled mutation, ~10% immigrant floor, top-10
 // stable-for-3-generations convergence) already encode Jaxon's revised
@@ -144,11 +142,11 @@
 // config is accepted and the run continues from its stored `nextPopulation`
 // at generation+1 -- the first missing/mismatched checkpoint stops the scan
 // (mirrors scripts/tournament.mjs's per-stage resume, but sequential since
-// each generation depends on the last). CHECKPOINT FORMAT VERSIONING (GOALS
-// T29, added when the prior fire's locked-lead representation change made
+// each generation depends on the last). CHECKPOINT FORMAT VERSIONING
+// (added when the prior fire's locked-lead representation change made
 // this a real risk, not a hypothetical one): a checkpoint's `config` schema
 // did NOT change when `team[0]` became a designated lead, so an old
-// (pre-T29) checkpoint could match a fresh run's config and be silently
+// (pre-lead-lock) checkpoint could match a fresh run's config and be silently
 // resumed as if its population entries already had a defined lead-slot
 // convention -- they don't. Every checkpoint now carries a `formatVersion`;
 // a config-matching checkpoint whose formatVersion disagrees throws a clear
@@ -193,11 +191,9 @@ const DEFAULTS = Object.freeze({
   curatedRatio: 0.4,
   outDir: 'out',
   html: 'my-teams-evolve.html', // resolved against outDir unless --html/opts.html is absolute or explicit
-  // GOALS T30 (PLAN Rev 6): flipped to 'battle-reality' as the DEFAULT, per this
-  // ticket's own "decide + document whether battle-reality becomes the evolve
-  // DEFAULT" deliverable -- backed by a real A/B (out/evolve-ab-classic vs
-  // out/evolve-ab-reality, same seed/collection/opponents, recorded in
-  // PROGRESS.md): battle-reality's top-10 showed the exact shift Jaxon's
+  // Flipped to 'battle-reality' as the DEFAULT -- backed by a real A/B
+  // (out/evolve-ab-classic vs out/evolve-ab-reality, same seed/collection/
+  // opponents): battle-reality's top-10 showed the exact shift Jaxon's
   // original directive asked for (Stunfisk (Galarian)/Azumarill's dominance
   // fell from 5/7 of 10 top teams to 2/5; Skarmory -- absent from classic's
   // top 10 entirely -- entered twice as a back-line closer pick; Medicham rose
@@ -219,7 +215,7 @@ const LEADS = [0, 1, 2];
 
 // Bump whenever a checkpoint's on-disk SHAPE changes in a way `config`
 // -matching alone can't detect (see the ROBUSTNESS comment above). v2 = the
-// locked-lead population representation (GOALS T29, PLAN Rev 6): `team[0]`
+// locked-lead population representation: `team[0]`
 // is a designated lead, not an arbitrary array slot.
 const CHECKPOINT_FORMAT_VERSION = 2;
 
@@ -251,7 +247,7 @@ function escapeHtml(s) {
 }
 
 /**
- * "Lead / Back / Back" team-name formatting (GOALS T30, PLAN Rev 6 locked
+ * "Lead / Back / Back" team-name formatting (locked
  * leads) -- `members[0]` is always the designated lead end-to-end (see the
  * LOCKED LEADS note above and evaluateTeamsInOrder's own comment on why
  * `bestLead` always resolves to index 0). Plain-text (Markdown) variant.
@@ -307,10 +303,10 @@ function formatDuration(ms) {
 }
 
 // ---------------------------------------------------------------------------
-// Lead-pairing schemes -- LOCKED LEADS (PLAN Rev 6, GOALS T29 part 2/N): the
+// Lead-pairing schemes -- LOCKED LEADS: the
 // candidate's own lead is always `team[0]` (never averaged over its 3
 // members any more; see the header's LOCKED LEADS note). This intentionally
-// diverges from scripts/tournament.mjs, which is untouched by T29 and still
+// diverges from scripts/tournament.mjs, which still
 // runs its own averaged-own-lead scheme.
 // ---------------------------------------------------------------------------
 
@@ -318,7 +314,7 @@ const CANDIDATE_LEAD = 0;
 
 /**
  * Resolve an opponent team's designated lead index -- see the header's
- * LOCKED LEADS note for the full rationale. `opp.leadIndex` (GOALS T31: now
+ * LOCKED LEADS note for the full rationale. `opp.leadIndex` (now
  * stamped explicitly by src/meta/teams.js's loadCommunityTeams on every
  * community-curated team) is honored first; a vendor-preset team has no
  * `leadIndex` field but shares the same member-index-0-is-lead doctrine, so
@@ -339,18 +335,18 @@ function ownLeadPairing(seedPrefix, opp) {
 }
 
 // ---------------------------------------------------------------------------
-// GOALS T29 item 3 (PLAN.md Rev 6): battle-reality fitness. `evaluateTeamsInOrder`
+// Battle-reality fitness. `evaluateTeamsInOrder`
 // (below) already runs every generation's battles through `battleTeams`, whose
-// `summary` carries T27's own lead-exchange extraction (`leadFaintTurnA/B`) for
+// `summary` carries the lead-exchange extraction (`leadFaintTurnA/B`) for
 // free -- no new battles. This section classifies each battle's exchange
-// outcome and blends it, plus T28's role priors, into an alternate fitness
+// outcome and blends it, plus the role priors, into an alternate fitness
 // metric alongside the plain win rate `--fitness classic` already computed.
 // ---------------------------------------------------------------------------
 
 /**
  * Which side's ORIGINAL lead fainted first (lost the lead exchange), from
  * `battleTeams`' summary -- verbatim copy of scripts/alignment-study.mjs's
- * own `leadExchangeLoser` (GOALS T27's extraction logic; duplicated per this
+ * own `leadExchangeLoser` (duplicated per this
  * file's own established small-helper convention -- see the header comment
  * above `pct`/`signed`/`formatDuration` -- rather than importing a script).
  * @returns {'a'|'b'|'simultaneous'|'none'}
@@ -366,17 +362,17 @@ function leadExchangeLoser(summary) {
 
 /**
  * Blend weights for `--fitness battle-reality` (documented judgment call --
- * PLAN Rev 6 asks for "a documented, tunable blend" without specifying
- * numbers; not exposed as CLI flags, matching this file's own GA-TUNABLES
+ * a tunable blend whose numbers are chosen here;
+ * not exposed as CLI flags, matching this file's own GA-TUNABLES
  * precedent above). `winRate` stays the majority component since it is the
  * only one measuring actual game outcomes; `snowball` is weighted
- * meaningfully (not a token amount) because T27's real-battle measurement
+ * meaningfully (not a token amount) because a real-battle measurement
  * found winning the lead exchange roughly a 2.3-2.7x multiplier on win
- * probability (P(win|won)~=0.69-0.73 vs P(win|lost)~=0.27-0.31, see T29's own
- * condensed findings block in GOALS.md) -- a strong, real signal about which
+ * probability (P(win|won)~=0.69-0.73 vs P(win|lost)~=0.27-0.31)
+ * -- a strong, real signal about which
  * teams convert an early advantage, independent of whether their back line
  * ultimately closes the game out; `closer` gets the smallest share because
- * it is a SPECIES-level prior from pvpoke's own rankings (T28), not a fact
+ * it is a SPECIES-level prior from pvpoke's own rankings, not a fact
  * about this collection's real battles the way the other two terms are.
  */
 const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 0.6, snowball: 0.3, closer: 0.1 });
@@ -386,7 +382,7 @@ const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 0.6, snowball: 0.3, clo
  * (across its battles fought this generation) it won -- i.e. how often its
  * lead outlasts the opponent's, independent of whether the game is ultimately
  * won or lost. `exchangeWon`/`exchangeLost` exclude `'simultaneous'`/`'none'`
- * battles (T27's own real-battle sample found ~15-21% of battles never see
+ * battles (a real-battle sample found ~15-21% of battles never see
  * either lead faint -- not a meaningful exchange signal either way). Falls
  * back to `winRate` (not 0 or 0.5) when a team had zero decided exchanges
  * this generation (a tiny --opponents-per-gen, or a team that only ever
@@ -399,14 +395,14 @@ function computeSnowballScore(exchangeWon, exchangeLost, winRate) {
 }
 
 /**
- * Per-team closer score: mean of T28's `loadRoleScores` `closer` prior across
+ * Per-team closer score: mean of the `loadRoleScores` `closer` prior across
  * the team's two BACK members (`team[1]`/`team[2]`, i.e. `members.slice(1)`)
  * -- documented judgment call: the closer role is specifically about being
- * switched in with a shield advantage to close out a game (T27's shield
+ * switched in with a shield advantage to close out a game (the shield
  * -banking findings), which is a back-line job under the locked-lead
  * convention, not the lead's. A species absent from the loader (never
  * happens for a real gamemaster speciesId under the pinned vendor commit,
- * per T28's own note, but guarded anyway) contributes 0, not a skip -- an
+ * but guarded anyway) contributes 0, not a skip -- an
  * unknown closer value is not evidence of a good one.
  */
 function computeCloserScore(members, roleScores) {
@@ -421,11 +417,11 @@ function computeBlendFitness({ winRate, snowballScore, closerScore }, weights = 
 }
 
 // ---------------------------------------------------------------------------
-// GOALS T30 (PLAN Rev 6's own originally-named metrics, distinct from the
+// Report-facing metrics (distinct from the
 // fitness-blend components above): `snowballScore`/`closerScore` above answer
 // "how often does this team win the exchange" / "how good are its backs at
 // closing, per pvpoke's priors" -- inputs to the fitness blend. These three
-// answer the report-facing questions PLAN Rev 6 actually named: given the
+// answer the questions the report actually asks: given the
 // exchange outcome, how often does the team go on to WIN THE GAME, and which
 // specific back member is the better closer (not just the mean of both).
 // Pure post-processing of data evaluateTeamsInOrder's battle loop already
@@ -448,11 +444,11 @@ function computeComebackIndex(winsGivenExchangeLost, exchangeLost) {
 
 /**
  * Designated closer: of the team's two BACK members, whichever carries the
- * HIGHER T28 role-prior `closer` score (same "closing is a back-line job"
+ * HIGHER role-prior `closer` score (same "closing is a back-line job"
  * rationale as {@link computeCloserScore}, but reporting the standout member
  * rather than the pair's mean). `null` if the team has no back members. A
  * missing role-score (never happens for a real gamemaster speciesId under
- * the pinned vendor commit, per T28's own note, but guarded anyway) counts
+ * the pinned vendor commit, but guarded anyway) counts
  * as 0, same convention as computeCloserScore.
  * @returns {{key:string, speciesId:string, name:string, closer:number}|null}
  */
@@ -506,7 +502,7 @@ function buildRunConfig(csvPath, opts) {
     generations: opts.generations ?? DEFAULTS.generations,
     fixedOpponents: !!opts.fixedOpponents,
     eliteCount: opts.eliteCount ?? DEFAULTS.elites,
-    // GOALS T29 item 3: part of the fingerprint -- resuming a 'classic' run's
+    // Part of the fingerprint -- resuming a 'classic' run's
     // checkpoints under 'battle-reality' (or vice versa) would silently graft
     // a different generation's fitness semantics onto a population that was
     // selected/mutated under the other one.
@@ -567,8 +563,8 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
 }
 
 // ---------------------------------------------------------------------------
-// Species-set helpers + per-generation analytics (PLAN Rev 5: "cheap -- it's
-// just counting" -- computed entirely from data a generation's battles and
+// Species-set helpers + per-generation analytics (cheap -- it's
+// just counting: computed entirely from data a generation's battles and
 // src/teams/evolve.js's nextGeneration already produce; no extra battles).
 // ---------------------------------------------------------------------------
 
@@ -581,7 +577,7 @@ function speciesOfTeam(matrix, team) {
  *   lineage:{died:number[], entries:Array<object>}|null, results?:object[]}} params
  *   `lineage` is the OUTGOING transition (this generation -> the next);
  *   null for a generation that had no next generation (the run's very last).
- *   `results` (GOALS T30, optional) is `evaluateTeamsInOrder`'s own positional
+ *   `results` (optional) is `evaluateTeamsInOrder`'s own positional
  *   per-team output for THIS generation (same index as `population`/`fitness`)
  *   -- used only to source `topTeams`' snowballIndex/comebackIndex/designatedCloser;
  *   everything else here is unaffected if omitted.
@@ -628,7 +624,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
   const rankedIdx = population.map((_, i) => i).sort((a, b) => fitness[b] - fitness[a] || a - b);
   const eliteIdx = rankedIdx.slice(0, Math.min(10, population.length)); // fixed top-10 for core-pair stats AND topTeams (below), independent of --elites (report's final-ranking count)
 
-  // GOALS T30: per-team battle-reality metrics for THIS generation's top-10,
+  // Per-team battle-reality metrics for THIS generation's top-10,
   // written into out/evolve-generations.json so they're trackable across
   // generations (not just the final elites pass, which already surfaces them
   // in the report). `results` is optional/positional; a caller that omits it
@@ -676,7 +672,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
     originCounts,
     survivalBySpecies: survivalBySpecies ? survivalBySpecies.slice(0, SPECIES_STATS_CAP) : null,
     topCores,
-    topTeams, // GOALS T30: this generation's top-10 by fitness, with snowballIndex/comebackIndex/designatedCloser
+    topTeams, // this generation's top-10 by fitness, with snowballIndex/comebackIndex/designatedCloser
   };
 }
 
@@ -690,9 +686,9 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
 // ---------------------------------------------------------------------------
 
 async function evaluateTeamsInOrder(ctx, params) {
-  // trackLeads' bestLead computation (below) predates PLAN Rev 6's locked
+  // trackLeads' bestLead computation (below) predates the locked
   // leads and still iterates all 3 of the team's OWN lead slots -- left
-  // as-is rather than redesigned this fire (T30 owns the report-level
+  // as-is rather than redesigned this fire (a separate report-level
   // "Lead / Back / Back" redesign). It still resolves correctly without any
   // code change: `pairingsFor` now only ever produces leadA=0 battles (see
   // ownLeadPairing/ownLeadEliteSpread above), so leadWins[1]/leadWins[2] and
@@ -760,9 +756,9 @@ async function evaluateTeamsInOrder(ctx, params) {
     let hpSum = 0;
     let battles = 0;
     let candidateErrors = 0;
-    let exchangeWon = 0; // GOALS T29 item 3: this candidate's lead fainted the opponent's lead first
+    let exchangeWon = 0; // this candidate's lead fainted the opponent's lead first
     let exchangeLost = 0; // ...opponent's lead fainted this candidate's lead first
-    let winsGivenExchangeWon = 0; // GOALS T30: of the exchangeWon battles, how many did this candidate go on to WIN
+    let winsGivenExchangeWon = 0; // of the exchangeWon battles, how many did this candidate go on to WIN
     let winsGivenExchangeLost = 0; // ...of the exchangeLost battles, how many did it still win (a comeback)
     const perMeta = [];
     const leadWins = [0, 0, 0];
@@ -825,16 +821,16 @@ async function evaluateTeamsInOrder(ctx, params) {
           oppLosses += 1;
         }
 
-        // GOALS T29 item 3: unconditional (cheap -- reads r.summary, no new
+        // Unconditional (cheap -- reads r.summary, no new
         // battles), regardless of trackLeads -- the per-generation fitness
         // loop needs this and never sets trackLeads.
         const exchange = leadExchangeLoser(r.summary);
         if (exchange === 'a') {
           exchangeLost += 1;
-          if (r.winner === 'a') winsGivenExchangeLost += 1; // GOALS T30: comeback -- lost the exchange, won the game
+          if (r.winner === 'a') winsGivenExchangeLost += 1; // comeback -- lost the exchange, won the game
         } else if (exchange === 'b') {
           exchangeWon += 1;
-          if (r.winner === 'a') winsGivenExchangeWon += 1; // GOALS T30: converted the exchange into the win
+          if (r.winner === 'a') winsGivenExchangeWon += 1; // converted the exchange into the win
         }
         // 'simultaneous'/'none' -- excluded, not a decided exchange (see computeSnowballScore).
 
@@ -879,7 +875,7 @@ async function evaluateTeamsInOrder(ctx, params) {
       avgHpMargin,
       battles,
       errors: candidateErrors,
-      // GOALS T29 item 3 (PLAN Rev 6): battle-reality fitness components,
+      // Battle-reality fitness components,
       // always computed (cheap) regardless of --fitness so the report can
       // surface them even in classic mode.
       exchangeWon,
@@ -887,7 +883,7 @@ async function evaluateTeamsInOrder(ctx, params) {
       snowballScore,
       closerScore,
       blendFitness: computeBlendFitness({ winRate, snowballScore, closerScore }),
-      // GOALS T30: PLAN Rev 6's originally-named report metrics -- see the
+      // Report-facing metrics -- see the
       // comment above computeSnowballIndex for how these differ from
       // snowballScore/closerScore above. Always computed too (cheap).
       snowballIndex: computeSnowballIndex(winsGivenExchangeWon, exchangeWon),
@@ -943,7 +939,7 @@ function renderEvolveReport(result) {
   out.push(`Run started: ${result.runStartedAt}`);
   out.push('');
   out.push(
-    'Genetic-algorithm search (PLAN.md Rev 5): a population of candidate teams is repeatedly battled, the ' +
+    'Genetic-algorithm search: a population of candidate teams is repeatedly battled, the ' +
       'worst performers die, some survivors mutate one team member, fresh immigrant teams keep the gene pool ' +
       "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. Every " +
       "battle runs through pvpoke's own 3v3 emulate engine (`battleTeams`, `src/engine/teamBattle.js`) -- no " +
@@ -1060,7 +1056,7 @@ function renderEvolveReport(result) {
     if (t.buildCost) out.push(`- **Build cost:** ${formatBuildCost(t.buildCost)}`);
     out.push(
       `- **Snowball score:** ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) — ` +
-        `**Closer score:** ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)`
+        `**Closer score:** ${pct(t.closerScore)} (role prior, mean of the 2 backs)`
     );
     out.push(
       `- **Snowball index:** ${pct(t.snowballIndex)} (P(win the game | won the lead exchange)) — ` +
@@ -1157,7 +1153,7 @@ function renderEvolveReportHtml(result) {
     `<br>Generated: ${escapeHtml(new Date().toISOString())}` +
     `<br>Run started: ${escapeHtml(result.runStartedAt)}</p>`);
   out.push(
-    '<p>Genetic-algorithm search (PLAN.md Rev 5): a population of candidate teams is repeatedly battled, the ' +
+    '<p>Genetic-algorithm search: a population of candidate teams is repeatedly battled, the ' +
       'worst performers die, some survivors mutate one team member, fresh immigrant teams keep the gene pool ' +
       "open, and the process repeats until the top teams converge or the generation/deadline cap is hit. Every " +
       "battle runs through pvpoke's own 3v3 emulate engine (<code>battleTeams</code>, " +
@@ -1271,7 +1267,7 @@ function renderEvolveReportHtml(result) {
     }
     out.push(
       `<li><strong>Snowball score:</strong> ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) -- ` +
-        `<strong>Closer score:</strong> ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)</li>`
+        `<strong>Closer score:</strong> ${pct(t.closerScore)} (role prior, mean of the 2 backs)</li>`
     );
     out.push(
       `<li><strong>Snowball index:</strong> ${pct(t.snowballIndex)} (P(win the game | won the lead exchange)) -- ` +
@@ -1346,7 +1342,7 @@ function renderDoneMarker(result) {
  *   fixedOpponents?:boolean, eliteCount?:number,
  *   deadlineMinutes?:number, - simple stop-before-next-generation budget;
  *     NOT part of the checkpoint config fingerprint (see buildRunConfig).
- *   threads?:number, - GOALS T21-style: when set, ONE persistent
+ *   threads?:number, - when set, ONE persistent
  *     src/engine/parallel.js createExecutor() pool is booted for the WHOLE
  *     run and reused across every generation AND the final elites pass.
  *     Omitted/falsy keeps the serial battleTeams loop. NOT part of the
@@ -1354,7 +1350,7 @@ function renderDoneMarker(result) {
  *   outDir?:string, out?:string, - out = Markdown report path.
  *   html?:string, noHtml?:boolean, - HTML report path (default
  *     <outDir>/my-teams-evolve.html) and an opt-out (mirrors src/cli.js's
- *     --html/--no-html), GOALS T25.
+ *     --html/--no-html).
  *   onProgress?:(p:{generation:number, completed:number, total:number, startedAt:number})=>void,
  *   onLog?:(msg:string)=>void,
  * }} [opts]
@@ -1393,7 +1389,7 @@ export async function runEvolution(csvPath, opts = {}) {
   const deduped = dedupeBestPerSpecies(matrix);
   const weights = loadUsageWeights(ctx);
   const pool = buildSamplingPool(deduped, config.pool, config.excludeSpecies);
-  const roleScores = loadRoleScores(ctx); // GOALS T29 item 3: T28's lead/closer/switch priors, cheap local-file read
+  const roleScores = loadRoleScores(ctx); // lead/closer/switch priors, cheap local-file read
   log(`evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, league=${league.name}`);
 
   const threaded = typeof threads === 'number' && threads > 0;
@@ -1419,8 +1415,8 @@ export async function runEvolution(csvPath, opts = {}) {
       if (cp.formatVersion !== CHECKPOINT_FORMAT_VERSION) {
         throw new Error(
           `evolve: ${checkpointPath(outDir, generation)} is checkpoint format ` +
-            `${cp.formatVersion ?? '(unversioned, pre-T29)'} but this code expects format ` +
-            `${CHECKPOINT_FORMAT_VERSION} (locked-lead team representation, GOALS T29 / PLAN Rev 6). ` +
+            `${cp.formatVersion ?? '(unversioned, pre-lead-lock)'} but this code expects format ` +
+            `${CHECKPOINT_FORMAT_VERSION} (locked-lead team representation). ` +
             'Old-format checkpoints cannot be resumed -- their population entries have no defined ' +
             'lead-slot convention. Delete out/evolve-gen*.json, out/evolve-generations.json, and ' +
             'out/evolve-DONE, then re-run from scratch.'
@@ -1489,7 +1485,7 @@ export async function runEvolution(csvPath, opts = {}) {
         onLog: log,
         roleScores,
       });
-      // GOALS T29 item 3: 'classic' (default) keeps today's plain win-rate
+      // 'classic' (default) keeps today's plain win-rate
       // fitness; 'battle-reality' uses the blend (see computeBlendFitness) --
       // both are always computed on every result (cheap), so switching modes
       // never changes what a generation's battles measure, only which number
@@ -1636,7 +1632,7 @@ export async function runEvolution(csvPath, opts = {}) {
 // CLI entry point.
 // ---------------------------------------------------------------------------
 
-const HELP = `pogo-gbl-team-generator evolve -- genetic-algorithm team search (PLAN.md Rev 5)
+const HELP = `pogo-gbl-team-generator evolve -- genetic-algorithm team search
 
 Usage:
   node scripts/evolve.mjs <collection.csv> [options]
@@ -1670,7 +1666,7 @@ Options:
   --out-dir DIR            checkpoints + DONE marker + default reports (default "${DEFAULTS.outDir}")
   --fitness classic|battle-reality  metric selection/mutation/convergence
                             act on -- 'battle-reality' blends win rate with
-                            a snowball term (T27) and a closer term (T28)
+                            a snowball term and a closer term
                             (default "${DEFAULTS.fitness}")
   --help                   print this help and exit
 `;

@@ -1,5 +1,5 @@
-// Tests for src/teams/sample.js -- the weighted candidate-team sampler
-// (GOALS T11). Pure list generation over a fake matrix/pool/weights (no
+// Tests for src/teams/sample.js -- the weighted candidate-team sampler.
+// Pure list generation over a fake matrix/pool/weights (no
 // engine, no vendor data, no battles) -- verifies: determinism under a fixed
 // seed, team uniqueness, no-duplicate-species-per-team (including when the
 // pool defensively needs deduping), excludeSpecies, count/cap behavior when

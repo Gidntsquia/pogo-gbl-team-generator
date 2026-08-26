@@ -1,12 +1,11 @@
 // JavaScript Document
 //
-// GOALS T28 (PLAN.md Rev 6, "battle-reality fitness"): per-species role
-// priors -- lead / closer / switch -- sourced from pvpoke's OWN published
-// role-specific rankings, which are already vendored:
+// Per-species role priors -- lead / closer / switch -- sourced from
+// pvpoke's OWN published role-specific rankings, which are already vendored:
 // vendor/pvpoke/src/data/rankings/all/{leads,closers,switches}/rankings-<cp>.json
 // (also {overall,chargers,attackers,consistency}, not consumed here).
 // REVISED 2026-08-22 by Jaxon away from an earlier design that would have
-// run our own asymmetric-shield 1v1 sims (see GOALS.md's T28 history) --
+// run our own asymmetric-shield 1v1 sims --
 // pvpoke already publishes exactly these role rankings under its own
 // scenario weightings (gamemaster.json's rankingScenarios: leads =
 // [1,1] starting shields/[0,0] energy; closers = [0,0] shields/[0,0]
@@ -17,17 +16,17 @@
 // own recommended movesets, not instance-specific truth. A user's own IVs,
 // current moves, and how a mon actually performs in OUR real 3v3 battles
 // still come from src/scoring's matrix and src/teams' evaluateTeams -- role
-// scores only weight sampling/fitness (GOALS T29) and label the report
+// scores only weight sampling/fitness and label the report
 // appendix; they never replace a real battle result.
 //
-// Same cp-aware path pattern as src/meta/usage.js (post-T18b: rankings file
-// keyed off ctx.cp) and the SAME optional live-refresh-snapshot design as
-// T9's usage loader: a cp-tagged committed snapshot (data/meta-roles.json)
+// Same cp-aware path pattern as src/meta/usage.js (rankings file keyed off
+// ctx.cp) and the SAME optional live-refresh-snapshot design as that
+// module's usage loader: a cp-tagged committed snapshot (data/meta-roles.json)
 // is preferred when present+valid; a missing/corrupt/wrong-cp snapshot
 // falls back to the vendored files without ever throwing or touching the
 // network (no network access anywhere in THIS file -- a live-fetch
-// companion script, if wanted later, is out of this ticket's scope, which
-// only asks for "the same optional live-refresh snapshot design").
+// companion script, if wanted later, is out of scope here: the scope is
+// only "the same optional live-refresh snapshot design").
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';

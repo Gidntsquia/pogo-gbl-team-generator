@@ -1,10 +1,10 @@
-// CLI + report pipeline tests (GOALS T5, sampled path added T12).
+// CLI + report pipeline tests.
 //
 // Drives runPipeline (the CLI's exported pipeline) with tiny knobs so the real
 // 3v3 engine still runs but the battle count stays small, plus pure-formatting
 // checks on the report renderer. The full-size default CLI run is exercised by
-// hand in the T5/T12 verify steps, not here (too slow for the suite). Covers
-// BOTH the sampled path (default since T12) and the --exhaustive path (old T5
+// hand in the manual verify steps, not here (too slow for the suite). Covers
+// BOTH the sampled path (now the default) and the --exhaustive path (the old
 // behavior, still available).
 
 import { test } from 'node:test';
@@ -22,9 +22,9 @@ const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
 
 // Small enough to run fast, large enough to form >= 1 candidate team. Default
 // (sampled) mode -- no `exhaustive` flag, matching what a bare `node
-// src/cli.js <csv>` run does since T12.
+// src/cli.js <csv>` run does.
 const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 3, seed: 'cli-test-seed' };
-// --exhaustive opt-in path (pre-T12 behavior).
+// --exhaustive opt-in path (the older behavior).
 const EXHAUSTIVE_TINY = { exhaustive: true, topK: 4, meta: 2, scoreMeta: 4, top: 3 };
 
 // runPipeline is the whole cost of this file -- a real engine run, tiny but
@@ -80,7 +80,7 @@ test('runPipeline (sampled, default path) produces ranked teams and a well-forme
   }
 });
 
-test('runPipeline (currentMoves: GOALS T17) forwards the opt-in flag and surfaces it in settings', async () => {
+test('runPipeline (currentMoves) forwards the opt-in flag and surfaces it in settings', async () => {
   const withoutFlag = await pipeline(SAMPLED_TINY);
   assert.equal(withoutFlag.settings.currentMoves, false, 'defaults to off');
 
@@ -98,7 +98,7 @@ test('runPipeline (currentMoves: GOALS T17) forwards the opt-in flag and surface
   assert.match(html, /currentMoves=on/);
 });
 
-test('runPipeline (--cp 2500: GOALS T18c) runs Ultra League end to end and labels the report', async () => {
+test('runPipeline (--cp 2500) runs Ultra League end to end and labels the report', async () => {
   const great = await pipeline(SAMPLED_TINY);
   assert.equal(great.settings.cp, 1500, 'default run is Great League');
   assert.equal(great.settings.league, 'Great League');
@@ -112,7 +112,7 @@ test('runPipeline (--cp 2500: GOALS T18c) runs Ultra League end to end and label
   assert.equal(ultra.settings.league, 'Ultra League');
 
   // The community teams file is Great-League-only, so it is out of the
-  // opponent pool at 2500 (src/meta/teams.js's documented T18c decision).
+  // opponent pool at 2500 (src/meta/teams.js's documented Ultra League decision).
   for (const m of ultra.metaTeams) {
     assert.doesNotMatch(m.id, /^community:/, 'GL community teams excluded at cp 2500');
   }

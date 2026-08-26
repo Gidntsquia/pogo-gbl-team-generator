@@ -3,8 +3,8 @@
 //
 // Verifies: shape/normalization (values in [0,1]), determinism,
 // cp-awareness (1500 vs 2500 read different files and disagree), the
-// mimikyu-top-decile anchor in leads+closers at cp 1500 (T28's own anchor:
-// mimikyu is #1 in leads/closers/switches under the pinned vendor commit),
+// mimikyu-top-decile anchor in leads+closers at cp 1500 (the module's own
+// anchor: mimikyu is #1 in leads/closers/switches under the pinned commit),
 // and snapshot-preference + corrupt-snapshot fallback via a temp file.
 //
 // No network access anywhere in this suite (no fetch script exists for this
@@ -90,7 +90,7 @@ test('cp-awareness: cp 1500 and cp 2500 read different vendored files and can di
   assert.ok(anyDifferent, 'cp 1500 vs cp 2500 role scores should differ for at least one shared species');
 });
 
-test('mimikyu is a top-decile lead AND closer at cp 1500 (T28 anchor)', () => {
+test('mimikyu is a top-decile lead AND closer at cp 1500 (role-prior anchor)', () => {
   const scores = loadRoleScores(ctx);
   const mimikyu = scores.get('mimikyu');
   assert.ok(mimikyu, 'mimikyu should resolve in the cp-1500 role universe');

@@ -1,9 +1,9 @@
 // JavaScript Document
 //
-// Cross-core parallel battle executor (GOALS T15, extended by T19). No battle
+// Cross-core parallel battle executor. No battle
 // math, engine, or vendor changes live here -- this module only decides HOW
 // MANY OS threads drive independent battleTeams() calls, how work is handed
-// out between them, and (as of T19) how the worker pool's lifetime relates to
+// out between them, and how the worker pool's lifetime relates to
 // callers' individual batches of work. Every battle result still comes from
 // vendor/pvpoke's own code, executed unmodified inside each worker's own
 // headless engine context (see parallelWorker.js).
@@ -17,7 +17,7 @@
 // back into spec order before a run resolves, so callers never observe
 // worker-assignment reordering.
 //
-// CORRECTION (discovered during GOALS T15b, see src/engine/README.md's "Known
+// CORRECTION (see src/engine/README.md's "Known
 // limitation" section): this is NOT quite "bit-identical per battle" -- a
 // Pokemon INSTANCE reused across several battles carries a subtle pvpoke
 // engine artifact (Pokemon#resetMoves()'s bestChargedMove tie-break reads a
@@ -27,10 +27,11 @@
 // and serial runs can therefore differ in HP margin even though win/loss
 // outcomes (verified empirically) very rarely do. This affects any REUSE of a
 // Pokemon instance across sequential battles, so it already existed in
-// today's serial evaluateTeams/tournament.mjs too. Standing rule 4 (vendor is
-// read-only, never reimplement battle math) means this is documented as a
-// known engine characteristic, not "fixed" here -- GOALS T20 is the ticket
-// that addresses it directly.
+// today's serial evaluateTeams/tournament.mjs too. The vendor-is-read-only
+// rule (never reimplement battle math) means this is documented as a
+// known engine characteristic, not "fixed" here -- the harness-level
+// bench-member state stamp in src/engine/teamBattle.js is what addresses it
+// directly.
 //
 // Team-building happens PER WORKER, not on the main thread: pvpoke Pokemon
 // instances live inside a specific vm context tied to one V8 isolate, so they
@@ -41,14 +42,14 @@
 // bestBuddy); each worker rebuilds + caches its own Pokemon instances via the
 // same buildPokemon() every other caller uses (see parallelWorker.js).
 //
-// --- GOALS T19: persistent executor -----------------------------------------
+// --- Persistent executor ----------------------------------------------------
 //
-// Before T19, `runBattles()` built a fresh worker pool (N workers, each
+// Originally, `runBattles()` built a fresh worker pool (N workers, each
 // booting its own headless engine context) for every call and tore it down
 // before resolving -- correct, but it means pool+engine boot cost (dominated
 // by parsing/indexing gamemaster.json once per worker) is paid again on every
 // single call, which is exactly why scripts/tournament.mjs had to batch big
-// runs per-candidate rather than pay that cost once for the whole run (T15c).
+// runs per-candidate rather than pay that cost once for the whole run.
 //
 // `createExecutor(opts)` splits pool lifecycle from individual batches of
 // work: `run(specs)` can be called many times against the SAME pool, which
@@ -58,7 +59,7 @@
 // (one pool per call, torn down before the returned promise settles) is
 // unchanged; the new amortization only benefits callers that adopt
 // `createExecutor` directly and call `run()` repeatedly (scripts/tournament.mjs
-// and src/teams/index.js's evaluateTeams -- GOALS T21).
+// and src/teams/index.js's evaluateTeams).
 //
 // **run() concurrency policy: serialized, not parallel-dispatched.** Multiple
 // `run()` calls against one executor are safe to issue without awaiting each
@@ -87,9 +88,9 @@
 // (the executor is not permanently broken by a crash -- only `close()` is
 // terminal). See "createExecutor" below for the full contract.
 //
-// --- GOALS T21: deterministic spec -> worker partitioning ------------------
+// --- Deterministic spec -> worker partitioning -----------------------------
 //
-// Before T21, a worker asked for its NEXT spec the instant it finished its
+// Originally, a worker asked for its NEXT spec the instant it finished its
 // previous one (`assignNext` handed out `active.nextIndex++` on demand) --
 // correct (results are always placed back in spec order), but WHICH worker
 // processed WHICH spec depended on real wall-clock timing: a worker that
@@ -97,7 +98,7 @@
 // each worker keeps its own per-spec build cache and reuses Pokemon instances
 // across the specs it personally handles (see parallelWorker.js), and reusing
 // an instance across sequential battles has pvpoke's own known order-
-// sensitivity (src/engine/README.md's "Known limitation", GOALS T20/T20b),
+// sensitivity (src/engine/README.md's "Known limitation"),
 // two runs of the SAME (specs, threads) could produce a worker-assignment
 // that differs run to run -- so even though every individual battle's winner
 // is still deterministic given its own spec, the exact sequence of battles
@@ -144,7 +145,7 @@ export const THREADS_ENV_VAR = 'POGO_GBL_THREADS';
  *   shadow?: boolean, bestBuddy?: boolean,
  *   fastMove?: string, chargedMoves?: string[]
  * }} MonSpec
- *   `fastMove`/`chargedMoves` (GOALS T15b) are set only for a mon built with
+ *   `fastMove`/`chargedMoves` are set only for a mon built with
  *   an EXPLICIT moveset (src/scoring/index.js's buildMetaMon, e.g. a curated
  *   preset team member) rather than pvpoke's recommended one -- when present,
  *   parallelWorker.js reapplies that exact moveset after rebuilding the
@@ -167,8 +168,8 @@ export const THREADS_ENV_VAR = 'POGO_GBL_THREADS';
  */
 
 /**
- * `max(1, cpus - 1)` -- leaves one core free for the main thread / OS, per
- * GOALS T15. Cloud sandboxes tend to have very few vCPUs; the real payoff is
+ * `max(1, cpus - 1)` -- leaves one core free for the main thread / OS.
+ * Cloud sandboxes tend to have very few vCPUs; the real payoff is
  * on a multi-core dev machine (see src/engine/README.md's Performance
  * section for measured numbers).
  * @returns {number}
@@ -198,7 +199,7 @@ export function resolveThreadCount(explicit, env = process.env) {
  * Split `n` spec indices into `workers` contiguous, deterministic chunks --
  * as even as possible, with any remainder (`n % workers`) going one-each to
  * the FIRST chunks so sizes never differ by more than 1. Pure function of its
- * two arguments; used by `createExecutor` (GOALS T21) to decide which worker
+ * two arguments; used by `createExecutor` to decide which worker
  * processes which spec index BEFORE any battle runs, so that assignment is a
  * function of (specs.length, threads) rather than of real-time worker
  * availability. `workers` is floored to at least 1.
@@ -277,7 +278,7 @@ function bootWorker(vendorRoot, onStarted) {
 }
 
 /**
- * Create a reusable, persistent battle executor (GOALS T19). The worker pool
+ * Create a reusable, persistent battle executor. The worker pool
  * (each worker booting its own headless pvpoke engine context, exactly as
  * `runBattles` always has) boots ONCE -- lazily, on the first `run()` call
  * that actually has work to do -- and is REUSED across every subsequent
@@ -371,7 +372,7 @@ export function createExecutor(opts = {}) {
   }
 
   /** Hand `worker` (at `workerIndex` in the pool) the next spec inside ITS OWN
-   * deterministic partition range (GOALS T21 -- see module header), or count
+   * deterministic partition range (see module header), or count
    * it idle-at-end if that range is exhausted. */
   function assignNext(worker, workerIndex) {
     if (!active) return;
@@ -499,9 +500,10 @@ export function createExecutor(opts = {}) {
  * MonSpec (speciesId/ivs/shadow/bestBuddy), not a built Pokemon instance --
  * those can't cross a thread boundary; see the module header.
  *
- * GOALS T19: this is now a thin `createExecutor` → `run` → `close` wrapper
+ * This is now a thin `createExecutor` → `run` → `close` wrapper
  * (one pool per call, torn down before the returned promise settles) --
- * signature, behavior, and return shape are UNCHANGED from before T19.
+ * signature, behavior, and return shape are UNCHANGED from before the
+ * persistent executor existed.
  * Callers that issue many batches over time and want to amortize pool+engine
  * boot cost across them should use `createExecutor` directly instead and
  * call `run()` repeatedly against the same pool.

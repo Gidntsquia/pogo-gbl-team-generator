@@ -84,8 +84,8 @@ describe('loadMeta', () => {
     );
   });
 
-  // GOALS T18c: which meta GROUP file represents "the meta" follows ctx.cp
-  // (great.json at 1500, ultra.json at 2500) -- the decision T18b deferred.
+  // Which meta GROUP file represents "the meta" follows ctx.cp
+  // (great.json at 1500, ultra.json at 2500) -- a previously deferred decision.
   test('the default group file follows ctx.cp (great at 1500, ultra at 2500)', async () => {
     const groupIds = (cpCtx, group) =>
       JSON.parse(
@@ -116,7 +116,7 @@ describe('scoreCollection', () => {
     { speciesId: 'magikarp', name: 'Magikarp', ivs: { atk: 15, def: 15, hp: 15 }, shadow: false, sourceRow: 2 },
   ];
 
-  test('produces the Matrix shape from PLAN.md', () => {
+  test('produces the Matrix shape', () => {
     const m = scoreCollection(ctx, collection, { groupEntries: TEST_META });
 
     // mons: [{ speciesId, name, score, leadIn }]
@@ -197,7 +197,7 @@ describe('scoreCollection', () => {
     assert.equal(calls[calls.length - 1].total, 2);
   });
 
-  // ----------------------------------------- GOALS T17: current-moves mode --
+  // ---------------------------------------------------- current-moves mode --
 
   test('currentMoves: applies a user mon\'s own resolved moveset instead of recommended', () => {
     // Azumarill's pvpoke-recommended Great League moveset is Bubble + Ice
@@ -215,7 +215,7 @@ describe('scoreCollection', () => {
     const built = m.builtMons['azumarill#1'];
     assert.equal(built.pokemon.fastMove.moveId, 'ROCK_SMASH');
     assert.deepEqual(Array.from(built.pokemon.chargedMoves, (c) => c.moveId), ['HYDRO_PUMP']);
-    // Spec-carrying (T15b plumbing) must record the applied moveset too, so
+    // Spec-carrying (--threads plumbing) must record the applied moveset too, so
     // --threads rebuilds match the serial build.
     assert.equal(built.spec.fastMove, 'ROCK_SMASH');
     assert.deepEqual(built.spec.chargedMoves, ['HYDRO_PUMP']);

@@ -1,11 +1,11 @@
 // JavaScript Document
 //
-// Weighted candidate-team sampler (GOALS T11, PLAN.md Rev 3). Builds the
+// Weighted candidate-team sampler. Builds the
 // CANDIDATE side of the sampling initiative: instead of the exhaustive path's
 // hard C(topK, 3) cutoff (src/teams/index.js's buildCandidates), this samples
 // 3-mon teams from the user's WHOLE deduped collection, weighted so a mon
 // that scores well in the user's own 1v1 matrix AND/OR is a current meta
-// staple (src/meta/usage.js's T9 weights) lands on more candidate teams --
+// staple (src/meta/usage.js's usage weights) lands on more candidate teams --
 // without ever running a battle here. `evaluateTeams` (src/teams/index.js)
 // is untouched: this is a pure list generator feeding its `candidates` param.
 
@@ -15,20 +15,19 @@ import { pickWeighted, rngFromSeed } from '../util/rng.js';
 const TEAM_SIZE = 3;
 
 // P(mon) blend: normalized 1v1-matrix score and normalized species usage
-// weight (T9), combined by simple linear interpolation. alpha in [0,1]
+// weight, combined by simple linear interpolation. alpha in [0,1]
 // controls how much the user's OWN battle performance vs. the broader meta's
 // popularity drives candidate composition: alpha=0 is pure 1v1-score
 // sampling (probabilistic analog of buildCandidates' topK cutoff); alpha=1 is
 // pure meta-usage sampling (ignores how the user's own copy actually
 // battles). 0.5 -- documented tunable, mirrors src/meta/usage.js's
 // DEFAULT_GAMMA pattern -- weights both signals equally, so a mon that's
-// BOTH a strong 1v1 performer AND a meta staple stands out clearly (PLAN Rev
-// 3: "so Jaxon's OWN meta mons land on more candidate teams").
+// BOTH a strong 1v1 performer AND a meta staple stands out clearly, so
+// Jaxon's OWN meta mons land on more candidate teams.
 //
-// Exported (GOALS T23) so src/teams/evolve.js's mutation swap-in step can
+// Exported so src/teams/evolve.js's mutation swap-in step can
 // weight its replacement-mon pick with the exact same blend, instead of
-// re-deriving it -- PLAN Rev 5 explicitly says "swap-in weighted by the Rev
-// 3 blend".
+// re-deriving it -- the swap-in is weighted by this blend by design.
 export const DEFAULT_BLEND_ALPHA = 0.5;
 
 // Sampling without replacement can re-draw the same 3-species team more than
@@ -71,7 +70,7 @@ export function buildScoredPool(matrix, pool, exclude) {
 
 /**
  * Build a `(entry) => number` sampling-weight function blending each entry's
- * normalized 1v1 score (within `entries`) and its species' normalized T9
+ * normalized 1v1 score (within `entries`) and its species' normalized
  * usage weight (within `entries`). Normalizing WITHIN the pool (rather than
  * against the full rankings field) keeps the blend meaningful regardless of
  * how strong/weak the user's overall collection is.
@@ -106,7 +105,7 @@ export function makeBlendedWeightFn(entries, weights, alpha) {
  *   deduped to one instance per species (see `dedupeBestPerSpecies` in
  *   src/teams/index.js), though this function re-dedupes defensively so a
  *   non-deduped pool can never produce a same-species team. `weights` is
- *   T9's `loadUsageWeights` map (species missing from it are treated as
+ *   the `loadUsageWeights` map (species missing from it are treated as
  *   usage weight 0, and an entirely omitted `weights` degrades gracefully to
  *   pure 1v1-score sampling). `count` is how many unique teams to return
  *   (gracefully capped at C(pool.length, 3) when the pool is too small to

@@ -101,7 +101,7 @@ handles both rather than trusting any single frame:
 | `name` | the caught-location caption — *"This **Trevenant** was caught on…"* |
 | `atk` / `def` / `sta` | the three appraisal bars, measured in pixels |
 | `level` | not shown on screen — solved for from species + IVs + CP + max HP |
-| `shadow` | not on the appraisal screen — only the `PURIFY` / `SHADOW BONUS` text behind it |
+| `shadow` | the sliver of `PURIFY` / `POWER UP` button above the panel, or failing that the purple aura |
 | the *form* | not stated anywhere — settled from CP + max HP + IVs, then the type badges |
 
 A Pokemon is identified across frames by species + max HP, so two of the same
@@ -124,20 +124,44 @@ by asking which form has a level that produces the CP and the max HP that
 were read. Usually exactly one does: a Corsola with 101 HP and 13/10/15 is
 Galarian at level 20, and an ordinary one is nothing at all.
 
-**Shadow.** The appraisal screen never says it. The caption gives the base
-species with no "Shadow" in front of it, and the purple flames are a picture,
-not text. The only place Pokemon GO writes it down is the detail page
-*behind* the panel — the `PURIFY` button and the `SHADOW BONUS` note under
-the moves — which is visible only on frames where the panel is shut, and
-those frames have no bars and no caption to read either. The scan picks the
-marker off them anyway and ties it back to a Pokemon by the CP and max HP
-still on screen.
+**Shadow.** No text on the appraisal screen says it. The caption gives the
+base species with no "Shadow" in front of it, the name above the stats is
+your own nickname, and the purple flames are a picture rather than a word.
+Pokemon GO writes it down on the detail page *behind* the panel — the
+`PURIFY` button and the `SHADOW BONUS` note under the moves — and those
+frames have no bars and no caption to read either. The scan picks the marker
+off them anyway and ties it back to a Pokemon by the CP and max HP still on
+screen, so swiping with the panel shut once per Pokemon still works.
 
-So **swipe with the appraisal panel closed at least once per Pokemon** if you
-want shadow filled in. The scan reports how many rows it could check, and
-writes every unchecked one as not shadow — which for a shadow Pokemon looks
-exactly like a correct row, so it says so plainly rather than letting you
-assume.
+It is no longer necessary, though, because the panel does not quite cover the
+page behind it. Two things show above its top edge:
+
+- **The action button.** A shadow Pokemon's page has `PURIFY` above `POWER
+  UP`; an ordinary one has only `POWER UP`. Either way the topmost of the two
+  lands a few pixels above the panel — pink for `PURIFY`, green for `POWER
+  UP`. There is no legible text left at that size, so it is read as colour,
+  and always as a *difference* from the bare veil just above it rather than
+  as an absolute (the panel's cream wash varies from card to card). This is
+  the Pokemon's own page stating the fact, so it is never overruled. It
+  answers for roughly two Pokemon in three; on the rest the page happens to
+  be scrolled far enough that the buttons sit under the panel.
+- **The aura.** For those, the purple smoke around the Pokemon decides.
+  None of what makes the aura obvious to a person survives on its own — GO's
+  backgrounds cycle through purple, navy and tan, half of them are dark, and
+  several are animated — but the aura is *local*: on an ordinary card the
+  background beside the Pokemon's feet matches the background under the CP
+  text, and the aura darkens it and pushes it blue in only one of those two
+  places. Measured against the 257 Pokemon in the test recordings whose
+  button *could* be read, and which therefore have an answer that does not
+  come from the aura, the rule gets all 26 shadows and none of the 231
+  ordinary Pokemon — including a violet Sableye on near-black and a Hisuian
+  Braviary lit magenta from behind. Of the 136 it then answered for on its
+  own, one had to be corrected by hand, and the rule was tightened until it
+  got that one too.
+
+The scan says which of the two answered for how many, and names the ones the
+aura called shadow: that half is a strong resemblance rather than a stated
+fact, and it is the half worth a second look.
 
 When two forms are stat-for-stat identical the type badges under the HP text
 break the tie — that is the only thing separating Oricorio's four dance
@@ -380,7 +404,7 @@ about scoring or battling changes.
 
 By default, both sides of every matchup are *sampled* rather than
 exhaustively enumerated (see `src/meta/usage.js`, `src/teams/sample.js`,
-`src/meta/sampleTeams.js`; design writeup in `PLAN.md`'s Rev 3 section):
+`src/meta/sampleTeams.js`):
 
 - **Per-species usage weight** (`src/meta/usage.js`): every species gets a
   weight derived from pvpoke's own Great League ranking score (higher score
@@ -500,9 +524,8 @@ evenly across a static sample.
 node scripts/evolve.mjs fixtures/sample-pokegenie.csv --population 8 --opponents-per-gen 3 --generations 3 --seed my-seed
 ```
 
-**The selection scheme, in plain words** (see `PLAN.md` Rev 5 for the full
-design, Rev 6 for the "locked leads" + battle-reality-fitness revisions
-below): every generation, every team in the population is battled against a
+**The selection scheme, in plain words** ("locked leads" and
+battle-reality fitness are both described below): every generation, every team in the population is battled against a
 fresh sample of opponent teams. The bottom third by win rate die. Each
 *surviving* team then rolls a chance to mutate — the better a team did
 relative to the rest of that generation, the more likely it mutates (from a
@@ -516,7 +539,7 @@ either until the top-10 team composition hasn't changed for 3 generations
 in a row (convergence), or a generation/time cap is hit — the report says
 which one stopped the run.
 
-**Locked leads (`PLAN.md` Rev 6):** a team isn't just 3 species — it's a
+**Locked leads:** a team isn't just 3 species — it's a
 *(lead, back, back)*, and which mon leads is part of what makes two teams
 different individuals in the population (evolution can promote a back to
 lead via the lead-rotation mutation above, same spirit as a member swap).
@@ -530,8 +553,8 @@ scheme's three, freeing up ~3x the battle budget to spend on
 `--elites` get a 3-pairing pass (their own lead against all 3 of the
 opponent's possible leads) for the report's bestLead/safe-swap detail.
 
-**Fitness: `--fitness classic|battle-reality` (`PLAN.md` Rev 6):** by
-default (`battle-reality`, GOALS T30) a team's fitness blends its plain
+**Fitness: `--fitness classic|battle-reality`:** by
+default (`battle-reality`) a team's fitness blends its plain
 locked-lead win rate with two more signals, both computed for free from the
 same battles (no extra simulation): a **snowball score** (this team's own
 fraction of decided lead exchanges it won this generation — how often its
@@ -546,18 +569,18 @@ metric (today's original behavior, still fully supported) — both scores are
 always computed and shown in the report regardless of mode, so you can see
 how a team is winning, not just whether it is.
 
-`battle-reality` became the default on the strength of a real A/B (GOALS
-T30, same seed/collection/opponents, `--fitness classic` vs
-`--fitness battle-reality`, recorded in `PROGRESS.md`): battle-reality's
-top-10 showed the exact shift the whole Rev 6 initiative was built to
+`battle-reality` became the default on the strength of a real A/B (same
+seed/collection/opponents, `--fitness classic` vs
+`--fitness battle-reality`): battle-reality's
+top-10 showed the exact shift the battle-reality work was built to
 produce — Stunfisk (Galarian)/Azumarill's share of the top 10 teams fell
 (5→2 and 7→5 team-appearances respectively) while Skarmory, absent from
 classic's top 10 entirely, entered twice as a back-line closer pick, and
 Medicham rose 2→5. The #1 team is the same three species in both runs, led
 by a different member (Medicham under classic, Sableye under battle-reality).
 
-**Two report metrics distinct from the fitness-blend components above**
-(GOALS T30, PLAN Rev 6's own original naming) — per elite team: a
+**Two report metrics distinct from the fitness-blend components above** —
+per elite team: a
 **snowball index**, P(win the game | won the lead exchange), and a
 **comeback index**, P(win the game | lost the lead exchange) — both `n/a`
 when a team had zero decided exchanges of that kind to measure from (not
@@ -654,7 +677,6 @@ small search size, and checks the resulting report file.
 
 ## Known limitations / not yet implemented
 
-See `ROADMAP.md` for the full backlog. Notably:
 - No *automatic* Best Buddy (level 51) detection — a stock Poke Genie
   export carries no Best Buddy column, so it must be added by hand (see
   "Best Buddy (level 51) mons" above) for those mons to be scored/built at
@@ -665,7 +687,8 @@ See `ROADMAP.md` for the full backlog. Notably:
   that don't resolve fall back to recommended with a warning.
 - The video importer (`scripts/scan-video.mjs`) is macOS-only, needs the
   appraisal panel visible in the recording, and cannot see a Pokemon's
-  moves, Lucky or Best Buddy status — only what the appraisal screen shows.
+  moves, Lucky or Best Buddy status. Shadow it does read, from the sliver of
+  page above the panel (see "Shadow" above).
 - Great League (default) and Ultra League (`--cp 2500`) are both supported
   end-to-end; the community-curated opponent teams and the optional live
   usage snapshot are Great League only (see "Leagues (`--cp`)" above).

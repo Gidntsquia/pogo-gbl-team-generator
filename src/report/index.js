@@ -1,6 +1,6 @@
 // JavaScript Document
 //
-// Report rendering for the team generator (GOALS T5). Pure
+// Report rendering for the team generator. Pure
 // formatting: takes the already-computed pipeline outputs (ranked teams from
 // src/teams/evaluateTeams, the 1v1 score matrix from src/scoring, and the
 // collection warnings) and turns them into (a) a short terminal summary and
@@ -25,7 +25,7 @@ function memberNames(team) {
 }
 
 /**
- * GOALS T28: format one role score ([0,1] from src/meta/roles.js) as a
+ * Format one role score ([0,1] from src/meta/roles.js) as a
  * percentage for a report cell, or an em dash when the species has no entry
  * in `roleScores` at all (never happens for a real gamemaster speciesId
  * under the pinned vendor commit, but `roleScores` is caller-supplied and a
@@ -124,21 +124,21 @@ function escapeHtml(s) {
  * @property {Array<{speciesId:string, name:string, score:number, leadIn:string}>} monScores
  *   matrix.mons (per-mon 1v1 weighted scores + lead-in summary).
  * @property {Map<string, {lead:number, closer:number, switch:number}>} [roleScores]
- *   GOALS T28: per-species lead/closer/switch priors from
+ *   Per-species lead/closer/switch priors from
  *   src/meta/roles.js's `loadRoleScores` (each in [0,1]), keyed by
  *   speciesId. Optional -- when absent, the per-mon appendix renders
- *   exactly as it did before T28 (no extra columns), so older callers/tests
+ *   exactly as it did without them (no extra columns), so older callers/tests
  *   that don't supply it are unaffected.
  * @property {Array<{id:string, name:string, label?:('curated'|'sampled'|null)}>} metaTeams
- *   opponent pool used. `label` is present (GOALS T12) when the opponent pool
+ *   opponent pool used. `label` is present when the opponent pool
  *   was sampled (src/meta/sampleTeams.js); null/absent for the exhaustive
  *   curated-only path.
  * @property {string[]} warnings - collection + scoring warnings, surfaced verbatim.
  * @property {object} settings - the run knobs. `settings.mode` is `'sampled'`
- *   (GOALS T12 default: candidateTarget/poolSize/seed/curatedRatio) or
+ *   (the default: candidateTarget/poolSize/seed/curatedRatio) or
  *   `'exhaustive'`/absent (topK/candidateCount), plus scoreMeta/difficulty/
- *   excludeSpecies common to both. `settings.cp`/`settings.league` (GOALS
- *   T18c) name the league; absent = Great League, and a cp of 1500 is left
+ *   excludeSpecies common to both. `settings.cp`/`settings.league`
+ *   name the league; absent = Great League, and a cp of 1500 is left
  *   off the settings line as the default.
  * @property {string} [generatedAt] - optional ISO timestamp; omitted -> no date line.
  */
@@ -227,7 +227,7 @@ function renderTeamSection(team, rank) {
 }
 
 /**
- * League label for the report headings (GOALS T18c): `settings.league` when
+ * League label for the report headings: `settings.league` when
  * the pipeline supplied one, else Great League -- the only league that
  * existed before --cp, so an older settings object still renders as it did.
  *
@@ -240,7 +240,8 @@ function leagueLabel(settings) {
 
 /**
  * `cp=<n>` for the settings line, but only when it differs from the Great
- * League default -- a default run's report stays byte-identical to pre-T18c.
+ * League default -- a default run's report stays byte-identical to what it
+ * was before other leagues were supported.
  *
  * @param {object} settings
  * @returns {string | null}
@@ -286,8 +287,8 @@ export function renderReport(input) {
   out.push('');
 
   const s = settings;
-  // GOALS T12: settings.mode is 'sampled' (default) or 'exhaustive'/absent
-  // (the old T5 shape -- absent is treated as exhaustive so a caller-built
+  // settings.mode is 'sampled' (default) or 'exhaustive'/absent
+  // (the original shape -- absent is treated as exhaustive so a caller-built
   // settings object without `mode`, e.g. an older test fixture, still renders).
   const modeParts =
     s.mode === 'sampled'
@@ -354,7 +355,7 @@ export function renderReport(input) {
   out.push('');
   if (roleScores) {
     out.push(
-      '_Lead/Closer/Switch columns (GOALS T28) are pvpoke\'s own published role-specific ' +
+      '_Lead/Closer/Switch columns are pvpoke\'s own published role-specific ' +
         'priors (rankings/all/{leads,closers,switches}) under its recommended movesets -- ' +
         'species-level context, not this collection\'s own instance/IV-specific 1v1 score._'
     );
@@ -458,7 +459,7 @@ function renderTeamSectionHtml(team, rank) {
  * Render the full report as a single self-contained HTML page (no external
  * CSS/JS/fonts -- opens directly from disk via `file://`). Same content and
  * section order as {@link renderReport}; purely a nicer-to-read presentation
- * of the same `ReportInput` (ROADMAP known-gap: "HTML report").
+ * of the same `ReportInput`.
  *
  * @param {ReportInput} input
  * @returns {string} HTML document text.
@@ -569,7 +570,7 @@ export function renderReportHtml(input) {
   );
   if (roleScores) {
     out.push(
-      '<p><em>Lead/Closer/Switch columns (GOALS T28) are pvpoke&rsquo;s own published ' +
+      '<p><em>Lead/Closer/Switch columns are pvpoke&rsquo;s own published ' +
         'role-specific priors (rankings/all/{leads,closers,switches}) under its recommended ' +
         'movesets -- species-level context, not this collection&rsquo;s own instance/IV-specific ' +
         '1v1 score.</em></p>'

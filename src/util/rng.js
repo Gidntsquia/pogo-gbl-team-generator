@@ -2,8 +2,8 @@
 //
 // Tiny seeded PRNG + weighted-sampling-without-replacement helper. Pure
 // arithmetic/statistics utility used by the samplers in src/meta/sampleTeams.js
-// (T10) and src/teams/sample.js (T11) -- no battle math, no pvpoke data, no
-// npm dependency. See PLAN.md's Rev 3 section.
+// and src/teams/sample.js -- no battle math, no pvpoke data, no
+// npm dependency.
 
 /**
  * mulberry32: a small, fast, deterministic 32-bit PRNG. Same seed -> same

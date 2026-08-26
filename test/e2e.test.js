@@ -1,11 +1,11 @@
-// End-to-end test (GOALS T6, sampled path added T12): fixture CSV -> CLI's
+// End-to-end test: fixture CSV -> CLI's
 // runPipeline -> report, exercising the whole pipeline (importer -> scoring
 // -> meta/candidate teams -> evaluator -> report) through the real 3v3 engine
 // exactly as `node src/cli.js` would run it, kept fast via tiny knobs. Covers
 // the sampled (default) path plus a smaller check of --exhaustive.
 //
-// This does NOT spawn a subprocess (that path is covered by the T5/T12 manual
-// acceptance runs logged in PROGRESS.md); it drives the same runPipeline the
+// This does NOT spawn a subprocess (that path is covered by the manual
+// acceptance runs); it drives the same runPipeline the
 // CLI entry point calls, then checks the on-disk report file it writes.
 
 import { test } from 'node:test';
@@ -24,7 +24,7 @@ const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
 // Small enough to finish quickly in CI, large enough to form >= 1 team.
 // Default (sampled) path -- no `exhaustive` flag, matching a bare CLI run.
 const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 3, seed: 'e2e-test-seed' };
-// --exhaustive opt-in path (pre-T12 behavior).
+// --exhaustive opt-in path (the older behavior).
 const EXHAUSTIVE_TINY = { exhaustive: true, topK: 4, meta: 2, scoreMeta: 4, top: 3 };
 
 test('e2e: fixture collection -> CLI pipeline (sampled, default) -> report.md on disk', async () => {
@@ -71,7 +71,7 @@ test('e2e: fixture collection -> CLI pipeline (sampled, default) -> report.md on
   );
 });
 
-// GOALS T18c: the same end-to-end path at the Ultra League cap. Knobs are
+// The same end-to-end path at the Ultra League cap. Knobs are
 // even smaller than SAMPLED_TINY -- this checks the league plumbing reaches
 // the report, not the ranking quality (covered at cp 1500 above).
 test('e2e: fixture collection -> CLI pipeline (--cp 2500) -> Ultra League report.md on disk', async () => {

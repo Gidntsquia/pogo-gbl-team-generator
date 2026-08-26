@@ -1,6 +1,6 @@
 // JavaScript Document
 //
-// Weighted opponent-team sampler (GOALS T10, PLAN.md Rev 3). Builds the
+// Weighted opponent-team sampler. Builds the
 // opponent side of the sampling initiative: a mixture of pvpoke's own curated
 // teams for the run's CP cap (src/meta/teams.js) plus randomly-composed 3-mon teams
 // drawn from a WIDE species pool, weighted toward the current meta via
@@ -23,7 +23,7 @@ const DEFAULT_CURATED_RATIO = 0.4;
 const TEAM_SIZE = 3;
 const SHADOW_SUFFIX = '_shadow';
 
-/** Strip the "_shadow" suffix pvpoke uses to key shadow variants, so base/shadow forms of the same species count as one species for dedup purposes (matches T4's team-evaluator rule). */
+/** Strip the "_shadow" suffix pvpoke uses to key shadow variants, so base/shadow forms of the same species count as one species for dedup purposes (matches the team evaluator's rule). */
 function baseIdOf(speciesId) {
   return speciesId.endsWith(SHADOW_SUFFIX) ? speciesId.slice(0, -SHADOW_SUFFIX.length) : speciesId;
 }
@@ -57,7 +57,7 @@ function displayName(ctx, metaMon) {
  * @returns {Array<{speciesId: string, fastMove: string, chargedMoves: string[]}>}
  */
 function loadMovesetPool(ctx, opts = {}) {
-  // Rankings file follows ctx.cp (GOALS T18c) so a `--cp 2500` run composes
+  // Rankings file follows ctx.cp so a `--cp 2500` run composes
   // opponents from Ultra League movesets, not Great League ones.
   const rankingsFile = opts.rankingsFile ?? `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
   const raw =
@@ -80,7 +80,7 @@ function loadMovesetPool(ctx, opts = {}) {
  * Map<speciesId, number> from loadUsageWeights), with no two members sharing
  * a base species (shadow/base = same species). A pool entry that fails to
  * build (e.g. a gamemaster edge case) is dropped from further consideration
- * and a replacement is drawn -- "skip-and-resample" per the ticket, never a
+ * and a replacement is drawn -- "skip-and-resample", never a
  * hard crash on one bad species.
  *
  * @param {object} ctx
@@ -135,7 +135,7 @@ function composeSampledTeam(ctx, rng, pool, weights) {
  *   rankingsFile?: string,
  *   rankingsEntries?: Array<object>,
  * }} params
- *   `curatedRatio` (default 0.4, documented in PLAN.md Rev 3) is the target
+ *   `curatedRatio` (default 0.4) is the target
  *   fraction of `count` drawn from `curated` (default: loadMetaTeams(ctx));
  *   the remainder is composed by weighted sampling. Both halves are
  *   gracefully capped (curated draw capped at `curated.length`; the sampled
@@ -153,7 +153,7 @@ export function sampleOpponentTeams(ctx, params) {
 
   const curatedPool = curated ?? loadMetaTeams(ctx);
   const curatedCount = Math.min(Math.round(count * curatedRatio), curatedPool.length, count);
-  // GOALS T10b: a curated team tagged tier:"off-meta" draws at a reduced
+  // A curated team tagged tier:"off-meta" draws at a reduced
   // relative weight vs untagged (meta) teams -- see teams.js's
   // OFF_META_CURATED_WEIGHT for the documented ratio. A team without a `tier`
   // field (e.g. a caller-supplied test fixture) counts as full weight.

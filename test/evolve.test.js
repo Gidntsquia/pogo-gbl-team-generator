@@ -1,5 +1,5 @@
-// Tests for src/teams/evolve.js -- the GA core module (GOALS T23; locked
-// -lead representation GOALS T29, PLAN.md Rev 6). Pure generational logic
+// Tests for src/teams/evolve.js -- the GA core module (locked-lead
+// representation). Pure generational logic
 // over FAKE fitness arrays and a fake scoreCollection matrix (no engine
 // boot, no vendor data, no battles) -- verifies: determinism under seed,
 // deathRate honored exactly, mutation probability monotone in fitness
@@ -58,7 +58,7 @@ const WIDE_POOL_MONS = makeMons(40); // plenty of room: C(40,3) = 9880 possible 
 const WIDE_MATRIX = fakeMatrix(WIDE_POOL_MONS);
 const WIDE_POOL = poolKeys(WIDE_POOL_MONS);
 
-/** Lead-aware identity signature, mirroring src/teams/evolve.js's own (PLAN Rev 6). */
+/** Lead-aware identity signature, mirroring src/teams/evolve.js's own. */
 function teamSignature(team) {
   return `${team[0]}||${[...team.slice(1)].sort().join('|')}`;
 }

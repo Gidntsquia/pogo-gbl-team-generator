@@ -1,18 +1,18 @@
 // JavaScript Document
 //
 // Per-species meta usage weights, powering the weighted samplers in
-// src/meta/sampleTeams.js (T10) and src/teams/sample.js (T11). See PLAN.md's
-// Rev 3 section: usage weight = normalized (score/100)^gamma, where score is
+// src/meta/sampleTeams.js and src/teams/sample.js. Usage weight =
+// normalized (score/100)^gamma, where score is
 // pvpoke's own 0-100 ranking score for ctx.cp (vendored
 // vendor/pvpoke/src/data/rankings/all/overall/rankings-<cp>.json, cp from
-// ctx.cp -- GOALS T18b; Great League/1500 by default), optionally overridden
+// ctx.cp; Great League/1500 by default), optionally overridden
 // by a committed freshness snapshot (data/meta-usage.json, written by
 // scripts/refresh-usage.mjs). No battle math here -- this is pure arithmetic
 // over pvpoke's own published ranking scores.
 //
-// GOALS T18c settled the meta GROUP file question T18b deferred: the group
-// pool follows ctx.cp via src/util/leagues.js (groups/great.json at 1500,
-// groups/ultra.json at 2500), same as the rankings/training files below.
+// The meta GROUP file follows ctx.cp via src/util/leagues.js
+// (groups/great.json at 1500, groups/ultra.json at 2500), same as the
+// rankings/training files below.
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -37,17 +37,17 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));
 }
 
-/** Default training-teams file for ctx's CP cap (GOALS T18b), mirroring src/meta/teams.js. */
+/** Default training-teams file for ctx's CP cap, mirroring src/meta/teams.js. */
 function defaultTrainingFile(ctx) {
   return `src/data/training/teams/gobattleleague/${ctx.cp}.json`;
 }
 
-/** Default vendored rankings file for ctx's CP cap (GOALS T18b). */
+/** Default vendored rankings file for ctx's CP cap. */
 function defaultRankingsFile(ctx) {
   return `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
 }
 
-/** Default meta group file for ctx's CP cap (GOALS T18c). */
+/** Default meta group file for ctx's CP cap. */
 function defaultGroupFile(ctx) {
   return `src/data/groups/${leagueForCp(ctx.cp).group}.json`;
 }
@@ -75,7 +75,7 @@ function readTrainingSpeciesIds(raw) {
  * ~85-94), so "above the median" of just that slice would be close to a coin
  * flip. Against the full field's median (~74, well below any meta anchor's
  * score), "above median" is a meaningful signal. It also matches the whole
- * point of the sampling initiative (PLAN Rev 3): the opponent/candidate
+ * point of the sampling initiative: the opponent/candidate
  * samplers need a WIDE weighted pool to draw from, not just the ~50-mon
  * curated slice.
  */
@@ -123,7 +123,7 @@ function loadSnapshot(snapshotPath) {
 
 /**
  * Build the deterministic base score-per-species map: a present+parseable
- * snapshot wins over the vendored rankings file (T9's "prefers a
+ * snapshot wins over the vendored rankings file (the "prefers a
  * present+parseable snapshot over vendored" rule).
  */
 function loadScoreBySpecies(ctx, opts) {
@@ -132,7 +132,7 @@ function loadScoreBySpecies(ctx, opts) {
     ? { entries: opts.snapshotEntries }
     : loadSnapshot(snapshotPath);
   if (snapshot) {
-    // GOALS T18c: scripts/refresh-usage.mjs only ever fetches Great League
+    // scripts/refresh-usage.mjs only ever fetches Great League
     // scores, so a snapshot is only valid for the cap it was fetched for (a
     // snapshot written before this field existed is Great League by
     // definition). At any other cap it would silently substitute GL scores
@@ -161,7 +161,7 @@ function loadScoreBySpecies(ctx, opts) {
  *
  * weight(species) ∝ (score/100)^gamma, where score is pvpoke's own 0-100
  * ranking score for ctx's CP cap. Weights are normalized to sum to 1 (a
- * probability distribution the T10/T11 samplers can draw from directly).
+ * probability distribution the samplers can draw from directly).
  * A species with no resolvable score (absent from both the snapshot/vendored
  * rankings) is left out of the returned map entirely rather than assigned a
  * zero weight, so callers can tell "no data" apart from "legitimately weak".

@@ -271,7 +271,7 @@ describe('simBattle', () => {
 describe('initEngine({ cp }) -- Ultra League (CP 2500) parameterization', () => {
   // Sibling of the CP-1500 "reproduces pvpoke's own rankings...json battle
   // ratings exactly" block above, run against rankings-2500.json instead, to
-  // confirm the engine layer is genuinely CP-cap-generic (ROADMAP's
+  // confirm the engine layer is genuinely CP-cap-generic (the
   // "--cp 2500 / Ultra League flag" gap, engine-layer slice) rather than
   // just accepting the option and silently still simulating Great League.
   const UL_VALIDATION_PAIRS = [

@@ -8,7 +8,7 @@
 // math: it only (1) rebuilds Pokemon from plain-data specs via the existing
 // buildPokemon, and (2) calls the existing battleTeams.
 //
-// GOALS T19: this file's protocol was already batch-agnostic -- a worker has
+// This file's protocol was already batch-agnostic -- a worker has
 // no notion of where one `run()` call ends and the next begins, it just
 // answers `{type:'battle', id, spec}` messages with `result`/`battleError`
 // responses indefinitely -- so createExecutor's persistent pool needed ZERO
@@ -16,11 +16,12 @@
 // worth knowing about: cacheA/cacheB (below) now persist for the pool's
 // entire lifetime rather than just one runBattles() call, so a long-lived
 // executor reused across many batches (e.g. a future multi-stage tournament
-// run, GOALS T21) will build any given mon at most once per worker ever,
+// run) will build any given mon at most once per worker ever,
 // not once per batch -- a nice bonus, but also means the cache can grow
 // across a very large number of DISTINCT mons over a long-lived executor's
-// life; nothing here bounds/evicts it (not needed by anything T19 requires,
-// flagged for whoever tunes a long-running pool later).
+// life; nothing here bounds/evicts it (not needed by anything the
+// persistent executor requires, flagged for whoever tunes a long-running
+// pool later).
 //
 // Pokemon instances built in one thread's vm context cannot be sent to
 // another thread (postMessage's structured clone doesn't preserve class
@@ -29,7 +30,7 @@
 // fastMove?, chargedMoves?} per mon -- and each worker rebuilds + caches its
 // own Pokemon instances. See src/engine/parallel.js's header comment for why
 // the cache is split into cacheA/cacheB (mirror-match distinctness).
-// fastMove/chargedMoves (GOALS T15b), when present, are reapplied via
+// fastMove/chargedMoves, when present, are reapplied via
 // src/scoring/index.js's applyGroupMoveset -- buildPokemon alone always
 // selects pvpoke's RECOMMENDED moveset, which is not what a buildMetaMon-built
 // mon (e.g. a curated preset team member) necessarily carries.

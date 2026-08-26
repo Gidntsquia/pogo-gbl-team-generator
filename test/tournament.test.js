@@ -1,6 +1,6 @@
 // @slow -- drives full multi-stage tournament runs; ~35s on its own.
 //
-// Tests for scripts/tournament.mjs (GOALS T13: multi-stage overnight
+// Tests for scripts/tournament.mjs (the multi-stage overnight
 // tournament runner). Drives the exported `runTournament` in-process (no
 // subprocess, no network) with tiny knobs so the real pvpoke 3v3 engine still
 // runs but the battle count stays small -- mirrors how test/cli.test.js
@@ -139,10 +139,10 @@ test('deterministic: two fresh runs with the same seed produce an identical stag
   assert.deepEqual(ratesOther, ratesShared, 'same seed -> identical win rates (battles are seeded, not wall-clock random)');
 });
 
-// GOALS T15c: wires opts.threads/--threads into runFunnelStage, batching each
+// Threading: wires opts.threads/--threads into runFunnelStage, batching each
 // candidate's battles (across all its opponents/pairings) into one
 // src/engine/parallel.js runBattles() call instead of driving battleTeams()
-// serially -- same worker-pool executor GOALS T15b already wired into
+// serially -- same worker-pool executor already wired into
 // evaluateTeams. Because avgHpMargin is this file's stage-to-stage tiebreak,
 // a drifted margin could in principle flip which candidates cross a stage's
 // top-N cutoff if two candidates tied exactly on winRate -- to keep this test
@@ -152,30 +152,29 @@ test('deterministic: two fresh runs with the same seed produce an identical stag
 // ranking, and finalist teams are compared by team signature (not position)
 // so a tie-break-driven reorder can't fail the assertion either.
 //
-// HISTORY (superseded, kept for context): T15c originally found win/loss
+// HISTORY (superseded, kept for context): that pass originally found win/loss
 // outcomes and win rates were NOT always identical between serial and
 // threaded execution at this test's scale (a narrow win became a tie in one
 // real run), traced to a reused Pokemon instance's resetMoves()/
 // bestChargedMove tie-break reading stale state depending on battle order.
-// GOALS T20-T20b then found and fixed the distinct order-dependence
+// Later work then found and fixed the distinct order-dependence
 // mechanisms behind that -- most recently, stale hasActed/priority/
 // baitShields/farmEnergy on bench members, which fullReset()/setRoster()
 // never touch and which only the two active leads get freshly written each
 // battle (see src/engine/README.md's "Known limitation" section for the full
-// history, and PROGRESS.md's T20b entries for the numbers). With all of them
+// history and the measured numbers). With all of them
 // fixed, serial and threaded execution of the same battles are provably
 // bit-identical (verified directly: this exact test's serial vs threaded
 // finalRankings now compare equal via assert.equal on both winRate and
 // avgHpMargin, not just within tolerance). The tolerance constant below is
 // retired.
 
-// GOALS T21 (supersedes T15c's per-candidate batching): opts.threads now
+// Supersedes that per-candidate batching: opts.threads now
 // boots ONE persistent executor for the WHOLE run (see runTournament) and
 // each stage submits its entire battle set as a single continueOnError
 // run() call (see runFunnelStage) instead of one runBattles() call per
 // candidate. This test also checks the threadsUsed bookkeeping (report +
-// checkpoints recording the actual thread count per stage, per the ticket's
-// explicit requirement).
+// checkpoints recording the actual thread count per stage).
 test('opts.threads (persistent worker-pool executor, batched per stage) produces results bit-identical to the serial path', async () => {
   const THREADS_TINY = {
     scoreMeta: 4,
@@ -232,7 +231,7 @@ test('opts.threads (persistent worker-pool executor, batched per stage) produces
     threaded.stage1.timing.errorCount + threaded.stage2.timing.errorCount + threaded.stage3.timing.errorCount;
   assert.equal(threadedErrors, 0, 'no battle-batch errors on a clean fixture run');
 
-  // GOALS T21: threadsUsed recorded per stage (report + checkpoints) --
+  // threadsUsed recorded per stage (report + checkpoints) --
   // serial run shows null on every stage, the threaded run shows the actual
   // thread count passed, on every stage (proof the SAME executor config
   // reached all 3 stages, not just stage 1).

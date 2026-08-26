@@ -1,5 +1,5 @@
-// Tests for src/meta/sampleTeams.js -- the weighted opponent-team sampler
-// (GOALS T10). Verifies: determinism under a fixed seed, no duplicate
+// Tests for src/meta/sampleTeams.js -- the weighted opponent-team sampler.
+// Verifies: determinism under a fixed seed, no duplicate
 // species within a team, curated/sampled mixture proportion, battle
 // readiness (real 3v3 battle), and a loose usage-weight distribution check
 // (top-quartile-weight species appear meaningfully more often than

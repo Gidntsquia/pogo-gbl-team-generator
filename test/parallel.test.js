@@ -1,7 +1,7 @@
 // JavaScript Document
 //
-// Verifies src/engine/parallel.js -- the worker_threads battle executor
-// (GOALS T15). No battle math is exercised directly here: the whole point of
+// Verifies src/engine/parallel.js -- the worker_threads battle executor.
+// No battle math is exercised directly here: the whole point of
 // this suite is that runBattles() produces results IDENTICAL to a plain
 // serial loop of battleTeams() calls, in spec order, regardless of thread
 // count, and that a broken worker surfaces as a rejected promise rather than
@@ -169,7 +169,7 @@ describe('thread-count resolution', () => {
   });
 });
 
-// --- GOALS T21: deterministic spec -> worker partitioning ------------------
+// --- Deterministic spec -> worker partitioning -----------------------------
 //
 // createExecutor now assigns specs to workers via CONTIGUOUS, deterministic
 // chunks (partitionContiguous) rather than availability-based dispatch, so a
@@ -211,7 +211,7 @@ describe('partitionContiguous: pure chunking function', () => {
   });
 });
 
-describe('GOALS T21: same (specs, threads) run reproduces bit-identically', () => {
+describe('same (specs, threads) run reproduces bit-identically', () => {
   // A plan long enough (several repeats of the same species pairs, mixed
   // seeds) that a worker's per-spec build cache genuinely reuses Pokemon
   // instances across more than one battle -- exactly the condition under
@@ -241,7 +241,7 @@ describe('GOALS T21: same (specs, threads) run reproduces bit-identically', () =
   });
 });
 
-// --- GOALS T19: createExecutor -- persistent pool + per-spec fault isolation ---
+// --- createExecutor -- persistent pool + per-spec fault isolation --------------
 //
 // runBattles() above still gets its own dedicated coverage (it's now a thin
 // create->run->close wrapper, and every test above already proves its
@@ -399,7 +399,7 @@ describe('createExecutor: lifecycle (close/crash)', () => {
   });
 });
 
-describe('runBattles (legacy wrapper): return shape unchanged by the T19 rewrite', () => {
+describe('runBattles (legacy wrapper): return shape unchanged by the persistent-pool rewrite', () => {
   test('never returns {ok,...} SpecResult slots -- always raw battleTeams() shape, or a whole-batch rejection', async () => {
     const result = await runBattles(toSpecs(BATTLE_PLAN.slice(0, 1)), { threads: 1 });
     assert.equal(result.length, 1);

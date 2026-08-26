@@ -218,7 +218,7 @@ export function initTeamBattle(ctx) {
 }
 
 /**
- * GOALS T20b (determinism mechanism 2): pvpoke's own TrainingAI#runScenario
+ * Determinism mechanism 2: pvpoke's own TrainingAI#runScenario
  * (vendor/pvpoke/src/js/training/TrainingAI.js) builds a throwaway
  * single-battle `Battle` to test a shield/bait scenario, and calls that
  * throwaway battle's own setNewPokemon() on the REAL pokemon/opponent
@@ -943,7 +943,7 @@ export function battleTeams(ctx, params) {
   // Correct pvpoke's emulate-mode double charge of chargedMinigameTime before
   // anything reads the clock (see wrapBattleClock).
   wrapBattleClock(battle);
-  // GOALS T18c: match the harness's CP cap (initEngine's opts.cp) so the
+  // Match the harness's CP cap (initEngine's opts.cp) so the
   // battle reports the league it's actually running. Safe here for the same
   // reason it is in initEngine -- setCP re-initializes any Pokemon already on
   // the Battle, and this one has none yet.
@@ -958,7 +958,7 @@ export function battleTeams(ctx, params) {
 
   const p0 = new Player(0, difficulty, battle);
   const p1 = new Player(1, difficulty, battle);
-  // GOALS T20b: make runScenario's battle/baitShields/farmEnergy/priority
+  // Make runScenario's battle/baitShields/farmEnergy/priority
   // mutations side-effect-transparent (see wrapRunScenario's own doc comment).
   wrapRunScenario(p0.getAI());
   wrapRunScenario(p1.getAI());
@@ -980,7 +980,7 @@ export function battleTeams(ctx, params) {
   p1.setRoster(orderedB);
   p1.setTeam(orderedB);
 
-  // GOALS T20b (determinism mechanism 2): baitShields/farmEnergy/priority are
+  // Determinism mechanism 2: baitShields/farmEnergy/priority are
   // never touched by fullReset()/setRoster() -- only by pvpoke's own
   // setNewPokemon()/evaluateMatchup(), which only run for whichever Pokemon
   // is actually ACTIVE at some point. A bench member that stays benched the
@@ -991,7 +991,8 @@ export function battleTeams(ctx, params) {
   // baitShields/priority differing (0/1 vs pvpoke's own documented defaults
   // 1/0) between a battle run fresh vs. run after 332 prior battles, with
   // active-lead pre-battle state (index/bestChargedMove/move damage/dpe --
-  // T20's own fix) confirmed bit-identical in both cases. Stamp pvpoke's own
+  // the bench-member battle/index fix below) confirmed bit-identical in both
+  // cases. Stamp pvpoke's own
   // constructor defaults (Pokemon.js: baitShields=1, farmEnergy=false,
   // priority=0) on all six members before anything reads them; the lead-only
   // setNewPokemon calls below and evaluateMatchup's own unconditional reset
@@ -1089,7 +1090,7 @@ export function battleTeams(ctx, params) {
   // main loop, and symmetric across both players) ---------------------------
   p0.reset();
   p1.reset();
-  // GOALS T20: bench members never went through setNewPokemon (only the two
+  // Bench members never went through setNewPokemon (only the two
   // leads do, above), so their fullReset() -> resetMoves() -> initializeMove()
   // (Pokemon.js:831-839) reads a stale PRIVATE `battle`/`index` left over from
   // whatever context last built/battled that instance -- frequently a shared
@@ -1124,7 +1125,7 @@ export function battleTeams(ctx, params) {
   p1.getAI().evaluateMatchup(battle.getTurns(), active[1], active[0], p0);
 
   // --- Turn loop -----------------------------------------------------------
-  // GOALS T27 (alignment/lead-exchange investigation): track the first turn
+  // Alignment/lead-exchange investigation: track the first turn
   // each side's ORIGINAL LEAD (orderedA[0]/orderedB[0]) reaches 0 HP. A
   // Pokemon's `.hp` is a plain instance field that only ever decreases (pvpoke
   // never revives a fainted mon mid-battle), and it still reflects reality
@@ -1195,7 +1196,7 @@ export function battleTeams(ctx, params) {
       freeSwitchesA: switchCounts.free[0],
       freeSwitchesB: switchCounts.free[1],
       endedBy,
-      // GOALS T27: lead-exchange + shield-banking ground truth, read off
+      // Lead-exchange + shield-banking ground truth, read off
       // pvpoke's own live objects (no vendor edits, no battle math added).
       leadFaintTurnA,
       leadFaintTurnB,

@@ -2,15 +2,14 @@
 //
 // Meta opponent team pool. Loads pvpoke's own curated 3v3 teams
 // (vendor/pvpoke/src/data/training/teams/gobattleleague/<cp>.json, cp from
-// ctx.cp -- GOALS T18b) and builds each member into a battle-ready pvpoke
+// ctx.cp) and builds each member into a battle-ready pvpoke
 // Pokemon via the scoring module's buildMetaMon (which itself only calls
 // pvpoke's own Pokemon methods -- no battle math or moveset logic is
 // reimplemented here).
 //
-// These teams are the opponent pool the 3v3 evaluator (T4) battles every
-// candidate team against. See PLAN.md's Rev 2 section: "Meta opponents are
-// real teams: pvpoke ships curated Great League teams in
-// vendor/pvpoke/src/data/training/".
+// These teams are the opponent pool the 3v3 evaluator battles every
+// candidate team against. Meta opponents are real teams: pvpoke ships
+// curated Great League teams in vendor/pvpoke/src/data/training/.
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -26,14 +25,14 @@ function defaultTeamsFile(ctx) {
   return `src/data/training/teams/gobattleleague/${ctx.cp}.json`;
 }
 
-// GOALS T10b: community-curated Great League teams (top-player recommended +
+// Community-curated Great League teams (top-player recommended +
 // off-meta), committed at the repo root (not vendor -- this is our own data,
 // not pvpoke's). Path is relative to the process cwd, mirroring
 // src/meta/usage.js's `data/meta-usage.json` snapshot convention (both assume
 // the CLI/tests run from repo root).
 const DEFAULT_COMMUNITY_FILE = 'data/meta-teams-community.json';
 
-// GOALS T18c decision: that file is Great-League-only by construction (every
+// That file is Great-League-only by construction (every
 // team in it was recommended for GBL Season 27 Great League play), so it is
 // NOT part of the curated pool at any other CP cap -- an Ultra League run
 // would otherwise face GL archetypes re-built at 2500 CP, which is not a
@@ -42,9 +41,9 @@ const DEFAULT_COMMUNITY_FILE = 'data/meta-teams-community.json';
 const COMMUNITY_FILE_CP = 1500;
 
 // Community teams tagged tier:"off-meta" get a reduced relative weight when
-// sampleOpponentTeams draws from the curated pool (documented per GOALS T10b:
-// "reduced, documented sampling weight (e.g. half) relative to untagged
-// (meta) teams"). Exported so sampleTeams.js's curated draw can share it
+// sampleOpponentTeams draws from the curated pool: a documented sampling
+// weight of half relative to untagged
+// (meta) teams. Exported so sampleTeams.js's curated draw can share it
 // instead of re-deriving the same number.
 export const OFF_META_CURATED_WEIGHT = 0.5;
 
@@ -69,7 +68,7 @@ const TEAM_SIZE = 3;
  *   " / "), e.g. "Azumarill / Registeel / Altaria".
  * @property {MetaMon[]} members - exactly 3 built MetaMon (battle-ready).
  * @property {number} [leadIndex] - index into `members` naming this team's
- *   established lead (GOALS T31); present (always 0) on community teams,
+ *   established lead; present (always 0) on community teams,
  *   absent on vendor-preset teams (whose established lead is also member
  *   index 0, by the same file-wide/vendor-preset doctrine, just not stamped
  *   as a field -- see loadCommunityTeams' doc comment).
@@ -113,7 +112,7 @@ function displayName(ctx, metaMon) {
 
 /**
  * Build the pvpoke-preset half of the curated pool (previously loadMetaTeams'
- * whole body). GOALS T31 / Jaxon 2026-08-23: pvpoke's own gobattleleague
+ * whole body). Jaxon 2026-08-23: pvpoke's own gobattleleague
  * preset ordering is treated as lead-bearing too -- member index 0 IS the
  * established lead, same file-wide doctrine as data/meta-teams-community.json
  * -- no `leadIndex` field is stamped here since consumers already default to
@@ -161,7 +160,7 @@ function readCommunityEntries(opts) {
 }
 
 /**
- * Load GOALS T10b's community-curated Great League teams
+ * Load the community-curated Great League teams
  * (data/meta-teams-community.json: top-player-recommended teams plus a
  * lower-weight "off-meta" tier), building every member via
  * buildRecommendedMon (pvpoke's own recommended moveset -- these entries only
@@ -173,9 +172,9 @@ function readCommunityEntries(opts) {
  * two mons isn't a team. A data edit introducing a bad id therefore degrades
  * gracefully (warns to stderr, keeps running) instead of crashing a run.
  *
- * GOALS T31 / Jaxon 2026-08-23: every entry in data/meta-teams-community.json
+ * Jaxon 2026-08-23: every entry in data/meta-teams-community.json
  * treats `members[0]` as that team's established lead (the source images/
- * screenshots' own ordering for the pre-T31 entries; Jaxon's directly
+ * screenshots' own ordering for the pre-lead-index entries; Jaxon's directly
  * -observed opponent lead for the 'jaxon-ladder-*' entries). Every returned
  * team is stamped `leadIndex: 0` so a downstream driver's own opponent-lead
  * -resolution hook (e.g. scripts/evolve.mjs's `opponentLeadIndex()`) reads it
@@ -229,12 +228,12 @@ export function loadCommunityTeams(ctx, opts = {}) {
 /**
  * Load the curated Great League opponent-team pool and build every member
  * into a battle-ready pvpoke Pokemon: pvpoke's own "GO Battle League" preset
- * teams (buildVendorTeams), plus GOALS T10b's community-curated teams
+ * teams (buildVendorTeams), plus the community-curated teams
  * (loadCommunityTeams), merged vendor-first then community-meta then
  * community-off-meta.
  *
- * That ordering IS the exhaustive path's off-meta cap (per GOALS T10b:
- * "the exhaustive path may cap how many off-meta teams it includes"):
+ * That ordering IS the exhaustive path's off-meta cap (the exhaustive path
+ * may cap how many off-meta teams it includes):
  * off-meta teams sort last, so a typical small `limit` (the exhaustive CLI
  * path's default `--meta 5`) never reaches them at all -- they only surface
  * once a caller asks for enough teams to exhaust the vendor + community-meta
@@ -252,11 +251,11 @@ export function loadCommunityTeams(ctx, opts = {}) {
  *   `limit` caps how many teams are built (default: all), sliced off the
  *   merged (vendor + community) list -- see the ordering note above.
  *   `teamsFile` overrides which pvpoke training-teams file is read (default:
- *   the GO Battle League presets for ctx.cp -- GOALS T18b); path is relative
+ *   the GO Battle League presets for ctx.cp); path is relative
  *   to ctx.vendorRoot. `communityFile`/`communityEntries` are forwarded to
  *   loadCommunityTeams. `includeCommunity` defaults to true only at the
- *   Great League cap the community file was curated for (GOALS T18c): `false`
- *   restores the pre-T10b vendor-only pool, `true` forces the GL community
+ *   Great League cap the community file was curated for: `false`
+ *   restores the pre-community vendor-only pool, `true` forces the GL community
  *   teams into a non-1500 run.
  * @returns {MetaTeam[]}
  */

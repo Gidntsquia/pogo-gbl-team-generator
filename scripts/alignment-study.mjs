@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// GOALS T27 (PLAN.md Rev 6): alignment/shield ground-truth investigation.
+// Alignment/shield ground-truth investigation.
 // Jaxon's observation, after an 82-generation evolve run, was that the sim
 // favors consistent neutral-matchup mons (Stunfisk in 9/10 elites) because
 // fitness averages lead pairings uniformly and ignores two real GBL
 // dynamics: (1) winning the LEAD EXCHANGE (whichever side's starting
 // Pokemon faints first) grants switch/counter-pick advantage and often
 // snowballs the game; (2) banking shields for a back-line "closer" is a real
-// winning strategy the symmetric-shields view misses. The diagnosis (see
-// PLAN.md Rev 6) is that vendor/pvpoke's own TrainingAI already MODELS both
+// winning strategy the symmetric-shields view misses. The diagnosis is
+// that vendor/pvpoke's own TrainingAI already MODELS both
 // mechanics (counter-switching after faints, shield/bait decisions) -- the
 // gap is in OUR measurement and fitness, not the engine. This script
 // measures, as the engine actually plays real 3v3 battles, how strongly a
@@ -17,13 +17,13 @@
 // shields remaining at battle end. No battle math is reimplemented: every
 // number comes straight out of battleTeams() (src/engine/teamBattle.js),
 // reading pvpoke's own live per-Pokemon/per-Player state (lead HP reaching
-// 0, Player#getShields()) that GOALS T27 added to battleTeams' summary.
+// 0, Player#getShields()) that was added to battleTeams' summary.
 //
-// AI difficulty (T27 question 1): src/engine/teamBattle.js's
+// AI difficulty: src/engine/teamBattle.js's
 // DEFAULT_DIFFICULTY = 3, which vendor/pvpoke/src/data/training/
 // aiArchetypes.json confirms is index 3 = "Champion" (Novice=0, Rival=1,
 // Elite=2, Champion=3) -- the strongest archetype pvpoke ships, matching the
-// GOALS T2 spec ("highest AI difficulty") and unchanged since. This script
+// original spec ("highest AI difficulty") and unchanged since. This script
 // uses that same default unless --difficulty overrides it.
 //
 // Usage: node scripts/alignment-study.mjs [--candidates 5] [--opponents 8]
@@ -80,7 +80,7 @@ function buildBattleList(candidateCount, opponentCount, seedVariantCount, baseSe
 
 /**
  * Classify one battle's lead-exchange outcome from battleTeams' summary
- * (T27's leadFaintTurnA/leadFaintTurnB fields).
+ * (its leadFaintTurnA/leadFaintTurnB fields).
  * @returns {'a'|'b'|'simultaneous'|'none'} which side's lead fainted FIRST
  *   ('a'/'b' = that side LOST the lead exchange -- the other side won it);
  *   'simultaneous' if both leads fainted on the same turn (no clear winner);

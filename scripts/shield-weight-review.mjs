@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// ROADMAP "Shield-scenario weighting review": PLAN.md's per-mon 1v1 score is
+// Shield-scenario weighting review: the per-mon 1v1 score is
 // a weighted mean of three shield scenarios (0.25*s00 + 0.50*s11 + 0.25*s22,
 // src/scoring/index.js's SCORE_WEIGHTS) -- a judgment call made before any
 // real 3v3 team-battle ground truth existed. Now that it does (src/teams/
@@ -34,7 +34,7 @@ import { dedupeBestPerSpecies, evaluateTeams } from '../src/teams/index.js';
 
 const FIXTURE_CSV = new URL('../fixtures/sample-pokegenie.csv', import.meta.url).pathname;
 
-// Shield-scenario weightings compared against PLAN.md's production default.
+// Shield-scenario weightings compared against the production default.
 // Each must sum to 1 (asserted in runShieldWeightReview) so a typo can't
 // silently skew the comparison.
 const WEIGHTING_SCHEMES = [

@@ -153,7 +153,7 @@ describe('determinism', () => {
   });
 });
 
-// GOALS T20 -- proves the mechanism-1 fix (teamBattle.js stamping
+// Proves the mechanism-1 fix (teamBattle.js stamping
 // setBattle()/.index on all 6 members before fullReset()). Root cause: every
 // buildPokemon() call sets a fresh mon's PRIVATE `battle` ref to ctx.battle --
 // the single shared Battle instance src/scoring/index.js's 1v1 sims reuse
@@ -171,9 +171,9 @@ describe('determinism', () => {
 // captured the instant teamBattle's setup calls fullReset(), before the turn
 // loop runs -- is bit-identical no matter what was left in ctx.battle
 // beforehand. This does NOT assert full battle-outcome identity across
-// thread counts/orderings -- that remains open per T20b (a second,
+// thread counts/orderings -- that remains open (a second,
 // independent order-dependence mechanism inside TrainingAI).
-describe('T20: pre-battle team state is independent of leftover shared-battle-context state', () => {
+describe('pre-battle team state is independent of leftover shared-battle-context state', () => {
   /** @returns {{index:number, bestChargedMove:string|null, fastMoves:Array, chargedMoves:Array}} */
   function snapshotMon(mon) {
     return {
@@ -247,7 +247,7 @@ describe('T20: pre-battle team state is independent of leftover shared-battle-co
   });
 });
 
-// GOALS T20b, part 1 -- an earlier fire on this same ticket investigated the
+// Part 1 -- an earlier fire investigated the
 // second, independent order-dependence mechanism (see src/engine/README.md's
 // "Known limitation", mechanism 2): vendor/pvpoke's TrainingAI#runScenario
 // builds a throwaway single-battle Battle to test a shield/bait scenario and
@@ -259,7 +259,7 @@ describe('T20: pre-battle team state is independent of leftover shared-battle-co
 // instances so every call is transparent for exactly those 4 fields, using
 // pvpoke's own public getBattle()/setBattle(). This test proves the WRAPPING
 // MECHANISM itself against fake stand-ins (no engine boot needed -- pure
-// function, like T23's evolve.js fake-fitness tests) since every real vendor
+// function, like evolve.js's fake-fitness tests) since every real vendor
 // call site of runScenario only reads its *return value*, never the mutated
 // fields, once wrapped.
 //
@@ -267,15 +267,15 @@ describe('T20: pre-battle team state is independent of leftover shared-battle-co
 // block (proven by this test, and by a measurable canonical win-rate shift
 // in scripts/variance-study.mjs) -- but NOT sufficient on its own to
 // eliminate the ticket's own reproduced 1-in-360 reversed-ordering flip, so
-// it left T20b's box unchecked pending a third mechanism. The describe block
-// below this one ("T20b, part 2") found and fixed that third mechanism; see
+// it left the question open pending a third mechanism. The describe block
+// below this one (the bench-AI-state describe) found and fixed that third mechanism; see
 // its own comment and src/engine/README.md's Known limitation section for
 // the full, combined picture. Both fixes are real and both are kept: this
 // wrap makes runScenario itself side-effect-transparent (defense in depth
 // against a class of bug that could resurface if runScenario grows a new
 // caller), even though the actual reproduced flip turned out to have a
 // different root cause.
-describe('T20b, part 1: wrapRunScenario makes runScenario side-effect-transparent for battle/baitShields/farmEnergy/priority', () => {
+describe('wrapRunScenario makes runScenario side-effect-transparent for battle/baitShields/farmEnergy/priority', () => {
   function makeFakeMon(label) {
     let battle = { label: `real-${label}` };
     return {
@@ -365,13 +365,13 @@ describe('T20b, part 1: wrapRunScenario makes runScenario side-effect-transparen
   });
 });
 
-// GOALS T20b, part 2 -- the third mechanism part 1 (above) left open,
-// root-caused and fixed. With mechanism 1 fully neutralized (T20 above) and
+// Part 2 -- the third mechanism part 1 (above) left open,
+// root-caused and fixed. With mechanism 1 fully neutralized (above) and
 // part 1's runScenario leak fixed (real, but proven insufficient by its own
-// test's PROGRESS notes), a reproduced knife-edge battle from
+// test's own notes), a reproduced knife-edge battle from
 // scripts/variance-study.mjs still flipped winner under reordering. Direct
 // instrumentation (pre-battle-state dump of every roster member, not just
-// the two leads T20 already covered) found the actual cause: pvpoke's own
+// the two leads already covered above) found the actual cause: pvpoke's own
 // fullReset()/setRoster() never touch a Pokemon's baitShields, farmEnergy,
 // or priority fields -- only setNewPokemon()/evaluateMatchup() do, and both
 // only ever run for whichever Pokemon is currently ACTIVE (the two leads at
@@ -383,10 +383,10 @@ describe('T20b, part 1: wrapRunScenario makes runScenario side-effect-transparen
 // strategy state) versus pvpoke's own documented Pokemon.js constructor
 // defaults (baitShields=1, farmEnergy=false, priority=0) a fresh instance
 // starts with, while the two ACTIVE leads' pre-battle state (index,
-// bestChargedMove, every move's damage/dpe -- T20's own bar) was already
+// bestChargedMove, every move's damage/dpe -- the earlier bar) was already
 // bit-identical in both runs. teamBattle.js now stamps those three fields to
 // pvpoke's own defaults on all six members before anything reads them.
-describe('T20b, part 2: bench members do not carry AI-decision state (baitShields/farmEnergy/priority) over from a previous battle', () => {
+describe('bench members do not carry AI-decision state (baitShields/farmEnergy/priority) over from a previous battle', () => {
   test('a mon that led a previous battle (finishing with non-default baitShields/priority) resets to pvpoke defaults when reused as a bench member', () => {
     // Battle it as team B's ACTIVE LEAD first: pvpoke's own setNewPokemon
     // deterministically sets a team-B lead's priority to 1 (players[1]'s own
@@ -486,7 +486,7 @@ describe('T20b, part 2: bench members do not carry AI-decision state (baitShield
   });
 });
 
-// GOALS T20b, part 3 (same fire as part 2, found while reviewing it) --
+// Part 3 (same fire as part 2, found while reviewing it) --
 // `hasActed` belongs in part 2's reset loop for the same reason as
 // baitShields/farmEnergy/priority: pvpoke's Pokemon constructor defaults it
 // to `false` (Pokemon.js:109), but neither reset()/fullReset() nor
@@ -495,7 +495,7 @@ describe('T20b, part 2: bench members do not carry AI-decision state (baitShield
 // it for a bench member. A stale hasActed=true from a previous battle can
 // make Battle#getTurnAction's `! poke.hasActed` gate (Battle.js:749) treat a
 // just-switched-in mon as having already acted this turn.
-describe('T20b, part 3: bench members do not carry hasActed over from a previous battle', () => {
+describe('bench members do not carry hasActed over from a previous battle', () => {
   test('hasActed=true left over on a reused instance resets to false when it becomes a bench member', () => {
     // Battle.js's own per-turn reset (Battle.js:300) only ever clears
     // hasActed for the two currently-ACTIVE pokemon[] slots -- never a bench

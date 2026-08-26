@@ -1,10 +1,10 @@
 // @slow -- replays whole battle sets to reproduce an ordering flip; ~30s on its own.
 //
-// Tests for scripts/variance-study.mjs (ROADMAP "TrainingAI variance study").
+// Tests for scripts/variance-study.mjs (the TrainingAI variance study).
 // Keeps the battle count tiny (2 candidates x 2 opponents x 9 pairings x a
 // few orderings) so this stays fast while still exercising the real pvpoke
 // engine -- the actual "how much does order matter" numbers at a realistic
-// scale are recorded in PROGRESS.md from a larger, one-off run, not asserted
+// scale come from a larger, one-off run, not asserted
 // here (a real engine-order-sensitivity flip is rare and not something a
 // fast, tiny test should depend on seeing).
 //
