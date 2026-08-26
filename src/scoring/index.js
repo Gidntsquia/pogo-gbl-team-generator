@@ -47,6 +47,11 @@ const SCORE_WEIGHTS = Object.freeze({ s00: 0.25, s11: 0.5, s22: 0.25 });
  * @property {IVSpread} ivs
  * @property {number} [cp]
  * @property {number} [level]
+ * @property {string} [lineageKey] - shared by every form of one physical
+ *   Pokemon (see src/evolution/index.js); absent on a collection that was
+ *   never expanded, in which case each mon is its own lineage.
+ * @property {object} [evolution] - present only on an evolved variant added by
+ *   src/evolution/index.js: `{fromSpeciesId, fromName, steps, candy, items, buddyKm}`.
  * @property {boolean} shadow
  * @property {boolean} purified
  * @property {boolean} lucky
@@ -342,7 +347,9 @@ export function computeLeadIn(ratingsBySpecies) {
  *   meta: string[],
  *   ratings: Object<string, Object<string, {s00:number, s11:number, s22:number}>>,
  *   warnings: string[],
- *   builtMons: Object<string, {speciesId: string, name: string, pokemon: object, spec: object}>,
+ *   builtMons: Object<string, {speciesId: string, name: string, pokemon: object, spec: object,
+ *     currentLevel: number|null, purified: boolean, lucky: boolean,
+ *     lineageKey: string, evolution: object|null}>,
  * }}
  *   `builtMons` is keyed by the same userMonKey as `ratings` and exposes the
  *   already-built, battle-ready Pokemon instance for each scored user mon --
@@ -353,6 +360,11 @@ export function computeLeadIn(ratingsBySpecies) {
  *   plain-data MonSpecs (a live Pokemon can't cross a worker_thread boundary),
  *   and `bestBuddy` specifically is otherwise unrecoverable from a built
  *   Pokemon instance (only consumed at build time for the level-51 cap).
+ *   `currentLevel`/`purified`/`lucky` mirror the mon's own collection row as
+ *   imported (level is null when the CSV didn't state one). `pokemon.level`
+ *   is the level the simulator plays it at; the gap between the two is what
+ *   src/cost/powerup.js turns into the Stardust/Candy build cost reported per
+ *   ranked team.
  *   PLAN.md's team evaluator (src/teams/index.js, GOALS T4) takes `matrix` as
  *   one of its inputs and needs to resolve a userMonKey to something it can
  *   hand to battleTeams; the Matrix shape as originally specified had no such
@@ -394,7 +406,27 @@ export function scoreCollection(ctx, mons, opts = {}) {
         }
       }
 
-      built.push({ key, speciesId: mon.speciesId, name: mon.name, pokemon, spec });
+      built.push({
+        key,
+        speciesId: mon.speciesId,
+        name: mon.name,
+        pokemon,
+        spec,
+        // Build-cost inputs (team Stardust cost). Deliberately NOT part of
+        // `spec`: spec is the plain-data MonSpec that crosses the
+        // worker_thread boundary in src/engine/parallel.js and is consumed by
+        // buildPokemon, which has no notion of a mon's CURRENT level. These
+        // travel alongside it instead. `currentLevel` is whatever the CSV
+        // stated and is null when it stated nothing -- never guessed.
+        currentLevel: typeof mon.level === 'number' ? mon.level : null,
+        purified: !!mon.purified,
+        lucky: !!mon.lucky,
+        // Set by src/evolution/index.js when this entry is an evolved variant
+        // of a collection row. `lineageKey` is shared by every form of one
+        // physical Pokemon so a team can never field two of them.
+        lineageKey: mon.lineageKey ?? key,
+        evolution: mon.evolution ?? null,
+      });
     } catch (err) {
       warnings.push(`skipped ${key}: ${err.message}`);
     }
@@ -429,7 +461,17 @@ export function scoreCollection(ctx, mons, opts = {}) {
       score: computeWeightedScore(perMeta),
       leadIn: computeLeadIn(perMeta),
     });
-    builtMons[user.key] = { speciesId: user.speciesId, name: user.name, pokemon: user.pokemon, spec: user.spec };
+    builtMons[user.key] = {
+      speciesId: user.speciesId,
+      name: user.name,
+      pokemon: user.pokemon,
+      spec: user.spec,
+      currentLevel: user.currentLevel,
+      purified: user.purified,
+      lucky: user.lucky,
+      lineageKey: user.lineageKey,
+      evolution: user.evolution,
+    };
 
     completed += 1;
     opts.onProgress?.({ completed, total, speciesId: user.speciesId });

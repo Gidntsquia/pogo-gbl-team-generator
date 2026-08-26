@@ -33,6 +33,7 @@
 //   --out PATH         Markdown report output path           (default out/report.md)
 //   --html PATH        HTML report output path                (default out/report.html)
 //   --no-html          skip writing the HTML report
+//   --no-evolutions    score mons only in the form you own (never evolve them)
 //   --threads N        run battles across N worker threads     (default: serial;
 //                       see src/engine/parallel.js -- win rates/ranking are
 //                       identical either way; HP-margin figures can drift
@@ -94,6 +95,7 @@ import { loadRoleScores } from './meta/roles.js';
 import { sampleOpponentTeams } from './meta/sampleTeams.js';
 import { sampleCandidateTeams } from './teams/sample.js';
 import { buildCandidates, evaluateTeams, dedupeBestPerSpecies } from './teams/index.js';
+import { expandEvolutions } from './evolution/index.js';
 import { renderReport, renderReportHtml, renderSummary } from './report/index.js';
 
 const DEFAULTS = Object.freeze({
@@ -129,6 +131,7 @@ Options:
   --no-html          skip writing the HTML report
   --threads N        run battles across N worker threads   (default: serial)
   --current-moves    use each mon's own CSV moveset instead of recommended
+  --no-evolutions    score mons only in the form you own (never evolve them)
   --help             print this help and exit
 
 Sampling (default path):
@@ -205,7 +208,7 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  *           topK?:number, meta?:number,
  *           candidates?:number, opponents?:number, pool?:number,
  *           seed?:number|string, curatedRatio?:number, threads?:number,
- *           currentMoves?:boolean,
+ *           currentMoves?:boolean, evolutions?:boolean,
  *           onProgress?:(p:{completed:number,total:number})=>void }} [opts]
  *   `cp` (GOALS T18c) picks the league: 1500 = Great League (default), 2500 =
  *   Ultra League. It reaches every layer through initEngine's ctx.cp -- meta
@@ -216,6 +219,10 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
  *   `currentMoves` (GOALS T17) is forwarded verbatim to scoreCollection's
  *   opts.currentMoves -- omitted/falsy keeps today's behavior (every mon
  *   scored/battled with pvpoke's recommended moveset).
+ *   `evolutions` (default true) expands the collection with the species each mon
+ *   could evolve into (src/evolution/index.js) before scoring, so a mon that
+ *   isn't viable in the form you own can still earn a place as its evolved
+ *   form. Set false to score only the forms you actually own.
  *   `threads` (GOALS T15b) is forwarded verbatim to evaluateTeams' opts.threads
  *   -- omitted/falsy keeps the serial battleTeams loop (today's behavior,
  *   default); a positive integer runs battles through src/engine/parallel.js's
@@ -233,9 +240,20 @@ export async function runPipeline(csvPath, opts = {}) {
   // Throws on an unsupported cap before any work happens (GOALS T18c).
   const league = leagueForCp(opts.cp ?? DEFAULTS.cp);
 
-  const { mons, warnings: importWarnings } = importCollection(csvPath);
+  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
 
   const ctx = await initEngine({ cp: league.cp });
+
+  // Evolution expansion (default on, --no-evolutions to skip): every mon also
+  // competes as the species it could evolve into, since the engine levels a
+  // mon to the CP cap but never evolves it -- an unevolved mon would otherwise
+  // be written off for a reason that has nothing to do with its worth. All
+  // forms of one physical Pokemon share a lineageKey, and dedupeBestPerSpecies
+  // keeps only whichever form actually scored best.
+  const evolutions = opts.evolutions ?? true;
+  const expanded = evolutions ? expandEvolutions(ctx, importedMons) : { mons: importedMons, warnings: [] };
+  const mons = expanded.mons;
+
   const matrix = scoreCollection(ctx, mons, { metaLimit: scoreMeta, currentMoves: opts.currentMoves });
   const deduped = dedupeBestPerSpecies(matrix);
 
@@ -258,6 +276,7 @@ export async function runPipeline(csvPath, opts = {}) {
       excludeSpecies,
       threads: opts.threads,
       currentMoves: !!opts.currentMoves,
+      evolutions,
     };
   } else {
     const candidateTarget = opts.candidates ?? DEFAULTS.candidates;
@@ -292,6 +311,7 @@ export async function runPipeline(csvPath, opts = {}) {
       excludeSpecies,
       threads: opts.threads,
       currentMoves: !!opts.currentMoves,
+      evolutions,
     };
   }
 
@@ -307,7 +327,7 @@ export async function runPipeline(csvPath, opts = {}) {
     },
   });
 
-  const warnings = [...importWarnings, ...matrix.warnings];
+  const warnings = [...importWarnings, ...expanded.warnings, ...matrix.warnings];
   settings.candidateCount = candidates.length;
 
   // GOALS T28: pvpoke's own vendored lead/closer/switch role priors, cp-aware.
@@ -318,6 +338,7 @@ export async function runPipeline(csvPath, opts = {}) {
   return {
     collectionPath: csvPath,
     monCount: matrix.mons.length,
+    ownedCount: importedMons.length,
     rankedTeams,
     monScores: matrix.mons,
     roleScores,
@@ -352,6 +373,7 @@ async function main(argv) {
         'curated-ratio': { type: 'string' },
         threads: { type: 'string' },
         'current-moves': { type: 'boolean' },
+        'no-evolutions': { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -385,6 +407,7 @@ async function main(argv) {
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : undefined,
     currentMoves: values['current-moves'] ?? false,
+    evolutions: !values['no-evolutions'],
   };
   const outPath = values.out ?? DEFAULTS.out;
   const htmlPath = values.html ?? DEFAULTS.html;

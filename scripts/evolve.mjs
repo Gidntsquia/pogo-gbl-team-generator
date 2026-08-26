@@ -74,6 +74,7 @@
 //                            build step, mirrors src/cli.js's --html /
 //                            src/report/index.js's renderReportHtml pattern,
 //                            GOALS T25)              (<out-dir>/my-teams-evolve.html)
+//   --no-evolutions          score mons only in the form you own (never evolve them)
 //   --no-html                skip writing the HTML report                 (off)
 //   --out-dir DIR            checkpoints + DONE marker + default reports  ("out")
 //   --fitness classic|battle-reality  which metric selection/mutation/
@@ -166,6 +167,8 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { importCollection } from '../src/importer/index.js';
+import { expandEvolutions } from '../src/evolution/index.js';
+import { teamBuildCost } from '../src/cost/powerup.js';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
@@ -253,6 +256,32 @@ function escapeHtml(s) {
  * LOCKED LEADS note above and evaluateTeamsInOrder's own comment on why
  * `bestLead` always resolves to index 0). Plain-text (Markdown) variant.
  */
+/**
+ * One-line build cost for an elite team (src/cost/powerup.js). Local to this
+ * script because src/report/index.js's copy isn't exported -- the GA writes
+ * its own reports; the wording is deliberately identical.
+ *
+ * @param {object} cost - teamBuildCost result.
+ * @returns {string}
+ */
+function formatBuildCost(cost) {
+  const group = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const parts = [];
+  if (cost.stardust) parts.push(`${group(cost.stardust)} Stardust`);
+  if (cost.candy) parts.push(`${group(cost.candy)} Candy`);
+  if (cost.candyXl) parts.push(`${group(cost.candyXl)} Candy XL`);
+  let body = parts.length ? parts.join(' + ') : 'none -- already built';
+  if (cost.evolveItems?.length) body += `, plus ${cost.evolveItems.join(' + ')}`;
+  const evolving = cost.members.filter((m) => m.evolveFrom);
+  if (evolving.length) {
+    body += ` (evolve ${evolving.map((m) => `${m.evolveFrom} -> ${m.name}`).join(', ')})`;
+  }
+  const caveats = [];
+  if (cost.unknownLevels) caveats.push(`${cost.unknownLevels} with no level in the CSV`);
+  if (cost.unpricedEvolutions) caveats.push(`${cost.unpricedEvolutions} unpriced evolution(s)`);
+  return caveats.length ? `${body} -- excludes ${caveats.join(' and ')}` : body;
+}
+
 function formatTeamMembers(members) {
   const [lead, ...backs] = members;
   return `${lead.name} (Lead) / ${backs.map((b) => b.name).join(' / ')}`;
@@ -465,6 +494,7 @@ function buildRunConfig(csvPath, opts) {
   return {
     csvPath: path.resolve(csvPath),
     scoreMeta: opts.scoreMeta ?? DEFAULTS.scoreMeta,
+    evolutions: opts.evolutions ?? true,
     pool: opts.pool ?? DEFAULTS.pool,
     seed: String(opts.seed ?? DEFAULTS.seed),
     cp: opts.cp ?? DEFAULTS.cp,
@@ -677,7 +707,21 @@ async function evaluateTeamsInOrder(ctx, params) {
   const prepared = teams.map((keys) => {
     const members = keys.map((key) => {
       const b = matrix.builtMons[key];
-      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon, spec: b.spec };
+      return {
+        key,
+        speciesId: b.speciesId,
+        name: b.name,
+        pokemon: b.pokemon,
+        spec: b.spec,
+        // Build-cost inputs, same fields src/teams/index.js passes through:
+        // where this mon is today vs the level/form the sim actually plays.
+        currentLevel: b.currentLevel ?? null,
+        targetLevel: b.pokemon.level,
+        shadow: !!b.spec?.shadow,
+        purified: !!b.purified,
+        lucky: !!b.lucky,
+        evolution: b.evolution ?? null,
+      };
     });
     const teamASpec = members.map((m) => m.spec);
     const sig = [...keys].sort().join('|');
@@ -830,6 +874,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     const closerScore = computeCloserScore(members, roleScores);
     const entry = {
       members: members.map(({ key, speciesId, name }) => ({ key, speciesId, name })),
+      buildCost: teamBuildCost(members),
       winRate,
       avgHpMargin,
       battles,
@@ -920,7 +965,7 @@ function renderEvolveReport(result) {
     `- population=${config.population}, opponents-per-gen=${config.opponentsPerGen}, generations cap=${config.generations}, ` +
       `elites=${config.eliteCount}${config.fixedOpponents ? ', fixed-opponents (one draw reused every generation)' : ''}`
   );
-  out.push(`- score-meta=${config.scoreMeta}, pool=${config.pool}, curated-ratio=${config.curatedRatio}`);
+  out.push(`- score-meta=${config.scoreMeta}, pool=${config.pool}, curated-ratio=${config.curatedRatio}` + (config.evolutions === false ? ', evolutions=off' : ''));
   out.push(`- fitness: ${config.fitness}${config.fitness === 'battle-reality' ? ` (weights: winRate=${DEFAULT_FITNESS_WEIGHTS.winRate}, snowball=${DEFAULT_FITNESS_WEIGHTS.snowball}, closer=${DEFAULT_FITNESS_WEIGHTS.closer})` : ''}`);
   const threadsLabel = (r) => (r.threadsUsed ? `${r.threadsUsed} (worker-pool executor)` : 'serial');
   out.push(`- threads: ${generationRecords.length ? threadsLabel(generationRecords[generationRecords.length - 1]) : 'n/a'}`);
@@ -1012,6 +1057,7 @@ function renderEvolveReport(result) {
       out.push(`- **Safest first switch:** ${t.safeSwap.name} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)`);
     }
     out.push(`- **Avg surviving-HP margin:** ${signed(t.avgHpMargin)}`);
+    if (t.buildCost) out.push(`- **Build cost:** ${formatBuildCost(t.buildCost)}`);
     out.push(
       `- **Snowball score:** ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) — ` +
         `**Closer score:** ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)`
@@ -1220,6 +1266,9 @@ function renderEvolveReportHtml(result) {
       );
     }
     out.push(`<li><strong>Avg surviving-HP margin:</strong> ${signed(t.avgHpMargin)}</li>`);
+    if (t.buildCost) {
+      out.push(`<li><strong>Build cost:</strong> ${escapeHtml(formatBuildCost(t.buildCost))}</li>`);
+    }
     out.push(
       `<li><strong>Snowball score:</strong> ${pct(t.snowballScore)} (lead-exchange win rate, ${t.exchangeWon}W/${t.exchangeLost}L decided) -- ` +
         `<strong>Closer score:</strong> ${pct(t.closerScore)} (T28 role prior, mean of the 2 backs)</li>`
@@ -1329,9 +1378,17 @@ export async function runEvolution(csvPath, opts = {}) {
 
   log(`evolve: starting (collection=${config.csvPath}, out-dir=${outDir}, report=${reportPath})`);
 
-  const { mons, warnings: importWarnings } = importCollection(csvPath);
+  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
   const ctx = await initEngine({ cp: config.cp });
   const league = leagueForCp(config.cp);
+  // Same expansion src/cli.js does: each mon also competes as anything it can
+  // evolve into, so the GA can pick a form you don't own yet. Part of the run
+  // config below, so flipping it starts a new checkpoint rather than resuming
+  // one whose population was bred from a different candidate pool.
+  const expanded = config.evolutions
+    ? expandEvolutions(ctx, importedMons)
+    : { mons: importedMons, warnings: [] };
+  const mons = expanded.mons;
   const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta });
   const deduped = dedupeBestPerSpecies(matrix);
   const weights = loadUsageWeights(ctx);
@@ -1544,7 +1601,7 @@ export async function runEvolution(csvPath, opts = {}) {
       config,
       league,
       runStartedAt: new Date(runStartedAtMs).toISOString(),
-      importWarnings,
+      importWarnings: [...importWarnings, ...expanded.warnings],
       generationRecords,
       stopReason,
       elites,
@@ -1608,6 +1665,7 @@ Options:
   --difficulty D           AI difficulty 0-3 override                 (default: engine default, 3)
   --out PATH               final Markdown report path                 (default <out-dir>/my-teams-evolve.md)
   --html PATH              final HTML report path                     (default <out-dir>/${DEFAULTS.html})
+  --no-evolutions          score mons only in the form you own (never evolve them)
   --no-html                skip writing the HTML report
   --out-dir DIR            checkpoints + DONE marker + default reports (default "${DEFAULTS.outDir}")
   --fitness classic|battle-reality  metric selection/mutation/convergence
@@ -1671,6 +1729,7 @@ async function main(argv) {
         out: { type: 'string' },
         html: { type: 'string' },
         'no-html': { type: 'boolean' },
+        'no-evolutions': { type: 'boolean' },
         'out-dir': { type: 'string' },
         fitness: { type: 'string' },
         help: { type: 'boolean' },
@@ -1701,6 +1760,7 @@ async function main(argv) {
     fixedOpponents: !!values['fixed-opponents'],
     eliteCount: intFlag(values.elites, 'elites', DEFAULTS.elites),
     scoreMeta: intFlag(values['score-meta'], 'score-meta', DEFAULTS.scoreMeta),
+    evolutions: !values['no-evolutions'],
     pool: intFlag(values.pool, 'pool', DEFAULTS.pool),
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],

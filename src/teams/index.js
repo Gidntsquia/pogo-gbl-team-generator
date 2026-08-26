@@ -21,6 +21,7 @@
 // identical for every candidate and cancels in the RELATIVE ranking. Absolute
 // win% therefore carries that constant offset -- the report says so.
 
+import { teamBuildCost } from '../cost/powerup.js';
 import { battleTeams } from '../engine/teamBattle.js';
 import { runBattles } from '../engine/parallel.js';
 import { computeWeightedScore } from '../scoring/index.js';
@@ -34,6 +35,15 @@ const PAIRINGS_PER_META = LEADS.length * LEADS.length; // 9
  * @property {string} key - userMonKey (matches matrix.ratings / matrix.builtMons).
  * @property {string} speciesId - base gamemaster speciesId.
  * @property {string} name - display name.
+ * @property {number|null} currentLevel - the level the collection CSV stated
+ *   for this mon, or null when it stated none.
+ * @property {number} targetLevel - the level the simulator actually plays it
+ *   at (buildPokemon takes every mon to the highest level under the league's
+ *   CP cap), which is what makes a build cost meaningful.
+ * @property {object|null} evolution - set when this member is an evolved form
+ *   of a collection row rather than a Pokemon you already own in this form:
+ *   `{fromSpeciesId, fromName, steps, candy, items, buddyKm}` (see
+ *   src/evolution/index.js).
  */
 
 /**
@@ -61,6 +71,13 @@ const PAIRINGS_PER_META = LEADS.length * LEADS.length; // 9
 /**
  * @typedef {object} TeamResult
  * @property {CandidateMember[]} members - the 3 user mons on this team.
+ * @property {{stardust:number, candy:number, candyXl:number, complete:boolean,
+ *   members:Array<{key:string, name:string, fromLevel:number|null, toLevel:number,
+ *   stardust:number, candy:number, candyXl:number, known:boolean}>}} buildCost
+ *   Stardust/Candy needed to bring all 3 members from their current levels up
+ *   to the levels this evaluation played them at (src/cost/powerup.js). A
+ *   member whose collection row stated no level contributes nothing and sets
+ *   `complete: false`, so a partial bill is never shown as a full one.
  * @property {number} winRate - overall mean win rate across all meta teams x 9.
  * @property {number} avgHpMargin - overall mean surviving-HP margin (tiebreak).
  * @property {{index:number, key:string, speciesId:string, name:string, winRate:number}} bestLead
@@ -83,7 +100,9 @@ function speciesOf(matrix, key) {
 /**
  * Keep only the best-scoring built instance per species, so two copies of the
  * same Pokemon (e.g. two Azumarill with different IVs) don't fill several
- * near-identical "different" candidate teams. Returns a shallow matrix copy
+ * near-identical "different" candidate teams -- and, when the collection has
+ * been expanded with evolutions (src/evolution/index.js), only the best form
+ * of each physical Pokemon. Returns a shallow matrix copy
  * with pruned `ratings`/`builtMons`; other fields are shared unchanged.
  *
  * Originally lived in src/cli.js (T5); moved here (GOALS T11) so the weighted
@@ -94,10 +113,26 @@ function speciesOf(matrix, key) {
  * @returns {object} matrix with `ratings`/`builtMons` pruned to one key per species.
  */
 export function dedupeBestPerSpecies(matrix) {
-  const bestBySpecies = new Map();
+  // Pass 1 (lineage): when src/evolution/index.js has expanded the collection,
+  // one physical Pokemon appears several times -- Phantump AND Trevenant off
+  // the same CSV row. Keep only whichever form actually scored best, which is
+  // both how "evolve it if the current form isn't viable" gets decided and
+  // what makes it impossible for a team to field two forms of one mon. Mons
+  // from an unexpanded collection each have their own lineage, so this pass
+  // is a no-op for them.
+  const bestByLineage = new Map();
   for (const key of Object.keys(matrix.ratings)) {
-    const speciesId = matrix.builtMons[key].speciesId;
+    const lineageKey = matrix.builtMons[key].lineageKey ?? key;
     const score = computeWeightedScore(matrix.ratings[key]);
+    const cur = bestByLineage.get(lineageKey);
+    if (!cur || score > cur.score) bestByLineage.set(lineageKey, { key, score });
+  }
+
+  // Pass 2 (species): two DIFFERENT physical Pokemon of the same species (or
+  // two rows that evolve into it) still can't share a team.
+  const bestBySpecies = new Map();
+  for (const { key, score } of bestByLineage.values()) {
+    const speciesId = matrix.builtMons[key].speciesId;
     const cur = bestBySpecies.get(speciesId);
     if (!cur || score > cur.score) bestBySpecies.set(speciesId, { key, score });
   }
@@ -239,7 +274,21 @@ export async function evaluateTeams(ctx, params) {
     keys.map((key) => {
       const b = matrix.builtMons[key];
       if (!b) throw new Error(`evaluateTeams: no built pokemon for key "${key}"`);
-      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon, spec: b.spec };
+      return {
+        key,
+        speciesId: b.speciesId,
+        name: b.name,
+        pokemon: b.pokemon,
+        spec: b.spec,
+        // Build-cost inputs (see buildCost on TeamResult): where this mon is
+        // today vs the level buildPokemon actually plays it at.
+        currentLevel: b.currentLevel ?? null,
+        targetLevel: b.pokemon.level,
+        shadow: !!b.spec?.shadow,
+        purified: !!b.purified,
+        lucky: !!b.lucky,
+        evolution: b.evolution ?? null,
+      };
     })
   );
 
@@ -380,7 +429,15 @@ export async function evaluateTeams(ctx, params) {
       .map((p) => ({ metaTeamId: p.metaTeamId, name: p.name, winRate: p.winRate }));
 
     results.push({
-      members: members.map(({ key, speciesId, name }) => ({ key, speciesId, name })),
+      members: members.map(({ key, speciesId, name, currentLevel, targetLevel, evolution }) => ({
+        key,
+        speciesId,
+        name,
+        currentLevel,
+        targetLevel,
+        evolution,
+      })),
+      buildCost: teamBuildCost(members),
       winRate,
       avgHpMargin,
       bestLead,

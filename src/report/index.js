@@ -36,6 +36,72 @@ function roleCell(roleScores, speciesId, role) {
   return entry ? pct(entry[role]) : '—';
 }
 
+/** Thousands-separate an integer without depending on the host locale. */
+function num(n) {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** A level for display: "24" rather than "24.0", but "24.5" kept. */
+function lvl(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/**
+ * Human summary of a team's build cost (src/cost/powerup.js), e.g.
+ * "168,500 Stardust + 214 Candy". Zero cost means every member is already at
+ * (or past) the level the simulator played it at.
+ *
+ * @param {object} cost - TeamResult.buildCost
+ * @returns {string}
+ */
+function formatBuildCost(cost) {
+  const parts = [];
+  if (cost.stardust) parts.push(`${num(cost.stardust)} Stardust`);
+  if (cost.candy) parts.push(`${num(cost.candy)} Candy`);
+  if (cost.candyXl) parts.push(`${num(cost.candyXl)} Candy XL`);
+  let body = parts.length ? parts.join(' + ') : 'none -- already built';
+  if (cost.evolveItems?.length) body += `, plus ${cost.evolveItems.join(' + ')}`;
+
+  const caveats = [];
+  if (cost.unknownLevels) {
+    caveats.push(
+      `${cost.unknownLevels} member${cost.unknownLevels === 1 ? '' : 's'} whose collection row stated no level`
+    );
+  }
+  if (cost.unpricedEvolutions) {
+    caveats.push(
+      `${cost.unpricedEvolutions} evolution${cost.unpricedEvolutions === 1 ? '' : 's'} with no published candy cost`
+    );
+  }
+  return caveats.length ? `${body} (excludes ${caveats.join(' and ')})` : body;
+}
+
+/** "from Phantump (200 candy)" for a member the pipeline had to evolve. */
+function evolveCell(m) {
+  if (!m.evolveFrom) return null;
+  const bits = [`from ${m.evolveFrom}`];
+  if (m.evolvePriced) bits.push(`${num(m.evolveCandy)} candy`);
+  else bits.push('candy cost unpublished');
+  if (m.evolveBuddyKm) bits.push(`${m.evolveBuddyKm} km buddy`);
+  if (m.evolveItems.length) bits.push(m.evolveItems.join(' + '));
+  return `${bits[0]} (${bits.slice(1).join(', ')})`;
+}
+
+/**
+ * How to describe what was scored. With evolution expansion on (the default)
+ * `monCount` counts FORMS, not Pokemon -- one Phantump is scored twice, as
+ * itself and as Trevenant -- so say so rather than overstating the size of
+ * the collection.
+ *
+ * @param {ReportInput} input
+ * @returns {string}
+ */
+function formsPhrase(input) {
+  const owned = input.ownedCount;
+  if (typeof owned !== 'number' || owned === input.monCount) return 'Pokemon from your collection';
+  return `forms of the ${num(owned)} Pokemon in your collection (each scored as itself and as anything it can evolve into)`;
+}
+
 /** Escape text for safe interpolation into HTML (report data includes raw CSV/species strings). */
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -50,7 +116,10 @@ function escapeHtml(s) {
 /**
  * @typedef {object} ReportInput
  * @property {string} collectionPath - path the collection CSV was read from.
- * @property {number} monCount - user mons successfully scored.
+ * @property {number} monCount - user mons successfully scored. With evolution
+ *   expansion on this counts FORMS, not distinct Pokemon -- see `ownedCount`.
+ * @property {number} [ownedCount] - how many Pokemon the collection CSV
+ *   actually held, before evolved variants were added.
  * @property {import('../teams/index.js').TeamResult[]} rankedTeams
  * @property {Array<{speciesId:string, name:string, score:number, leadIn:string}>} monScores
  *   matrix.mons (per-mon 1v1 weighted scores + lead-in summary).
@@ -83,7 +152,7 @@ function escapeHtml(s) {
 export function renderSummary(input) {
   const { rankedTeams, warnings } = input;
   const lines = [];
-  lines.push(`Scored ${input.monCount} Pokemon vs ${input.metaTeams.length} meta teams.`);
+  lines.push(`Scored ${input.monCount} ${formsPhrase(input)} vs ${input.metaTeams.length} meta teams.`);
   if (rankedTeams.length === 0) {
     lines.push('No candidate teams could be formed (need >= 3 distinct species).');
     return lines.join('\n');
@@ -95,7 +164,8 @@ export function renderSummary(input) {
     const t = rankedTeams[i];
     lines.push(
       `  ${i + 1}. ${memberNames(t)} -- ${pct(t.winRate)} ` +
-        `(lead ${t.bestLead.name}, HP margin ${signed(t.avgHpMargin)})`
+        `(lead ${t.bestLead.name}, HP margin ${signed(t.avgHpMargin)})` +
+        (t.buildCost ? `\n     build cost: ${formatBuildCost(t.buildCost)}` : '')
     );
   }
   if (warnings.length) {
@@ -125,7 +195,26 @@ function renderTeamSection(team, rank) {
       .join(', ');
     lines.push(`- **Hardest matchups:** ${hard}`);
   }
+  if (team.buildCost) {
+    lines.push(`- **Build cost:** ${formatBuildCost(team.buildCost)}`);
+  }
   lines.push('');
+  if (team.buildCost) {
+    lines.push('| Member | Evolve | Level | Stardust | Candy | Candy XL |');
+    lines.push('| --- | --- | --- | ---: | ---: | ---: |');
+    for (const m of team.buildCost.members) {
+      const levels = m.known ? `${lvl(m.fromLevel)} \u2192 ${lvl(m.toLevel)}` : `? \u2192 ${lvl(m.toLevel)}`;
+      const cells = m.known
+        ? `${num(m.stardust)} | ${num(m.candy)} | ${num(m.candyXl)}`
+        : `unknown | ${m.evolveCandy ? num(m.evolveCandy) : 'unknown'} | unknown`;
+      lines.push(`| ${m.name} | ${evolveCell(m) ?? '-'} | ${levels} | ${cells} |`);
+    }
+    const c = team.buildCost;
+    lines.push(
+      `| **Total** | | | **${num(c.stardust)}** | **${num(c.candy)}** | **${num(c.candyXl)}** |`
+    );
+    lines.push('');
+  }
   lines.push('| Opposing meta team | Win% | W | L | T | HP margin |');
   lines.push('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (const pm of team.perMeta) {
@@ -182,7 +271,7 @@ export function renderReport(input) {
   if (input.generatedAt) out.push(`Generated: ${input.generatedAt}`);
   out.push('');
   out.push(
-    `Scored **${input.monCount}** Pokemon from your collection and ranked ` +
+    `Scored **${input.monCount}** ${formsPhrase(input)} and ranked ` +
       `candidate teams of 3 by simulated **3v3 team-battle** win rate against ` +
       `**${metaTeams.length}** curated meta teams, using pvpoke's own battle engine ` +
       `across all 9 lead pairings per matchup.`
@@ -224,6 +313,7 @@ export function renderReport(input) {
       s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.join('/')}` : null,
       s.threads ? `threads=${s.threads}` : null,
       s.currentMoves ? 'currentMoves=on' : null,
+      s.evolutions === false ? 'evolutions=off' : null,
     ]
       .filter(Boolean)
       .join(', '));
@@ -231,6 +321,10 @@ export function renderReport(input) {
 
   out.push('## Recommended teams');
   out.push('');
+  if (rankedTeams.some((t) => t.buildCost)) {
+    out.push('_**Build cost** is what it takes to actually field this team: the Stardust and Candy to bring each member from the level your collection CSV states up to the level the simulator played it at (every mon is played at the highest level whose CP still fits under the cap), plus the Candy to evolve it if the team wants a form you do not own yet. Shadow costs 20% more, purified less, lucky half the Stardust; levels 40+ spend Candy XL, which cannot be bought._');
+    out.push('');
+  }
   if (rankedTeams.length === 0) {
     out.push('_No candidate teams could be formed -- need at least 3 distinct species in the collection._');
     out.push('');
@@ -315,7 +409,37 @@ function renderTeamSectionHtml(team, rank) {
       .join(', ');
     out.push(`<li><strong>Hardest matchups:</strong> ${hard}</li>`);
   }
+  if (team.buildCost) {
+    out.push(`<li><strong>Build cost:</strong> ${escapeHtml(formatBuildCost(team.buildCost))}</li>`);
+  }
   out.push('</ul>');
+  if (team.buildCost) {
+    out.push('<table>');
+    out.push(
+      '<thead><tr><th>Member</th><th>Evolve</th><th>Level</th><th>Stardust</th>' +
+        '<th>Candy</th><th>Candy XL</th></tr></thead>'
+    );
+    out.push('<tbody>');
+    for (const m of team.buildCost.members) {
+      const levels = m.known
+        ? `${lvl(m.fromLevel)} &rarr; ${lvl(m.toLevel)}`
+        : `? &rarr; ${lvl(m.toLevel)}`;
+      const cells = m.known
+        ? `<td>${num(m.stardust)}</td><td>${num(m.candy)}</td><td>${num(m.candyXl)}</td>`
+        : `<td>unknown</td><td>${m.evolveCandy ? num(m.evolveCandy) : 'unknown'}</td><td>unknown</td>`;
+      const evolve = evolveCell(m);
+      out.push(
+        `<tr><td>${escapeHtml(m.name)}</td><td>${evolve ? escapeHtml(evolve) : '&mdash;'}</td>` +
+          `<td>${levels}</td>${cells}</tr>`
+      );
+    }
+    const c = team.buildCost;
+    out.push(
+      `<tr><td><strong>Total</strong></td><td></td><td></td><td><strong>${num(c.stardust)}</strong></td>` +
+        `<td><strong>${num(c.candy)}</strong></td><td><strong>${num(c.candyXl)}</strong></td></tr>`
+    );
+    out.push('</tbody></table>');
+  }
   out.push('<table>');
   out.push('<thead><tr><th>Opposing meta team</th><th>Win%</th><th>W</th><th>L</th><th>T</th><th>HP margin</th></tr></thead>');
   out.push('<tbody>');
@@ -365,6 +489,7 @@ export function renderReportHtml(input) {
     s.excludeSpecies?.length ? `exclude=${s.excludeSpecies.map(escapeHtml).join('/')}` : null,
     s.threads ? `threads=${s.threads}` : null,
     s.currentMoves ? 'currentMoves=on' : null,
+    s.evolutions === false ? 'evolutions=off' : null,
   ]
     .filter(Boolean)
     .join(', ');
@@ -400,7 +525,7 @@ export function renderReportHtml(input) {
   out.push(`<p>Collection: <code>${escapeHtml(input.collectionPath)}</code>` +
     (input.generatedAt ? `<br>Generated: ${escapeHtml(input.generatedAt)}` : '') + '</p>');
   out.push(
-    `<p>Scored <strong>${input.monCount}</strong> Pokemon from your collection and ranked ` +
+    `<p>Scored <strong>${input.monCount}</strong> ${formsPhrase(input)} and ranked ` +
       `candidate teams of 3 by simulated <strong>3v3 team-battle</strong> win rate against ` +
       `<strong>${metaTeams.length}</strong> curated meta teams, using pvpoke's own battle engine ` +
       `across all 9 lead pairings per matchup.</p>`
@@ -414,6 +539,9 @@ export function renderReportHtml(input) {
   out.push(`<p class="settings"><strong>Settings:</strong> ${settingsLine}</p>`);
 
   out.push('<h2>Recommended teams</h2>');
+  if (rankedTeams.some((t) => t.buildCost)) {
+    out.push('<p><em><strong>Build cost</strong> is what it takes to actually field this team: the Stardust and Candy to bring each member from the level your collection CSV states up to the level the simulator played it at (every mon is played at the highest level whose CP still fits under the cap), plus the Candy to evolve it if the team wants a form you do not own yet. Shadow costs 20% more, purified less, lucky half the Stardust; levels 40+ spend Candy XL, which cannot be bought.</em></p>');
+  }
   if (rankedTeams.length === 0) {
     out.push('<p><em>No candidate teams could be formed -- need at least 3 distinct species in the collection.</em></p>');
   } else {

@@ -107,6 +107,8 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { importCollection } from '../src/importer/index.js';
+import { expandEvolutions } from '../src/evolution/index.js';
+import { teamBuildCost } from '../src/cost/powerup.js';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
@@ -159,6 +161,32 @@ function signed(x) {
   const s = x.toFixed(1);
   return x > 0 ? `+${s}` : s;
 }
+
+/**
+ * One-line build cost for a ranked team (src/cost/powerup.js) -- what it would
+ * take to actually field it, including any evolution the search picked.
+ *
+ * @param {object} cost - teamBuildCost result.
+ * @returns {string}
+ */
+function formatBuildCost(cost) {
+  const group = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const parts = [];
+  if (cost.stardust) parts.push(`${group(cost.stardust)} Stardust`);
+  if (cost.candy) parts.push(`${group(cost.candy)} Candy`);
+  if (cost.candyXl) parts.push(`${group(cost.candyXl)} Candy XL`);
+  let body = parts.length ? parts.join(' + ') : 'none -- already built';
+  if (cost.evolveItems?.length) body += `, plus ${cost.evolveItems.join(' + ')}`;
+  const evolving = cost.members.filter((m) => m.evolveFrom);
+  if (evolving.length) {
+    body += ` (evolve ${evolving.map((m) => `${m.evolveFrom} -> ${m.name}`).join(', ')})`;
+  }
+  const caveats = [];
+  if (cost.unknownLevels) caveats.push(`${cost.unknownLevels} with no level in the CSV`);
+  if (cost.unpricedEvolutions) caveats.push(`${cost.unpricedEvolutions} unpriced evolution(s)`);
+  return caveats.length ? `${body} -- excludes ${caveats.join(' and ')}` : body;
+}
+
 
 /** Milliseconds -> "1h 23m 04s" (omits leading zero units). */
 function formatDuration(ms) {
@@ -228,6 +256,7 @@ function buildRunConfig(csvPath, opts) {
   return {
     csvPath: path.resolve(csvPath),
     scoreMeta: opts.scoreMeta ?? DEFAULTS.scoreMeta,
+    evolutions: opts.evolutions ?? true,
     pool: opts.pool ?? DEFAULTS.pool,
     seed: String(opts.seed ?? DEFAULTS.seed),
     curatedRatio: opts.curatedRatio ?? DEFAULTS.curatedRatio,
@@ -419,7 +448,20 @@ async function runFunnelStage(ctx, params) {
   const prepared = candidates.map((keys) => {
     const members = keys.map((key) => {
       const b = matrix.builtMons[key];
-      return { key, speciesId: b.speciesId, name: b.name, pokemon: b.pokemon, spec: b.spec };
+      return {
+        key,
+        speciesId: b.speciesId,
+        name: b.name,
+        pokemon: b.pokemon,
+        spec: b.spec,
+        // Build-cost inputs, same fields src/teams/index.js passes through.
+        currentLevel: b.currentLevel ?? null,
+        targetLevel: b.pokemon.level,
+        shadow: !!b.spec?.shadow,
+        purified: !!b.purified,
+        lucky: !!b.lucky,
+        evolution: b.evolution ?? null,
+      };
     });
     const teamASpec = members.map((m) => m.spec);
     const candidateSig = [...keys].sort().join('|');
@@ -572,6 +614,7 @@ async function runFunnelStage(ctx, params) {
 
     const entry = {
       members: members.map(({ key, speciesId, name }) => ({ key, speciesId, name })),
+      buildCost: teamBuildCost(members),
       winRate,
       avgHpMargin,
       battles,
@@ -766,6 +809,7 @@ function renderTournamentReport(result) {
       out.push(`- **Safest first switch:** ${t.safeSwap.name} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)`);
     }
     out.push(`- **Avg surviving-HP margin:** ${signed(t.avgHpMargin)}`);
+    if (t.buildCost) out.push(`- **Build cost:** ${formatBuildCost(t.buildCost)}`);
     out.push(`- **Win% vs curated-only opponents:** ${pct(t.winRateCurated)} (${t.battlesCurated} battles)`);
     out.push(`- **Win% vs sampled-only opponents:** ${pct(t.winRateSampled)} (${t.battlesSampled} battles)`);
     out.push('');
@@ -864,8 +908,13 @@ export async function runTournament(csvPath, opts = {}) {
   log(`tournament: starting (collection=${config.csvPath}, out-dir=${outDir}, report=${reportPath})`);
 
   // ---- Shared setup (once) -- mirrors src/cli.js's sampled runPipeline path. ----
-  const { mons, warnings: importWarnings } = importCollection(csvPath);
+  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
   const ctx = await initEngine();
+  // Same expansion src/cli.js does -- see its runPipeline comment.
+  const expanded = config.evolutions
+    ? expandEvolutions(ctx, importedMons)
+    : { mons: importedMons, warnings: [] };
+  const mons = expanded.mons;
   const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta });
   const deduped = dedupeBestPerSpecies(matrix);
   const weights = loadUsageWeights(ctx);
@@ -1135,7 +1184,7 @@ export async function runTournament(csvPath, opts = {}) {
     donePath: path.join(outDir, 'tournament-DONE'),
     config,
     runStartedAt: new Date(runStartedAtMs).toISOString(),
-    importWarnings,
+    importWarnings: [...importWarnings, ...expanded.warnings],
     stage1,
     stage2,
     stage3,
@@ -1169,6 +1218,7 @@ Usage:
 
 Options:
   --score-meta S       1v1-pruning meta size                       (default ${DEFAULTS.scoreMeta})
+  --no-evolutions      score mons only in the form you own (never evolve them)
   --pool P              sampling pool size                          (default ${DEFAULTS.pool})
   --seed S              PRNG seed                                   (default "${DEFAULTS.seed}")
   --curated-ratio R     curated-vs-sampled opponent mix, stages 1-2 (default ${DEFAULTS.curatedRatio})
@@ -1235,6 +1285,7 @@ async function main(argv) {
         threads: { type: 'string' },
         out: { type: 'string' },
         'out-dir': { type: 'string' },
+        'no-evolutions': { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -1254,6 +1305,7 @@ async function main(argv) {
   const csvPath = positionals[0];
   const opts = {
     scoreMeta: intFlag(values['score-meta'], 'score-meta', DEFAULTS.scoreMeta),
+    evolutions: !values['no-evolutions'],
     pool: intFlag(values.pool, 'pool', DEFAULTS.pool),
     seed: values.seed ?? DEFAULTS.seed,
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),

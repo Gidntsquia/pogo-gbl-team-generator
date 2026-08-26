@@ -151,6 +151,7 @@ node src/cli.js <collection.csv> [options]
   --html PATH        HTML report output path              (default out/report.html)
   --no-html          skip writing the HTML report
   --current-moves    use each mon's own CSV moveset instead of recommended
+  --no-evolutions    score mons only in the form you own (never evolve them)
   --threads N        run battles across N worker threads     (default: serial)
   --help             print this help and exit
 
@@ -226,6 +227,97 @@ The importer recognizes these headers opportunistically in both formats
 levels that mon up to 51 instead of 50 (see `buildPokemon` in
 `src/engine/harness.js`), which can raise its best-possible CP-1500 IV
 spread's stat product slightly.
+
+### Build cost: what a recommended team costs in Stardust
+
+Every Pokemon is simulated at the **highest level whose CP still fits under
+the league cap** (`buildPokemon`, `src/engine/harness.js`) — that's what the
+mon *would* be if you built it, not what it is today. A level 6 Stunfisk with
+good IVs will happily show up on a winning Ultra League team, and building it
+is half a million Stardust.
+
+So every ranked team in the report carries its **build cost**: the Stardust
+and Candy needed to bring all three members from the level your CSV states up
+to the level the simulator played them at, with a per-member breakdown.
+
+```
+- **Build cost:** 829,600 Stardust + 602 Candy + 326 Candy XL
+
+| Member | Level | Stardust | Candy | Candy XL |
+| --- | --- | ---: | ---: | ---: |
+| Stunfisk | 6 → 50 | 516,400 | 294 | 296 |
+| Conkeldurr | 26 → 28 | 17,000 | 16 | 0 |
+| Greninja | 7 → 41.5 | 296,200 | 292 | 30 |
+| **Total** | | **829,600** | **602** | **326** |
+```
+
+Details, all in `src/cost/powerup.js` (pure arithmetic, no engine):
+
+- Levels 40 and up spend **Candy XL**, reported separately because it can't
+  be bought — often the real blocker rather than the Stardust.
+- **Shadow** costs 20% more Stardust and Candy per power-up, **purified** 10%
+  less, **lucky** half the Stardust. The `shadow`/`purified`/`lucky` columns
+  drive this; absent columns mean "no".
+- Level 50 → 51 is the free Best Buddy boost and is never billed.
+- A mon already at or past its simulated level costs nothing.
+- A mon whose CSV row states **no level** contributes nothing and the team's
+  cost is explicitly flagged as excluding it — a partial bill is never shown
+  as a full one.
+- The cost table is transcribed from the published per-half-level costs
+  (neither this repo nor `vendor/pvpoke` ships one). It's pinned by four
+  published totals asserted in `test/cost.test.js`: level 1 → 40 is 270,000
+  Stardust + 304 Candy, level 40 → 50 is 250,000 Stardust + 296 Candy XL,
+  and the same 40 → 50 run costs 360 Candy XL shadow / 272 purified.
+
+Evolution Candy is included when the team wants a form you don't own yet —
+see the next section.
+
+### Evolutions: mons compete as what they could become
+
+The engine levels a Pokemon up to the CP cap but never evolves it, so a
+Phantump used to be simulated *as a Phantump* — losing every matchup for a
+reason that has nothing to do with whether it's worth building.
+
+By default every mon now also competes as each species it can still evolve
+into, transitively (a Timburr yields both Gurdurr and Conkeldurr), carrying
+the same IVs, level and shadow/purified/lucky/Best Buddy flags, because
+evolving in Pokemon GO changes none of those. Pass `--no-evolutions` to score
+only the forms you actually own.
+
+There is no hand-tuned "is it viable?" rule. Every form is scored normally and
+the existing ranking decides: `dedupeBestPerSpecies` (`src/teams/index.js`)
+collapses each **lineage** — every form derived from one CSV row — down to
+whichever form actually scored best. So a Phantump that can hold its own stays
+a Phantump, and one that can't gets replaced by its Trevenant. Because a
+lineage only ever contributes one entry to the candidate pool, no team can
+field both forms of the same physical Pokemon.
+
+Two fields deliberately do not carry over to an evolved variant:
+
+- **CP** — the CSV's value belongs to the unevolved form; the engine
+  recomputes it from the evolved base stats.
+- **Current moves** — the evolved form has a different movepool, so under
+  `--current-moves` the variant falls back to pvpoke's recommended moveset,
+  with a warning saying so.
+
+Evolution data comes from vendor/pvpoke's own `family.evolutions`. The candy
+costs don't: pvpoke parses the official GAME_MASTER and drops them
+(`src/data/parseEvolution.php`), so they're baked into
+`src/cost/evolutionCandy.json` by `scripts/build-evolution-costs.mjs` — 501
+priced pairs, with 12 left unpriced (listed in the file's own `_unpriced`
+field: pvpoke names a handful of evolutions the official file doesn't branch
+to, e.g. `stantler > wyrdeer`). Those are scored normally but reported as an
+unknown evolution cost rather than a guessed one. Shadow evolutions cost 20% more candy, rounded up; purified uses
+the official file's own published figure. Any item an evolution needs
+("Metal Coat", "Sinnoh Stone") is carried through to the report, since candy
+totals don't express that blocker.
+
+Expansion applies to `src/cli.js`, `scripts/evolve.mjs` and
+`scripts/tournament.mjs` (all take `--no-evolutions`; it's part of the GA's
+and tournament's checkpoint config, so flipping it starts a fresh run rather
+than resuming an incompatible one). `scripts/shield-weight-review.mjs` is left
+alone on purpose — it compares shield weightings on a fixed mon set, where
+extra forms would only add noise.
 
 ### Current-moves mode (`--current-moves`)
 
