@@ -6,3 +6,4 @@ my-collection.csv
 jaxon-ultra-league.csv
 .claude/*
 !.claude/settings.json
+jet_GL_collection.csv
