@@ -6,4 +6,6 @@ my-collection.csv
 jaxon-ultra-league.csv
 .claude/*
 !.claude/settings.json
+!.claude/test-commands.sh
+!.claude/hooks/
 jet_GL_collection.csv

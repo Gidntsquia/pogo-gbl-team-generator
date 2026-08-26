@@ -45,6 +45,15 @@ These override the table:
 - **Don't run tests to prove unrelated code still works.** That is what the
   tier is for.
 
+A `PreToolUse` hook (`.claude/hooks/full-suite-guard.sh`) blocks whole-suite
+commands and prints the narrow one to run instead. When you see `BLOCKED:`, run
+what it suggests. `TS_FULL=1 npm run test:full` overrides it and exists for the
+two cases in the table above — you changed the runner config or a dependency, or
+you are about to push — plus the case where the user asked for it directly. It is
+not the way past a block you'd rather not think about. The four command strings
+live in `.claude/test-commands.sh`, which is where the hook reads them from; edit
+that file and this section together or they drift.
+
 If you genuinely can't tell which test covers a change, run `npm run test:changed`
 — not the full suite.
 

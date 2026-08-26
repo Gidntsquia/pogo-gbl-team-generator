@@ -1,3 +1,13 @@
 {
-  "autoCompactWindow": 300000
+  "autoCompactWindow": 300000,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/full-suite-guard.sh" }
+        ]
+      }
+    ]
+  }
 }
