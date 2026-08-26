@@ -29,6 +29,7 @@ import { renderReport } from '../src/report/index.js';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { runBattles } from '../src/engine/parallel.js';
+import { loadCommunityTeams } from '../src/meta/teams.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
@@ -284,5 +285,37 @@ describe('runBattles is bit-identical to a serial battleTeams loop', () => {
 
   test('empty specs resolve to [] without spawning a worker', async () => {
     assert.deepEqual(await runBattles([], { threads: 2 }), []);
+  });
+
+  // The hand-built specs above carry no moveset, so they never reach the
+  // worker's applyGroupMoveset branch. A curated team whose member records an
+  // explicit moveset does -- and if that moveset failed to cross the thread
+  // boundary the worker would silently rebuild the mon with pvpoke's
+  // RECOMMENDED set and fight a different opponent than the serial path.
+  test('a curated member\'s explicit moveset survives the worker rebuild', async () => {
+    const community = loadCommunityTeams(ctx);
+    const withOverride = community.find((t) => t.members.some((m) => m.spec.fastMove));
+    assert.ok(withOverride, 'the pinned community file has a member with an explicit moveset');
+    const opponent = community.find((t) => t.id !== withOverride.id);
+
+    const serial = battleTeams(ctx, {
+      teamA: withOverride.members.map((m) => m.pokemon),
+      teamB: opponent.members.map((m) => m.pokemon),
+      leadA: withOverride.leadIndex,
+      leadB: opponent.leadIndex,
+    });
+    const [threaded] = await runBattles(
+      [
+        {
+          teamA: withOverride.members.map((m) => m.spec),
+          teamB: opponent.members.map((m) => m.spec),
+          leadA: withOverride.leadIndex,
+          leadB: opponent.leadIndex,
+        },
+      ],
+      { threads: 2 }
+    );
+
+    assert.deepEqual(threaded, serial);
   });
 });

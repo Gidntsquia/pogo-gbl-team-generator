@@ -196,19 +196,112 @@ export function buildMetaMon(ctx, entry) {
 }
 
 /**
- * Build ONE Pokemon from a bare speciesId (no explicit moveset), for opponent
- * sources that name only team membership rather than a full preset (e.g.
- * the community-curated team file) -- unlike buildMetaMon, this
- * doesn't call applyGroupMoveset; buildPokemon already applies pvpoke's own
- * recommended moveset internally (Pokemon#selectRecommendedMoveset), so no
- * moveset logic is duplicated here either.
+ * @typedef {object} MoveOverride - a PARTIAL explicit moveset. Either field may
+ *   be omitted, in which case that half of pvpoke's recommended moveset stands:
+ *   an observation that named only a fast move ("Empoleon with Waterfall")
+ *   should not also silently restate the charged moves.
+ * @property {string} [fastMove] - gamemaster move id, e.g. "WATERFALL".
+ * @property {string[]} [chargedMoves] - 1 or 2 gamemaster move ids.
+ */
+
+// applyGroupMoveset writes at most two charged-move slots (pvpoke Pokemon carry
+// at most two), so an override naming more than two is truncated with a warning.
+const MAX_CHARGED_MOVES = 2;
+
+/** Is `moveId` in a movepool pvpoke itself computed for this Pokemon? */
+function inMovePool(pool, moveId) {
+  return pool.some((m) => m.moveId === moveId);
+}
+
+/** Elementwise move-id comparison (order matters -- slot 0 is the primary charged move). */
+function sameMoveList(a, b) {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+/**
+ * Merge a MoveOverride over the recommended moveset pvpoke already selected for
+ * `pokemon`, then apply the result via applyGroupMoveset.
+ *
+ * Every named move is checked against `pokemon.fastMovePool` /
+ * `chargedMovePool` -- the movepools pvpoke's own Pokemon#initialize built from
+ * gamemaster (Frustration/Return included for a shadow). Reading those is a
+ * membership test, not reimplemented legality logic. The check is NOT optional:
+ * pvpoke's Pokemon#selectMove ADDS an unrecognized move id to the movepool
+ * rather than rejecting it, so an unvalidated typo would silently produce an
+ * opponent carrying a move the species cannot learn.
+ *
+ * Degrades rather than throws, matching how the community-team loader treats
+ * bad data: an unlearnable move is warned about on stderr and that slot keeps
+ * pvpoke's recommendation. An override is only ever an annotation on top of a
+ * team that is already valid without it.
+ *
+ * @returns {{fastMove: string, chargedMoves: string[]} | null} null when the
+ *   override changed nothing (all of it was invalid, or it merely restated the
+ *   recommendation) -- the caller then treats the mon as a plain recommended
+ *   build, so its worker-side spec stays moveset-free and shares a build cache
+ *   entry with every other recommended build of the same species.
+ */
+function resolveMoveOverride(pokemon, recommended, override, label) {
+  const warn = (msg) => process.stderr.write(`buildRecommendedMon: ${label} ${msg}\n`);
+
+  let fastMove = recommended.fastMove;
+  if (override.fastMove) {
+    if (inMovePool(pokemon.fastMovePool, override.fastMove)) {
+      fastMove = override.fastMove;
+    } else {
+      warn(`cannot learn fast move "${override.fastMove}" -- keeping recommended "${fastMove}"`);
+    }
+  }
+
+  let chargedMoves = recommended.chargedMoves;
+  if (override.chargedMoves) {
+    const legal = override.chargedMoves.filter((moveId) => {
+      if (inMovePool(pokemon.chargedMovePool, moveId)) return true;
+      warn(`cannot learn charged move "${moveId}" -- dropping it from the override`);
+      return false;
+    });
+    if (legal.length > MAX_CHARGED_MOVES) {
+      warn(`override named ${legal.length} charged moves -- keeping the first ${MAX_CHARGED_MOVES}`);
+    }
+    if (legal.length > 0) {
+      chargedMoves = legal.slice(0, MAX_CHARGED_MOVES);
+    } else {
+      warn(`override named no learnable charged move -- keeping recommended [${chargedMoves.join(', ')}]`);
+    }
+  }
+
+  if (fastMove === recommended.fastMove && sameMoveList(chargedMoves, recommended.chargedMoves)) {
+    return null;
+  }
+
+  applyGroupMoveset(pokemon, { fastMove, chargedMoves });
+  return { fastMove, chargedMoves };
+}
+
+/**
+ * Build ONE Pokemon from a bare speciesId, for opponent sources that name only
+ * team membership rather than a full preset (e.g. the community-curated team
+ * file). With no `override`, this doesn't call applyGroupMoveset at all:
+ * buildPokemon already applies pvpoke's own recommended moveset internally
+ * (Pokemon#selectRecommendedMoveset), so no moveset logic is duplicated here.
+ *
+ * `override` exists for the case where a curated entry recorded what a real
+ * opponent was actually seen carrying and that differs from pvpoke's
+ * recommendation. It is a PARTIAL moveset -- see MoveOverride -- merged over
+ * the recommendation and validated against pvpoke's own movepools by
+ * resolveMoveOverride, which warns and falls back per slot rather than throwing.
  *
  * @param {object} ctx - from initEngine (src/engine/harness.js)
  * @param {string} speciesId - may carry the "_shadow" suffix.
+ * @param {MoveOverride | null} [override] - omit for pvpoke's recommended moveset.
  * @returns {MetaMon | null} null if speciesId doesn't resolve against the
  *   pinned gamemaster (caller decides whether that's fatal for its team).
+ *   `spec` carries fastMove/chargedMoves ONLY when an override actually took
+ *   effect -- src/engine/parallelWorker.js reapplies exactly that moveset when
+ *   it rebuilds the mon in a worker, so a threaded run and a single-threaded
+ *   run fight the same opponent.
  */
-export function buildRecommendedMon(ctx, speciesId) {
+export function buildRecommendedMon(ctx, speciesId, override = null) {
   const shadow = speciesId.endsWith(SHADOW_SUFFIX);
   const baseSpeciesId = shadow ? speciesId.slice(0, -SHADOW_SUFFIX.length) : speciesId;
   const lookupId = resolveLookupId(ctx.gm, baseSpeciesId, shadow);
@@ -217,14 +310,23 @@ export function buildRecommendedMon(ctx, speciesId) {
   const ivs = defaultIvsForCp(ctx, lookupId);
   const pokemon = buildPokemon(ctx, { speciesId: baseSpeciesId, ivs, shadow });
 
+  const recommended = {
+    fastMove: pokemon.fastMove.moveId,
+    chargedMoves: Array.from(pokemon.chargedMoves).map((m) => m.moveId),
+  };
+  const applied = override ? resolveMoveOverride(pokemon, recommended, override, `"${speciesId}"`) : null;
+  const moveset = applied ?? recommended;
+
   return {
     speciesId,
     baseSpeciesId,
     shadow,
-    fastMove: pokemon.fastMove.moveId,
-    chargedMoves: Array.from(pokemon.chargedMoves).map((m) => m.moveId),
+    fastMove: moveset.fastMove,
+    chargedMoves: moveset.chargedMoves,
     pokemon,
-    spec: { speciesId: baseSpeciesId, ivs, shadow, bestBuddy: false },
+    spec: applied
+      ? { speciesId: baseSpeciesId, ivs, shadow, bestBuddy: false, ...applied }
+      : { speciesId: baseSpeciesId, ivs, shadow, bestBuddy: false },
   };
 }
 

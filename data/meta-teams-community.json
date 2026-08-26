@@ -2,7 +2,7 @@
   "source": "https://www.reddit.com/r/TheSilphRoad/comments/1tv2140/great_league_recommended_teams_gbl_season_27/",
   "curator": "YonkouJean PGO infographic — Great League teams recommended/used by top GBL players, GBL Season 27 (Aug 2026)",
   "collectedAt": "2026-08-21",
-  "extraction": "Orchestrator read team images supplied by Jaxon (2026-08-21). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve, dropping a team whole if ANY member fails (2 mons isn't a team). Core-breaker strips in the YonkouJean images are the teams' counters, deliberately NOT included. Teams with tier:'off-meta' come from a second batch (Japanese Nature-Cup party infographics + player battle-party screenshots + one English player party): Jaxon wants them in the opponent pool for surface diversity, at reduced sampling weight vs the untagged (meta) teams. JP entries were identified primarily from printed katakana names (high confidence); in-game screenshots use a nickname-of-base-stage pattern resolved via CP feasibility (e.g. 'Frillish' at CP 1498 = Jellicent, pink female sprite). Entries id-prefixed 'yasseraleed-' are a third batch (GOALS T26, 2026-08-21): 13 untagged (meta) teams visually transcribed from stream screenshots by GBL streamer Yasser Aleed (twitch.tv/YasserAleed, YouTube aleed_yasser, Discord /thecoolkidz), supplied by Jaxon; where an on-screen team-builder card was visible its text is authoritative over a visual read (recorded in each team's 'notes'), and species-level shadow status is recorded only where the stream explicitly showed it (a shiny/cosmetic render is never treated as shadow). Entries id-prefixed 'jaxon-ladder-' are a fourth batch (GOALS T31, 2026-08-23): 7 untagged (meta, full weight — real opponents Jaxon actually faces on the GBL ladder) teams Jaxon reported directly from his own ladder games, speciesIds resolved and verified against the pinned gamemaster before being committed. FILE-WIDE LEAD DOCTRINE (Jaxon, 2026-08-23): for EVERY entry in this file, `members[0]` IS that team's established lead — for the pre-existing 46 entries that ordering came from the source images/screenshots (best available at the time); for 'jaxon-ladder-' entries it is Jaxon's own directly-observed opponent lead. src/meta/teams.js's loadCommunityTeams stamps `leadIndex: 0` on every returned team so scripts/evolve.mjs's opponentLeadIndex() reads it as declared data rather than falling through to its own index-0 default. The same first-member-is-lead convention applies to pvpoke's vendored gobattleleague training presets (no code change needed there — the loader's existing default already reads member index 0). Entries id-prefixed 'jaxon-ladder-13'/'jaxon-ladder-14' continue the fourth batch (2026-08-26): 2 more teams Jaxon reported from his own ladder games. Entries id-prefixed 'pvpoke-top-' are a fifth batch (2026-08-26): 2 Great League teams Jaxon took from PvPoke's own top-performing team listings — untagged (meta), same full weight as the rest. Entries id-prefixed 'high-ladder-' are a sixth batch (2026-08-26): 21 teams Jaxon supplied as high-ladder Great League compositions — untagged (meta), full weight. Every speciesId in all three of those batches was verified against the pinned gamemaster before commit, and each entry checked for duplication against both the pre-existing community entries and the 25 vendor gobattleleague presets (none were duplicates). Where a batch entry named an explicit moveset, the file has no per-member move-override plumbing (buildRecommendedMon builds from pvpoke’s recommended moveset alone), so the moveset is recorded in that entry’s `notes` and the divergence, if any, is stated there. Ambiguous forms in the high-ladder batch were resolved to Kanto (marowak_shadow, ninetales_shadow) per that batch’s own habit of naming regionals explicitly; the Marowak read is flagged in its notes for confirmation.",
+  "extraction": "Orchestrator read team images supplied by Jaxon (2026-08-21). Members are pvpoke speciesIds ('_shadow' suffix = shadow form, matching vendor training-preset convention). Entries with uncertain:true carry a note about the flagged read — advisory for humans; loaders treat all entries alike and must skip-with-warning any speciesId that fails to resolve, dropping a team whole if ANY member fails (2 mons isn't a team). Core-breaker strips in the YonkouJean images are the teams' counters, deliberately NOT included. Teams with tier:'off-meta' come from a second batch (Japanese Nature-Cup party infographics + player battle-party screenshots + one English player party): Jaxon wants them in the opponent pool for surface diversity, at reduced sampling weight vs the untagged (meta) teams. JP entries were identified primarily from printed katakana names (high confidence); in-game screenshots use a nickname-of-base-stage pattern resolved via CP feasibility (e.g. 'Frillish' at CP 1498 = Jellicent, pink female sprite). Entries id-prefixed 'yasseraleed-' are a third batch (GOALS T26, 2026-08-21): 13 untagged (meta) teams visually transcribed from stream screenshots by GBL streamer Yasser Aleed (twitch.tv/YasserAleed, YouTube aleed_yasser, Discord /thecoolkidz), supplied by Jaxon; where an on-screen team-builder card was visible its text is authoritative over a visual read (recorded in each team's 'notes'), and species-level shadow status is recorded only where the stream explicitly showed it (a shiny/cosmetic render is never treated as shadow). Entries id-prefixed 'jaxon-ladder-' are a fourth batch (GOALS T31, 2026-08-23): 7 untagged (meta, full weight — real opponents Jaxon actually faces on the GBL ladder) teams Jaxon reported directly from his own ladder games, speciesIds resolved and verified against the pinned gamemaster before being committed. FILE-WIDE LEAD DOCTRINE (Jaxon, 2026-08-23): for EVERY entry in this file, `members[0]` IS that team's established lead — for the pre-existing 46 entries that ordering came from the source images/screenshots (best available at the time); for 'jaxon-ladder-' entries it is Jaxon's own directly-observed opponent lead. src/meta/teams.js's loadCommunityTeams stamps `leadIndex: 0` on every returned team so scripts/evolve.mjs's opponentLeadIndex() reads it as declared data rather than falling through to its own index-0 default. The same first-member-is-lead convention applies to pvpoke's vendored gobattleleague training presets (no code change needed there — the loader's existing default already reads member index 0). Entries id-prefixed 'jaxon-ladder-13'/'jaxon-ladder-14' continue the fourth batch (2026-08-26): 2 more teams Jaxon reported from his own ladder games. Entries id-prefixed 'pvpoke-top-' are a fifth batch (2026-08-26): 2 Great League teams Jaxon took from PvPoke's own top-performing team listings — untagged (meta), same full weight as the rest. Entries id-prefixed 'high-ladder-' are a sixth batch (2026-08-26): 21 teams Jaxon supplied as high-ladder Great League compositions — untagged (meta), full weight. Every speciesId in all three of those batches was verified against the pinned gamemaster before commit, and each entry checked for duplication against both the pre-existing community entries and the 25 vendor gobattleleague presets (none were duplicates). Where a batch entry named an explicit moveset, the file has no per-member move-override plumbing (buildRecommendedMon builds from pvpoke’s recommended moveset alone), so the moveset is recorded in that entry’s `notes` and the divergence, if any, is stated there. Ambiguous forms in the high-ladder batch were resolved to Kanto (marowak_shadow, ninetales_shadow) per that batch’s own habit of naming regionals explicitly; the Marowak read is flagged in its notes for confirmation. TIER DOCTRINE (Jaxon, 2026-08-26): the 27 second-hand entries that predate the ladder batches (omarchm10 through yasseraleed-13 — YonkouJean infographic + Yasser Aleed stream transcriptions) are tagged tier:'recommended' and draw at HALF weight in the curated pool: they are teams a top player said to run, transcribed from an image, not opponents observed across the ladder. The 'jaxon-ladder-'/'jet-ladder-'/'pvpoke-top-'/'high-ladder-' batches stay untagged (meta, full weight), and tier:'off-meta' (surface diversity only) drops to a quarter weight — see src/meta/teams.js's CURATED_TIER_WEIGHTS. loadMetaTeams orders the merged pool by descending tier weight, so a small --meta limit reaches full-weight teams first. MEMBER MOVESETS: a member may now be an object ({speciesId, fastMove?, chargedMoves?}) instead of a bare speciesId, recording what an opponent was actually seen carrying when it differs from pvpoke’s recommendation; either move field may be omitted and merges independently over the recommendation. Three entries use it (high-ladder-11/16/19); every other member stays a bare string.",
   "teams": [
     {
       "id": "omarchm10",
@@ -11,7 +11,8 @@
         "forretress",
         "azumarill",
         "feraligatr"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "alexbrown1e",
@@ -21,7 +22,8 @@
         "lumineon",
         "feraligatr"
       ],
-      "notes": "confirmed by Jaxon (slot 2 = Lumineon)"
+      "notes": "confirmed by Jaxon (slot 2 = Lumineon)",
+      "tier": "recommended"
     },
     {
       "id": "paco100488",
@@ -31,7 +33,8 @@
         "medicham",
         "lickilicky"
       ],
-      "notes": "confirmed by Jaxon"
+      "notes": "confirmed by Jaxon",
+      "tier": "recommended"
     },
     {
       "id": "xjoaovict0r-a",
@@ -40,7 +43,8 @@
         "forretress",
         "mantine",
         "seaking"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "0yuwaru96",
@@ -49,7 +53,8 @@
         "jumpluff",
         "kecleon",
         "lickilicky"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "yonkoujean",
@@ -59,7 +64,8 @@
         "aegislash_shield",
         "lickilicky"
       ],
-      "notes": "confirmed by Jaxon"
+      "notes": "confirmed by Jaxon",
+      "tier": "recommended"
     },
     {
       "id": "rochababyface1",
@@ -68,7 +74,8 @@
         "azumarill",
         "stunfisk",
         "ninetales_shadow"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "xjoaovict0r-b",
@@ -78,7 +85,8 @@
         "tinkaton",
         "lickilicky"
       ],
-      "notes": "confirmed by Jaxon (slot 2 = Tinkaton — the 'purple ball' is its hammer; present in pinned gamemaster)"
+      "notes": "confirmed by Jaxon (slot 2 = Tinkaton — the 'purple ball' is its hammer; present in pinned gamemaster)",
+      "tier": "recommended"
     },
     {
       "id": "kenkenpa5678",
@@ -88,7 +96,8 @@
         "furret",
         "kecleon"
       ],
-      "notes": "confirmed by Jaxon (slot 1 = Tinkaton)"
+      "notes": "confirmed by Jaxon (slot 1 = Tinkaton)",
+      "tier": "recommended"
     },
     {
       "id": "cachtonfr",
@@ -98,7 +107,8 @@
         "seismitoad",
         "turtonator"
       ],
-      "notes": "confirmed by Jaxon (slot 3 = Turtonator)"
+      "notes": "confirmed by Jaxon (slot 3 = Turtonator)",
+      "tier": "recommended"
     },
     {
       "id": "tzspenx",
@@ -108,7 +118,8 @@
         "quagsire_shadow",
         "sableye_shadow"
       ],
-      "notes": "confirmed by Jaxon (slot 1 = Shadow Sealeo)"
+      "notes": "confirmed by Jaxon (slot 1 = Shadow Sealeo)",
+      "tier": "recommended"
     },
     {
       "id": "sweetpian",
@@ -118,7 +129,8 @@
         "altaria",
         "lickilicky"
       ],
-      "notes": "confirmed by Jaxon"
+      "notes": "confirmed by Jaxon",
+      "tier": "recommended"
     },
     {
       "id": "gorgiiboy",
@@ -127,7 +139,8 @@
         "sandslash_alolan",
         "mantine",
         "seaking"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "omarchm10-b",
@@ -136,7 +149,8 @@
         "quagsire_shadow",
         "wigglytuff",
         "charjabug"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "tzspenx-b",
@@ -146,7 +160,8 @@
         "diggersby",
         "lickilicky"
       ],
-      "notes": "confirmed by Jaxon (slot 2 = Diggersby — the 'claws' are its ear-paws)"
+      "notes": "confirmed by Jaxon (slot 2 = Diggersby — the 'claws' are its ear-paws)",
+      "tier": "recommended"
     },
     {
       "id": "sweetpian-b",
@@ -156,7 +171,8 @@
         "mantine",
         "charjabug"
       ],
-      "notes": "confirmed by Jaxon (Thievul)"
+      "notes": "confirmed by Jaxon (Thievul)",
+      "tier": "recommended"
     },
     {
       "id": "getgeisted",
@@ -177,7 +193,8 @@
         "corviknight",
         "quagsire"
       ],
-      "notes": "Corviknight confirmed by Jaxon (2026-08-21)"
+      "notes": "Corviknight confirmed by Jaxon (2026-08-21)",
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-2",
@@ -186,7 +203,8 @@
         "tinkaton",
         "quagsire",
         "corsola_galarian"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-3",
@@ -196,7 +214,8 @@
         "swampert",
         "tinkaton"
       ],
-      "notes": "shown three separate times on stream; a favored core"
+      "notes": "shown three separate times on stream; a favored core",
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-4",
@@ -205,7 +224,8 @@
         "quagsire",
         "empoleon",
         "feraligatr"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-7",
@@ -215,7 +235,8 @@
         "diggersby",
         "tinkaton"
       ],
-      "notes": "Dragonite rendered with a shadow aura and shiny-green (cosmetic only)"
+      "notes": "Dragonite rendered with a shadow aura and shiny-green (cosmetic only)",
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-8",
@@ -224,7 +245,8 @@
         "tinkaton",
         "diggersby",
         "feraligatr"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-9",
@@ -233,7 +255,8 @@
         "wigglytuff",
         "malamar",
         "jellicent"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-10",
@@ -243,7 +266,8 @@
         "feraligatr_shadow",
         "sableye_shadow"
       ],
-      "notes": "CORRECTED by Jaxon (2026-08-21): the on-screen card listing Empoleon was stale; the panel's Shadow Feraligatr render was the real member. Sliggoo moves from the card: Dragon Breath/Dragon Pulse/Body Slam; Sableye (Shadow) moves cut off; Feraligatr's likely set is the ranking list's (Shadow Claw/Hydro Cannon/Ice Beam), noted not asserted"
+      "notes": "CORRECTED by Jaxon (2026-08-21): the on-screen card listing Empoleon was stale; the panel's Shadow Feraligatr render was the real member. Sliggoo moves from the card: Dragon Breath/Dragon Pulse/Body Slam; Sableye (Shadow) moves cut off; Feraligatr's likely set is the ranking list's (Shadow Claw/Hydro Cannon/Ice Beam), noted not asserted",
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-11",
@@ -253,7 +277,8 @@
         "tinkaton",
         "kingdra"
       ],
-      "notes": "team card: Corsola-G (Astonish/Power Gem/Night Shade), Tinkaton (Fairy Wind/Gigaton Hammer/Bulldoze), third member Kingdra by visual (blue seahorse)"
+      "notes": "team card: Corsola-G (Astonish/Power Gem/Night Shade), Tinkaton (Fairy Wind/Gigaton Hammer/Bulldoze), third member Kingdra by visual (blue seahorse)",
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-12",
@@ -262,7 +287,8 @@
         "malamar",
         "feraligatr",
         "tinkaton"
-      ]
+      ],
+      "tier": "recommended"
     },
     {
       "id": "yasseraleed-13",
@@ -272,7 +298,8 @@
         "malamar",
         "wigglytuff"
       ],
-      "notes": "NORMAL Stunfisk (orange with yellow lips), explicitly NOT Galarian"
+      "notes": "NORMAL Stunfisk (orange with yellow lips), explicitly NOT Galarian",
+      "tier": "recommended"
     },
     {
       "id": "jaxon-ladder-1",
@@ -673,11 +700,18 @@
       "id": "high-ladder-11",
       "name": "High ladder team 11 (GBL Great League, Aug 2026)",
       "members": [
-        "sandslash_alolan_shadow",
+        {
+          "speciesId": "sandslash_alolan_shadow",
+          "fastMove": "POWDER_SNOW",
+          "chargedMoves": [
+            "ICE_PUNCH",
+            "DRILL_RUN"
+          ]
+        },
         "jellicent",
         "fearow"
       ],
-      "notes": "Jaxon supplied Shadow Alolan Sandslash’s moveset (Powder Snow, Ice Punch + Drill Run); pvpoke’s recommended moveset for sandslash_alolan_shadow is exactly POWDER_SNOW / ICE_PUNCH + DRILL_RUN, so the sim already plays it as observed — no override needed"
+      "notes": "Jaxon supplied Shadow Alolan Sandslash’s full moveset (Powder Snow, Ice Punch + Drill Run). It happens to match pvpoke’s current recommendation exactly, but it is encoded explicitly anyway so the observation survives a vendor pin bump that changes what pvpoke recommends"
     },
     {
       "id": "high-ladder-12",
@@ -714,7 +748,7 @@
         "kingdra_shadow",
         "sealeo_shadow"
       ],
-      "notes": "Marowak form was NOT qualified by Jaxon; resolved to Kanto marowak_shadow (this batch names regional forms explicitly where it means them — “Galarian Corsola”, “Shadow Alolan Sandslash”, “shadow kanto ninetails” — and Kanto Shadow Marowak is the GL-relevant form, #68 in the pinned GL rankings vs #227 for marowak_alolan_shadow). Flagged for confirmation."
+      "notes": "Marowak form CONFIRMED by Jaxon (2026-08-26) as Kanto: marowak_shadow, NOT marowak_alolan_shadow"
     },
     {
       "id": "high-ladder-16",
@@ -722,9 +756,12 @@
       "members": [
         "togekiss",
         "seismitoad",
-        "empoleon"
+        {
+          "speciesId": "empoleon",
+          "fastMove": "WATERFALL"
+        }
       ],
-      "notes": "Jaxon supplied Empoleon’s fast move (Waterfall); pvpoke’s recommended set for empoleon is METAL_SOUND / HYDRO_CANNON + DRILL_PECK, so the sim will play it with Metal Sound instead — curated opponents build via pvpoke’s recommended moveset (no per-member move-override plumbing exists), recorded honestly rather than building an override system for this one observation"
+      "notes": "Jaxon supplied Empoleon’s fast move (Waterfall); encoded as an explicit member-level override, so the sim plays WATERFALL instead of pvpoke’s recommended METAL_SOUND (charged moves stay pvpoke’s recommendation, HYDRO_CANNON + DRILL_PECK — Jaxon named only the fast move)"
     },
     {
       "id": "high-ladder-17",
@@ -750,10 +787,16 @@
       "name": "High ladder team 19 (GBL Great League, Aug 2026)",
       "members": [
         "corsola_galarian",
-        "florges",
+        {
+          "speciesId": "florges",
+          "chargedMoves": [
+            "CHILLING_WATER",
+            "TRAILBLAZE"
+          ]
+        },
         "azumarill"
       ],
-      "notes": "Jaxon supplied Florges’ charged moves (Chilling Water + Trailblaze); pvpoke’s recommended set for florges is FAIRY_WIND / CHILLING_WATER + DISARMING_VOICE, so Chilling Water matches but the sim will play Disarming Voice in place of Trailblaze — curated opponents build via pvpoke’s recommended moveset (no per-member move-override plumbing exists), recorded honestly rather than building an override system for this one observation"
+      "notes": "Jaxon supplied Florges’ charged moves (Chilling Water + Trailblaze); encoded as an explicit member-level override, so the sim plays TRAILBLAZE in place of pvpoke’s recommended DISARMING_VOICE (fast move stays pvpoke’s recommendation, FAIRY_WIND — Jaxon named only the charged moves)"
     },
     {
       "id": "high-ladder-20",

@@ -13,7 +13,7 @@ import path from 'node:path';
 
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
-import { loadMetaTeams, loadCommunityTeams } from '../src/meta/teams.js';
+import { loadMetaTeams, loadCommunityTeams, CURATED_TIER_WEIGHTS, curatedTierWeight } from '../src/meta/teams.js';
 
 const ctx = await initEngine();
 const COMMUNITY_FILE = 'data/meta-teams-community.json';
@@ -106,7 +106,7 @@ test('community file loads and its teams resolve fully battle-ready (>=79 of 82)
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
     assert.equal(team.members.length, 3);
-    assert.ok(['meta', 'off-meta'].includes(team.tier));
+    assert.ok(Object.keys(CURATED_TIER_WEIGHTS).includes(team.tier), `${team.id} tier ${team.tier}`);
     for (const m of team.members) {
       const p = m.pokemon;
       assert.ok(p.fastMove && p.fastMove.moveId, `${m.speciesId} has a fast move`);
@@ -172,21 +172,32 @@ test('a bogus speciesId in a temp-file copy drops that team with a warning, not 
   }
 });
 
-test('loadMetaTeams merges vendor presets with community teams, off-meta ordered last', () => {
+test('loadMetaTeams merges vendor presets with community teams, lightest tier ordered last', () => {
   const merged = loadMetaTeams(ctx);
   const vendorOnly = loadMetaTeams(ctx, { includeCommunity: false });
   assert.ok(merged.length > vendorOnly.length, 'merged pool is bigger than vendor-only');
 
-  const communityIds = merged.filter((t) => t.id.startsWith('community:'));
-  assert.ok(communityIds.length > 0, 'merged pool includes namespaced community teams');
+  const community = merged.filter((t) => t.id.startsWith('community:'));
+  assert.ok(community.length > 0, 'merged pool includes namespaced community teams');
 
-  // off-meta community teams sort after every vendor + community-meta team.
-  const firstOffMetaIdx = merged.findIndex((t) => t.tier === 'off-meta');
-  const lastNonOffMetaIdx = merged.reduce(
-    (max, t, i) => (t.tier !== 'off-meta' ? i : max),
-    -1
+  // Community teams sort by descending draw weight, so a small `limit` reaches
+  // the teams most like real opponents first (see loadMetaTeams' doc comment).
+  const weights = community.map(curatedTierWeight);
+  assert.deepEqual(
+    weights,
+    [...weights].sort((a, b) => b - a),
+    'community teams are ordered heaviest tier first'
   );
-  assert.ok(firstOffMetaIdx > lastNonOffMetaIdx, 'off-meta teams are ordered after every other team');
+  assert.ok(new Set(weights).size > 1, 'the pinned data actually exercises more than one tier');
+});
+
+test('curatedTierWeight grades ladder-observed above recommended above off-meta', () => {
+  assert.ok(CURATED_TIER_WEIGHTS.meta > CURATED_TIER_WEIGHTS.recommended);
+  assert.ok(CURATED_TIER_WEIGHTS.recommended > CURATED_TIER_WEIGHTS['off-meta']);
+  assert.ok(CURATED_TIER_WEIGHTS['off-meta'] > 0, 'a reduced tier still gets drawn sometimes');
+  // An untagged team (a caller-supplied fixture, or a vendor preset) is full weight.
+  assert.equal(curatedTierWeight({}), CURATED_TIER_WEIGHTS.meta);
+  assert.equal(curatedTierWeight({ tier: 'nonsense' }), CURATED_TIER_WEIGHTS.meta);
 });
 
 test('a small limit on loadMetaTeams stays within the vendor pool (documented off-meta cap)', () => {
@@ -261,4 +272,110 @@ test('a loaded meta team is usable as a side of a real 3v3 battle', () => {
   assert.ok(['a', 'b', 'tie'].includes(result.winner));
   assert.equal(typeof result.summary.turns, 'number');
   assert.ok(result.summary.turns > 0, 'a real battle ran (>0 turns)');
+});
+
+// Member-level move overrides (a community member given as an object rather
+// than a bare speciesId) -- see CommunityMember in src/meta/teams.js.
+
+const OVERRIDE_CASES = [
+  {
+    what: 'a fast-move-only override leaves the recommended charged moves alone',
+    member: { speciesId: 'empoleon', fastMove: 'WATERFALL' },
+    fastMove: 'WATERFALL',
+    chargedMoves: ['HYDRO_CANNON', 'DRILL_PECK'],
+  },
+  {
+    what: 'a charged-moves-only override leaves the recommended fast move alone',
+    member: { speciesId: 'florges', chargedMoves: ['CHILLING_WATER', 'TRAILBLAZE'] },
+    fastMove: 'FAIRY_WIND',
+    chargedMoves: ['CHILLING_WATER', 'TRAILBLAZE'],
+  },
+  {
+    what: 'a full override sets both halves, shadow member included',
+    member: { speciesId: 'sableye_shadow', fastMove: 'SHADOW_CLAW', chargedMoves: ['POWER_GEM'] },
+    fastMove: 'SHADOW_CLAW',
+    chargedMoves: ['POWER_GEM'],
+  },
+];
+
+test('a member object applies its explicit moveset, merging over pvpoke\'s recommendation', () => {
+  for (const c of OVERRIDE_CASES) {
+    const [team] = loadCommunityTeams(ctx, {
+      communityEntries: [{ id: 'ovr', members: [c.member, 'azumarill', 'altaria'] }],
+    });
+    assert.ok(team, `${c.what}: team should resolve`);
+    const [mon] = team.members;
+
+    assert.equal(mon.pokemon.fastMove.moveId, c.fastMove, c.what);
+    // Array.from: pvpoke runs in its own realm, so its arrays fail
+    // deepStrictEqual's prototype check without being copied out first.
+    assert.deepEqual(
+      Array.from(mon.pokemon.chargedMoves).map((m) => m.moveId),
+      c.chargedMoves,
+      c.what
+    );
+    // The reported moveset must agree with the Pokemon actually built...
+    assert.equal(mon.fastMove, c.fastMove);
+    assert.deepEqual(mon.chargedMoves, c.chargedMoves);
+    // ...and so must `spec`, which is what src/engine/parallelWorker.js rebuilds
+    // from: without the moveset here, a threaded run would fight a DIFFERENT
+    // opponent (pvpoke's recommended set) than a single-threaded one.
+    assert.equal(mon.spec.fastMove, c.fastMove, `${c.what}: spec carries the moveset for the worker rebuild`);
+    assert.deepEqual(mon.spec.chargedMoves, c.chargedMoves);
+  }
+});
+
+test('an override that only restates pvpoke\'s recommendation leaves spec moveset-free', () => {
+  // high-ladder-11's Shadow Alolan Sandslash is exactly this case. The built mon
+  // is unchanged, so its spec stays free of an explicit moveset and shares a
+  // worker build-cache entry with every other recommended build of the species.
+  const [team] = loadCommunityTeams(ctx, {
+    communityEntries: [
+      {
+        id: 'restated',
+        members: [
+          { speciesId: 'sandslash_alolan_shadow', fastMove: 'POWDER_SNOW', chargedMoves: ['ICE_PUNCH', 'DRILL_RUN'] },
+          'azumarill',
+          'altaria',
+        ],
+      },
+    ],
+  });
+  const [mon] = team.members;
+  assert.equal(mon.fastMove, 'POWDER_SNOW');
+  assert.deepEqual(mon.chargedMoves, ['ICE_PUNCH', 'DRILL_RUN']);
+  assert.equal(mon.spec.fastMove, undefined, 'no explicit moveset needed in the spec');
+  assert.equal(mon.spec.chargedMoves, undefined);
+});
+
+test('an unlearnable move in an override warns and falls back, keeping the team', () => {
+  // pvpoke's Pokemon#selectMove ADDS an unrecognized move id to the movepool
+  // rather than rejecting it, so this fallback is what stops a typo from
+  // producing an opponent carrying a move the species cannot learn.
+  const [team] = loadCommunityTeams(ctx, {
+    communityEntries: [
+      {
+        id: 'bad-moves',
+        members: [{ speciesId: 'azumarill', fastMove: 'BLAST_BURN', chargedMoves: ['NOT_A_MOVE'] }, 'altaria', 'stunfisk'],
+      },
+    ],
+  });
+  assert.ok(team, 'a bad MOVE degrades to the recommendation; only a bad speciesId drops the team');
+  const [mon] = team.members;
+  const recommended = loadCommunityTeams(ctx, {
+    communityEntries: [{ id: 'plain', members: ['azumarill', 'altaria', 'stunfisk'] }],
+  })[0].members[0];
+  assert.equal(mon.fastMove, recommended.fastMove, 'unlearnable fast move falls back to the recommendation');
+  assert.deepEqual(mon.chargedMoves, recommended.chargedMoves, 'unlearnable charged move falls back too');
+  assert.equal(mon.spec.fastMove, undefined, 'nothing applied, so nothing to reapply worker-side');
+});
+
+test('a member object with no speciesId drops its team, like an unknown id', () => {
+  const teams = loadCommunityTeams(ctx, {
+    communityEntries: [
+      { id: 'headless-member', members: [{ fastMove: 'WATERFALL' }, 'azumarill', 'altaria'] },
+      { id: 'fine', members: ['azumarill', 'altaria', 'stunfisk'] },
+    ],
+  });
+  assert.deepEqual(teams.map((t) => t.id), ['community:fine']);
 });

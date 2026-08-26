@@ -657,6 +657,44 @@ already produced, with no extra battles run to collect them.
   weighted-random compositions from the current meta rather than only this
   fixed list — see "Sampling: how the weighting works" above.
 
+### The community team file
+
+`data/meta-teams-community.json` is our own data (not vendor), read by
+`src/meta/teams.js`. Each entry names a 3-mon team; members are pvpoke
+speciesIds, with a `_shadow` suffix for shadow forms, and `members[0]` is
+always that team's lead.
+
+**Tiers set how often a team is drawn** from the curated pool. The gradient is
+"how much does drawing this team tell me about what I will actually face":
+
+| `tier` | weight | what it is |
+|---|---|---|
+| absent (meta) | 1 | a team fought on the GBL ladder, or one from PvPoke's own top-performer listings |
+| `recommended` | 0.5 | a top player's *recommended* team, transcribed from an infographic or stream screenshot — second-hand and dated |
+| `off-meta` | 0.25 | carried for surface diversity, not because it is likely |
+
+`loadMetaTeams` orders the merged pool by descending weight, so a small
+`--meta` limit reaches the teams most like real opponents first. The numbers
+live in one place, `CURATED_TIER_WEIGHTS` in `src/meta/teams.js`.
+
+**Members normally build with pvpoke's recommended moveset.** When a real
+opponent was seen carrying something else, write that member as an object
+instead of a bare string:
+
+```jsonc
+"members": [
+  { "speciesId": "empoleon", "fastMove": "WATERFALL" },       // charged moves stay recommended
+  { "speciesId": "florges", "chargedMoves": ["CHILLING_WATER", "TRAILBLAZE"] },
+  "azumarill"                                                  // fully recommended
+]
+```
+
+Both move fields are optional and merge independently over the recommendation,
+so an entry states only the half it observed. A move the species cannot learn
+warns on stderr and that slot falls back to the recommendation — the team still
+loads. (Only an unresolvable *speciesId* drops a team, and it drops the whole
+team: two mons isn't a team.)
+
 ## Tests
 
 ```bash

@@ -40,12 +40,41 @@ const DEFAULT_COMMUNITY_FILE = 'data/meta-teams-community.json';
 // `includeCommunity: true`.
 const COMMUNITY_FILE_CP = 1500;
 
-// Community teams tagged tier:"off-meta" get a reduced relative weight when
-// sampleOpponentTeams draws from the curated pool: a documented sampling
-// weight of half relative to untagged
-// (meta) teams. Exported so sampleTeams.js's curated draw can share it
-// instead of re-deriving the same number.
-export const OFF_META_CURATED_WEIGHT = 0.5;
+/**
+ * Relative draw weight per curated tier, used when sampleOpponentTeams picks
+ * from the curated pool. Exported so sampleTeams.js's curated draw shares these
+ * numbers instead of re-deriving them.
+ *
+ * The gradient is "how much does drawing this team tell me about what I will
+ * actually face" (Jaxon, 2026-08-26):
+ *
+ * - `meta` (untagged) -- a team Jaxon fought on the GBL ladder, or one taken
+ *   from PvPoke's own top-performer listings. Full weight.
+ * - `recommended` -- a top player's *recommended* team, transcribed from a
+ *   Reddit/YonkouJean infographic or a stream screenshot. Real teams, but
+ *   second-hand and dated: what someone said to run, not what showed up across
+ *   the net. Half weight.
+ * - `off-meta` -- carried purely for surface diversity, not because it is
+ *   likely. Quarter weight.
+ *
+ * A team with no `tier` field (e.g. a caller-supplied test fixture) counts as
+ * full weight -- see curatedTierWeight.
+ */
+export const CURATED_TIER_WEIGHTS = Object.freeze({
+  meta: 1,
+  recommended: 0.5,
+  'off-meta': 0.25,
+});
+
+/**
+ * The draw weight for one curated team's tier, defaulting to full weight for an
+ * untagged or unrecognized tier.
+ * @param {{tier?: string}} team
+ * @returns {number}
+ */
+export function curatedTierWeight(team) {
+  return CURATED_TIER_WEIGHTS[team.tier] ?? CURATED_TIER_WEIGHTS.meta;
+}
 
 const TEAM_SIZE = 3;
 
@@ -143,12 +172,39 @@ function buildVendorTeams(ctx, teamsFile) {
 }
 
 /**
+ * @typedef {string | {speciesId: string, fastMove?: string, chargedMoves?: string[]}} CommunityMember
+ *   A member is normally a bare pvpoke speciesId string ("_shadow" suffix for
+ *   shadow forms), which builds with pvpoke's recommended moveset. The object
+ *   form additionally records what a real opponent was actually seen carrying,
+ *   when that differs from the recommendation -- e.g.
+ *   `{"speciesId": "empoleon", "fastMove": "WATERFALL"}`. Both move fields are
+ *   optional and merge independently over the recommendation (see
+ *   src/scoring/index.js's MoveOverride), so an entry states only the half it
+ *   observed. Unlearnable move ids warn to stderr and fall back to the
+ *   recommendation for that slot; they never drop the team.
+ */
+
+/**
  * @typedef {object} CommunityTeamEntry - one entry in data/meta-teams-community.json.
  * @property {string} id
  * @property {string} [name]
- * @property {'off-meta'} [tier] - absent = regular (untagged) meta team.
- * @property {string[]} members - exactly 3 pvpoke speciesIds ("_shadow" suffix for shadow forms).
+ * @property {'recommended'|'off-meta'} [tier] - absent = regular (untagged) meta team, full weight.
+ * @property {CommunityMember[]} members - exactly 3.
  */
+
+/**
+ * Split one CommunityMember into the speciesId to resolve and the move override
+ * to merge over pvpoke's recommendation (null when the entry names no moves).
+ * @param {CommunityMember} member
+ * @returns {{speciesId: string | undefined, override: object | null}}
+ */
+function parseCommunityMember(member) {
+  if (typeof member === 'string') return { speciesId: member, override: null };
+  if (!member || typeof member !== 'object') return { speciesId: undefined, override: null };
+  const { speciesId, fastMove, chargedMoves } = member;
+  const override = fastMove || chargedMoves ? { fastMove, chargedMoves } : null;
+  return { speciesId, override };
+}
 
 /** Read+parse the community teams file (or opts.communityEntries); [] if the file is absent. */
 function readCommunityEntries(opts) {
@@ -171,6 +227,12 @@ function readCommunityEntries(opts) {
  * few JP ids like arctibax) drops the WHOLE team rather than the one member:
  * two mons isn't a team. A data edit introducing a bad id therefore degrades
  * gracefully (warns to stderr, keeps running) instead of crashing a run.
+ *
+ * A member may also be an object naming an explicit (possibly partial) moveset
+ * instead of a bare speciesId -- see CommunityMember. That is the weaker
+ * failure: a bad MOVE id warns and falls back to pvpoke's recommendation for
+ * that slot, leaving a still-valid 3-mon team, because the moveset is an
+ * annotation on a team that resolved fine without it.
  *
  * Jaxon 2026-08-23: every entry in data/meta-teams-community.json
  * treats `members[0]` as that team's established lead (the source images/
@@ -200,10 +262,13 @@ export function loadCommunityTeams(ctx, opts = {}) {
     }
     const members = [];
     let unresolved = null;
-    for (const speciesId of entry.members) {
-      const built = buildRecommendedMon(ctx, speciesId);
+    for (const member of entry.members) {
+      const { speciesId, override } = parseCommunityMember(member);
+      // A member object with no speciesId is as fatal as an unknown one: there
+      // is nothing to build, so the team drops whole (see the doc comment).
+      const built = speciesId ? buildRecommendedMon(ctx, speciesId, override) : null;
       if (!built) {
-        unresolved = speciesId;
+        unresolved = speciesId ?? JSON.stringify(member);
         break;
       }
       members.push(built);
@@ -229,17 +294,17 @@ export function loadCommunityTeams(ctx, opts = {}) {
  * Load the curated Great League opponent-team pool and build every member
  * into a battle-ready pvpoke Pokemon: pvpoke's own "GO Battle League" preset
  * teams (buildVendorTeams), plus the community-curated teams
- * (loadCommunityTeams), merged vendor-first then community-meta then
- * community-off-meta.
+ * (loadCommunityTeams), merged vendor-first, then the community teams in
+ * descending tier weight: meta, then recommended, then off-meta.
  *
- * That ordering IS the exhaustive path's off-meta cap (the exhaustive path
- * may cap how many off-meta teams it includes):
- * off-meta teams sort last, so a typical small `limit` (the exhaustive CLI
- * path's default `--meta 5`) never reaches them at all -- they only surface
- * once a caller asks for enough teams to exhaust the vendor + community-meta
- * pool ahead of them (25 vendor + up to 81 community-meta under the pinned
- * data; only 1 community entry is tagged off-meta). An unlimited/full call
- * still returns every off-meta team.
+ * That ordering IS the exhaustive path's low-weight cap (the exhaustive path
+ * may cap how many low-weight teams it includes): the cheaper a tier's draw
+ * weight, the later it sorts, so a typical small `limit` (the exhaustive CLI
+ * path's default `--meta 5`) never reaches those tiers at all -- they only
+ * surface once a caller asks for enough teams to exhaust the pool ahead of
+ * them (25 vendor + up to 54 community-meta under the pinned data, then 27
+ * recommended, then 1 off-meta). An unlimited/full call still returns every
+ * team of every tier.
  *
  * Each member is a distinct built instance, so a returned team can be handed
  * straight to `battleTeams` as one side. `battleTeams` fullResets every mon at
@@ -266,9 +331,10 @@ export function loadMetaTeams(ctx, opts = {}) {
 
   const includeCommunity = opts.includeCommunity ?? ctx.cp === COMMUNITY_FILE_CP;
   const community = includeCommunity ? loadCommunityTeams(ctx, opts) : [];
-  const communityMeta = community.filter((t) => t.tier !== 'off-meta');
-  const communityOffMeta = community.filter((t) => t.tier === 'off-meta');
+  // Heaviest tier first; Array#sort is stable in Node, so file order is kept
+  // within a tier (that is what makes a team's position reproducible run to run).
+  const byTierWeight = [...community].sort((a, b) => curatedTierWeight(b) - curatedTierWeight(a));
 
-  const merged = [...vendorTeams, ...communityMeta, ...communityOffMeta];
+  const merged = [...vendorTeams, ...byTierWeight];
   return typeof opts.limit === 'number' ? merged.slice(0, opts.limit) : merged;
 }
