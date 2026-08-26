@@ -94,7 +94,7 @@ export async function scanFrames(source, opts = {}) {
       const key = result.detail ? `${result.reason}: "${result.detail}"` : result.reason;
       rejected[key] = (rejected[key] ?? 0) + 1;
     }
-    frames.push({ t: frame.t, reading: result.reading });
+    frames.push({ t: frame.t, reading: result.reading, hint: result.hint });
     opts.onProgress?.({ frames: frames.length, accepted, t: frame.t });
   }
 
@@ -107,6 +107,19 @@ export async function scanFrames(source, opts = {}) {
         'written as one row (if you really own two, add the second by hand)'
     );
   }
+
+  // Shadow is the one thing on a collection row that the appraisal screen
+  // simply does not state (see frame.js). Saying so is not optional noise: a
+  // shadow Pokemon written as an ordinary one looks completely normal in the
+  // CSV, so the trainer has to be told which rows were never actually
+  // checked, not left to assume the scan checked all of them.
+  const shadows = groups.filter((g) => g.shadow);
+  warnings.push(
+    `Shadow could not be read for ${groups.length - shadows.length} of ${groups.length} Pokemon -- ` +
+      'Pokemon GO only says "PURIFY" / "SHADOW BONUS" with the appraisal panel CLOSED, and ' +
+      `the recording showed that for ${shadows.length}${shadows.length ? ` (${shadows.map((g) => g.name).join(', ')})` : ''}. ` +
+      'Every other row is written as not shadow whether it is or not -- set the flag by hand for any you know of.'
+  );
 
   for (const key of Object.keys(rejected)) {
     if (key.startsWith('unrecognized species')) {

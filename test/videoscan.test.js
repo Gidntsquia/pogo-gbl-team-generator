@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { classifyRun, readBarRow, readAppraisal } from '../src/videoscan/bars.js';
-import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes } from '../src/videoscan/text.js';
+import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes, readsShadow } from '../src/videoscan/text.js';
 import { createCaptionResolver } from '../src/videoscan/species.js';
 import { createFormResolver, DEFAULT_FORMS } from '../src/videoscan/forms.js';
 import { readFrame } from '../src/videoscan/frame.js';
@@ -545,8 +545,10 @@ test('scanFrames turns recorded frames into collection rows', async () => {
   );
   // Only one frame of each Pokemon in this fixture is a still one, and the
   // scanner says so rather than presenting a one-frame read as settled.
-  assert.equal(warnings.length, 2);
-  for (const warning of warnings) assert.match(warning, /read from a single frame/);
+  const singleFrame = warnings.filter((w) => /read from a single frame/.test(w));
+  assert.equal(singleFrame.length, 2);
+  // Every scan also states how much of its shadow column it actually checked.
+  assert.equal(warnings.length, singleFrame.length + 1, warnings.join('\n'));
 });
 
 test('scanFrames recovers an obscured CP and survives the bar animation', async () => {
@@ -712,4 +714,35 @@ test('scanFrames does not invent a Pokemon out of a mid-swipe frame', async () =
     { cp: honchkrow[0].cp, maxHp: honchkrow[0].maxHp, level: honchkrow[0].level },
     { cp: 1143, maxHp: 123, level: 15 }
   );
+});
+
+// Four frames from the one place in either recording where the appraisal
+// panel was slid shut: a shadow Exploud, and the Morpeko swiped past just
+// before it (which must not catch the marker).
+const SHADOW_FRAMES = readFrames('shadow-frames.jsonl');
+
+test('readsShadow finds the markings Pokemon GO only draws behind the appraisal panel', () => {
+  const box = (s) => ({ x: 0.5, y: 0.5, w: 0.1, h: 0.02, c: 1, s });
+  assert.equal(readsShadow([box('PURIFY'), box('POWER UP')]), true);
+  assert.equal(readsShadow([box('Bite'), box('SHADOW BONUS')]), true);
+  // Vision cuts the button text short on the frames where it is animating.
+  assert.equal(readsShadow([box('PURIF')]), true);
+  // An ordinary appraisal frame says nothing either way -- of a shadow
+  // Pokemon as much as any other.
+  assert.equal(readsShadow([box('CP807'), box('115 / 115 HP'), box('Attack')]), false);
+});
+
+test('scanFrames reads shadow off the frames it cannot read as an appraisal', async () => {
+  const { mons } = await scanFrames(SHADOW_FRAMES);
+  // The frames that say PURIFY / SHADOW BONUS have no bars AND no
+  // caught-location caption, so every one of them is rejected as a reading.
+  // The CP and max HP still on screen are what tie the marker back to the
+  // Exploud read a few frames earlier.
+  const exploud = mons.find((m) => /Exploud/.test(m.name));
+  assert.equal(exploud.shadow, true);
+  assert.equal(exploud.cp, 807);
+
+  // The Pokemon on screen immediately before it does not catch the marker.
+  const morpeko = mons.find((m) => /Morpeko/.test(m.name));
+  assert.equal(morpeko.shadow, false);
 });

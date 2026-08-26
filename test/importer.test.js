@@ -191,28 +191,29 @@ test('importCollection: Poke Genie shadow/purified/lucky flags and IVs', () => {
   assert.equal(azumarill1.level, 25.5);
 });
 
-test('importCollection: Poke Genie format recognizes a manually-added "Best Buddy" column', () => {
-  // Real Poke Genie exports carry no Best Buddy column (see the
-  // POKEGENIE_FIXTURE header) -- this is the opportunistic path a user
-  // would exercise by hand-adding the column themselves (documented in
-  // README.md). Confirms the recognition actually round-trips end to
-  // end, not just that the default is false when the column is absent.
-  const csv = writeTempCsv(
-    'Name,Atk IV,Def IV,Sta IV,Best Buddy\n' +
-      'Azumarill,1,15,14,Yes\n' +
-      'Medicham,15,14,14,No\n'
-  );
-  const { mons, warnings } = importCollection(csv);
-  assert.equal(warnings.length, 0);
+// Neither real export carries a Best Buddy column (see the POKEGENIE_FIXTURE
+// header) -- both of these are the opportunistic path a user exercises by
+// hand-adding the column themselves (documented in README.md). Confirms the
+// recognition round-trips end to end in each format, not just that the
+// default is false when the column is absent.
+for (const [format, header, yes, no] of [
+  ['Poke Genie', 'Name,Atk IV,Def IV,Sta IV,Best Buddy', 'Yes', 'No'],
+  ['generic', 'name,atk,def,sta,bestbuddy', 'true', 'false'],
+]) {
+  test(`importCollection: ${format} format recognizes a manually-added Best Buddy column`, () => {
+    const csv = writeTempCsv(`${header}\nAzumarill,1,15,14,${yes}\nMedicham,15,14,14,${no}\n`);
+    const { mons, warnings } = importCollection(csv);
+    assert.equal(warnings.length, 0);
 
-  const azumarill = mons.find((m) => m.speciesId === 'azumarill');
-  assert.ok(azumarill);
-  assert.equal(azumarill.bestBuddy, true);
+    const azumarill = mons.find((m) => m.speciesId === 'azumarill');
+    assert.ok(azumarill);
+    assert.equal(azumarill.bestBuddy, true);
 
-  const medicham = mons.find((m) => m.speciesId === 'medicham');
-  assert.ok(medicham);
-  assert.equal(medicham.bestBuddy, false);
-});
+    const medicham = mons.find((m) => m.speciesId === 'medicham');
+    assert.ok(medicham);
+    assert.equal(medicham.bestBuddy, false);
+  });
+}
 
 test('importCollection: Poke Genie duplicates (same species, different IVs) are both kept', () => {
   const { mons } = importCollection(POKEGENIE_FIXTURE);
@@ -254,22 +255,6 @@ test('importCollection: generic format maps name/atk/def/sta/shadow/level/cp by 
   assert.equal(charjabug.shadow, false, 'shadow column "false" should parse as not-shadow');
   assert.equal(charjabug.level, undefined);
   assert.equal(charjabug.cp, undefined);
-});
-
-test('importCollection: generic format recognizes a manually-added "bestbuddy" column', () => {
-  const csv = writeTempCsv(
-    'name,atk,def,sta,bestbuddy\n' + 'Azumarill,1,15,14,true\n' + 'Medicham,15,14,14,false\n'
-  );
-  const { mons, warnings } = importCollection(csv);
-  assert.equal(warnings.length, 0);
-
-  const azumarill = mons.find((m) => m.speciesId === 'azumarill');
-  assert.ok(azumarill);
-  assert.equal(azumarill.bestBuddy, true);
-
-  const medicham = mons.find((m) => m.speciesId === 'medicham');
-  assert.ok(medicham);
-  assert.equal(medicham.bestBuddy, false);
 });
 
 test('importCollection: generic format resolves a parenthetical form written into the name column', () => {

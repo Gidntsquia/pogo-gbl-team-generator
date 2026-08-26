@@ -160,3 +160,29 @@ export function readTypes(boxes) {
   }
   return found;
 }
+
+/**
+ * Text Pokemon GO draws only for a shadow Pokemon: the PURIFY button and the
+ * SHADOW BONUS note under its moves.
+ *
+ * Neither is on the appraisal screen. Both live on the detail page *behind*
+ * it, so they are visible only on a frame where the appraisal panel is shut
+ * -- exactly the frames readFrame throws away for having no bars. That is why
+ * shadow cannot be read off the same frame as the IVs, and why the marker is
+ * carried separately (see frame.js and group.js).
+ */
+const SHADOW_RE = /\bPURIF|\bSHADOW\s*BONUS\b/i;
+
+/**
+ * Does this frame show the detail page's shadow markings?
+ *
+ * One-way: true means shadow, false means only that this frame does not say
+ * so -- which is the case for every appraisal frame of every Pokemon,
+ * shadow or not.
+ *
+ * @param {TextBox[]} boxes
+ * @returns {boolean}
+ */
+export function readsShadow(boxes) {
+  return boxes.some((b) => SHADOW_RE.test(String(b.s ?? '')));
+}

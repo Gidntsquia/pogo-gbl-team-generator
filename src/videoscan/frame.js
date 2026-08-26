@@ -11,26 +11,46 @@
 // show the same Pokemon standing still anyway.
 
 import { readAppraisal } from './bars.js';
-import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes } from './text.js';
+import { countCpBoxes, readCp, readMaxHp, readSpeciesCaptions, readTypes, readsShadow } from './text.js';
 
 /**
  * @param {import('./probe.js').Frame} frame
  * @param {{resolveCaption: (caption: string) => object|null}} deps
- * @returns {{reading: import('./group.js').Reading}|{reading: null, reason: string, detail?: string}}
+ * @returns {{reading: import('./group.js').Reading}|{reading: null, reason: string, detail?: string,
+ *   hint?: import('./group.js').Hint}}
  */
 export function readFrame(frame, { resolveCaption }) {
+  // Shadow is not on the appraisal screen at all. Pokemon GO only draws the
+  // PURIFY button and the SHADOW BONUS note on the detail page BEHIND the
+  // panel, so the frames that say a Pokemon is shadow are exactly the frames
+  // with no bars to read -- and, once the panel has slid down far enough to
+  // uncover them, no caught-location caption either. Both of those are
+  // rejections here, which is why shadow never reached the CSV.
+  //
+  // Such a frame still shows the card's CP and max HP, and that pair is
+  // enough to say WHICH Pokemon it is talking about (group.js matches on it).
+  // So the marker leaves as a hint attached to the rejection, rather than
+  // being thrown away with the frame.
+  const cp = readCp(frame.text);
+  const maxHp = readMaxHp(frame.text);
+  const hint =
+    readsShadow(frame.text) && countCpBoxes(frame.text) === 1 && cp !== undefined && maxHp !== undefined
+      ? { cp, maxHp, shadow: true }
+      : undefined;
+  const reject = (reason, detail) => ({ reading: null, reason, ...(detail ? { detail } : {}), ...(hint ? { hint } : {}) });
+
   const captions = readSpeciesCaptions(frame.text);
   if (countCpBoxes(frame.text) > 1 || captions.length > 1) {
-    return { reading: null, reason: 'mid-swipe (two Pokemon on screen)' };
+    return reject('mid-swipe (two Pokemon on screen)');
   }
 
   if (captions.length === 0) {
-    return { reading: null, reason: 'no "This <species> was caught..." caption visible' };
+    return reject('no "This <species> was caught..." caption visible');
   }
 
   const species = resolveCaption(captions[0]);
   if (!species) {
-    return { reading: null, reason: 'unrecognized species', detail: captions[0] };
+    return reject('unrecognized species', captions[0]);
   }
 
   // The type badges belong to the card the CP and HP were read off. If they
@@ -41,11 +61,11 @@ export function readFrame(frame, { resolveCaption }) {
   const types = readTypes(frame.text);
   const possible = new Set(species.candidates.flatMap((c) => c.types));
   if (types.length > 0 && possible.size > 0 && !types.every((t) => possible.has(t))) {
-    return { reading: null, reason: 'mid-swipe (type badge belongs to another Pokemon)' };
+    return reject('mid-swipe (type badge belongs to another Pokemon)');
   }
 
   const appraisal = readAppraisal(frame.rows, frame.w);
-  if (!appraisal) return { reading: null, reason: 'appraisal bars not readable' };
+  if (!appraisal) return reject('appraisal bars not readable');
 
   return {
     reading: {
@@ -61,8 +81,8 @@ export function readFrame(frame, { resolveCaption }) {
       // comes back short ("96" for 968) or not at all -- which is why CP is
       // resolved per Pokemon, across frames and against the stats, rather
       // than trusted per frame (see index.js).
-      cp: readCp(frame.text),
-      maxHp: readMaxHp(frame.text),
+      cp,
+      maxHp,
       ivs: appraisal.ivs,
       deltas: appraisal.deltas,
     },

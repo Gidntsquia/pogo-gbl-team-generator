@@ -13,6 +13,13 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 
 ## Tests
 
+**Run the smallest thing that can fail.** After a change, run the tests for
+what you changed — `node --test test/<file>.test.js`, or `npm run test:changed`.
+Run `npm test` (fast tier) only when the change reaches past its own module.
+`npm run test:full` is for immediately before a push, not after every edit:
+it costs minutes, it tells you nothing the targeted run didn't, and running it
+on a loop is how an afternoon disappears.
+
 Runtime is part of the cost of a test. Before adding one, check that it earns its place.
 
 - One test per behavior, not per branch of the same code path. Tests differing only in an input literal should be one parameterized test.

@@ -29,7 +29,14 @@ const DEFAULT_GAP_TOLERANCE = 3;
  */
 
 /**
- * @param {({t: number, reading: Reading|null})[]} frames - in time order.
+ * @typedef {object} Hint
+ * @property {number} cp
+ * @property {number} maxHp
+ * @property {boolean} shadow
+ */
+
+/**
+ * @param {({t: number, reading: Reading|null, hint?: Hint})[]} frames - in time order.
  * @param {{gapTolerance?: number}} [opts]
  * @returns {{speciesId: string, name: string, shadow: boolean, purified: boolean, cp: number,
  *   maxHp: number|undefined, ivs: {atk: number, def: number, hp: number}, frames: number,
@@ -41,7 +48,10 @@ export function groupReadings(frames, opts = {}) {
   let current = null;
   let gap = 0;
 
-  for (const { reading } of frames) {
+  const hints = [];
+
+  for (const { reading, hint } of frames) {
+    if (hint) hints.push(hint);
     if (!reading) {
       gap += 1;
       if (gap > gapTolerance) current = null;
@@ -56,7 +66,38 @@ export function groupReadings(frames, opts = {}) {
     current.readings.push(reading);
   }
 
-  return groups.map(summarize);
+  return applyHints(groups.map(summarize), hints);
+}
+
+/**
+ * Fold in what the frames around a Pokemon said that its own frames could
+ * not.
+
+ * Only shadow travels this way, and only in one direction: a hint says "this
+ * Pokemon IS shadow", never that it is not. The appraisal frames a Pokemon is
+ * actually read from never mention shadow either way, so a Pokemon whose
+ * panel was never shut during the recording simply stays false -- index.js
+ * says so in its report rather than pretending the screen was checked.
+ *
+ * The hint carries no species, because the frames that show the shadow
+ * markings have slid the caught-location caption off screen. It carries the
+ * CP and max HP still drawn on the card behind the panel, and that pair is
+ * matched against a Pokemon this scan already read -- tight enough that a
+ * marker glimpsed mid-swipe cannot land on the neighbouring card, since the
+ * neighbour would have to share both numbers.
+ *
+ * @param {ReturnType<typeof summarize>[]} mons
+ * @param {Hint[]} hints
+ */
+function applyHints(mons, hints) {
+  for (const hint of hints) {
+    if (!hint.shadow) continue;
+    const matches = mons.filter(
+      (m) => m.maxHp === hint.maxHp && m.cpVotes.some((v) => v.value === hint.cp)
+    );
+    if (matches.length === 1) matches[0].shadow = true;
+  }
+  return mons;
 }
 
 /**

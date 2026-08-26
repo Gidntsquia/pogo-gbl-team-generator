@@ -101,7 +101,7 @@ handles both rather than trusting any single frame:
 | `name` | the caught-location caption — *"This **Trevenant** was caught on…"* |
 | `atk` / `def` / `sta` | the three appraisal bars, measured in pixels |
 | `level` | not shown on screen — solved for from species + IVs + CP + max HP |
-| `shadow` | the caption, when it says so (*"This **Shadow** Machamp…"*) |
+| `shadow` | not on the appraisal screen — only the `PURIFY` / `SHADOW BONUS` text behind it |
 | the *form* | not stated anywhere — settled from CP + max HP + IVs, then the type badges |
 
 A Pokemon is identified across frames by species + max HP, so two of the same
@@ -123,6 +123,21 @@ be dropped entirely. So the form is *solved for* the same way the level is —
 by asking which form has a level that produces the CP and the max HP that
 were read. Usually exactly one does: a Corsola with 101 HP and 13/10/15 is
 Galarian at level 20, and an ordinary one is nothing at all.
+
+**Shadow.** The appraisal screen never says it. The caption gives the base
+species with no "Shadow" in front of it, and the purple flames are a picture,
+not text. The only place Pokemon GO writes it down is the detail page
+*behind* the panel — the `PURIFY` button and the `SHADOW BONUS` note under
+the moves — which is visible only on frames where the panel is shut, and
+those frames have no bars and no caption to read either. The scan picks the
+marker off them anyway and ties it back to a Pokemon by the CP and max HP
+still on screen.
+
+So **swipe with the appraisal panel closed at least once per Pokemon** if you
+want shadow filled in. The scan reports how many rows it could check, and
+writes every unchecked one as not shadow — which for a shadow Pokemon looks
+exactly like a correct row, so it says so plainly rather than letting you
+assume.
 
 When two forms are stat-for-stat identical the type badges under the HP text
 break the tie — that is the only thing separating Oricorio's four dance
