@@ -62,8 +62,13 @@ export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 // other -- 10 was chosen from four real runs (383 generations): it takes
 // late-run top-10 turnover to 1.2-1.9 per generation against 2.8-5.0 in the
 // first quarter, a separation that a 5-generation window does not produce
-// (2.2-2.9 vs 3.2-5.2, which overlap). MAX_CHURN sits at 1 because that is
-// below the 1.2-1.9 noise floor a still-moving run cannot hold under.
+// (2.2-2.9 vs 3.2-5.2, which overlap). MAX_CHURN sat at 1 (below the 1.2-1.9
+// noise floor a still-moving run cannot hold under) until the meta-top200-1
+// run showed a rule tolerating 1 swap/gen still lets the top teams visibly
+// reshuffle across a "converged" stretch: its late-run smoothed churn trail
+// was 1 1 1 0 0 1 0 -- zero-churn generations are routine once a run truly
+// settles -- so the top-10 must now hold IDENTICAL for the whole window, and
+// the --generations cap is the backstop for a run that never fully freezes.
 // MIN_LIFT_GAIN is half a point of win rate: smaller than any per-quarter
 // gain observed while a run was still improving. WINDOW sat at 3 until the
 // meta-top200-1 run (2026-08-26) stopped at the FIRST generation a 3-streak
@@ -73,7 +78,7 @@ export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 export const DEFAULT_CONVERGENCE_WINDOW = 6;
 export const DEFAULT_CONVERGENCE_TOP_N = 10;
 export const DEFAULT_CONVERGENCE_TRAILING = 10;
-export const DEFAULT_CONVERGENCE_MAX_CHURN = 1;
+export const DEFAULT_CONVERGENCE_MAX_CHURN = 0;
 export const DEFAULT_CONVERGENCE_MIN_LIFT_GAIN = 0.005;
 
 // Sampling without replacement (mutant swap-ins, immigrant draws) can collide
