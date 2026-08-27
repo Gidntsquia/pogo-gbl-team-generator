@@ -256,11 +256,13 @@ const TOUGHEST_OPPONENTS_CAP = 15; // report/analytics-JSON cap on how many oppo
 // hides a systematic hole (an elite that went 2/8 into Altaria teams while
 // holding 63% overall) is visible in the report rather than discovered on
 // the ladder. A species must appear in at least CORE_BREAK_MIN_TEAMS
-// opponent teams before its group win rate means anything; the worst
-// CORE_BREAK_SPECIES_CAP qualifying species are shown (documented cap, same
-// rule as SPECIES_STATS_CAP).
+// opponent teams before its group win rate means anything, and it is called
+// a core breaker only below CORE_BREAK_WIN_RATE_MAX -- a matchup the team
+// loses decisively more often than it wins, not merely a soft spot. Every
+// qualifying species is listed (Jaxon 2026-08-27: names only, "include more
+// than one core breaker if it applies").
 const CORE_BREAK_MIN_TEAMS = 5;
-const CORE_BREAK_SPECIES_CAP = 6;
+const CORE_BREAK_WIN_RATE_MAX = 0.4;
 
 /**
  * Distinct base species of one opponent team, with display names -- shadow
@@ -281,10 +283,10 @@ function teamBaseSpecies(opp) {
 }
 
 /**
- * Per-species win rates over one elite's per-opponent elites-pass rows: for
- * every species appearing in at least CORE_BREAK_MIN_TEAMS of those opponent
- * teams, the elite's record across the teams containing it, worst
- * CORE_BREAK_SPECIES_CAP first. Report only (see the constants' comment).
+ * The elite's core breakers: every species appearing in at least
+ * CORE_BREAK_MIN_TEAMS of its elites-pass opponent teams against which the
+ * elite's group win rate is at most CORE_BREAK_WIN_RATE_MAX, worst first.
+ * Report only (see the constants' comment).
  *
  * @param {Array<object>} perMeta - per-opponent rows (wins/losses/ties + species).
  * @returns {Array<{id:string,name:string,teams:number,wins:number,losses:number,ties:number,winRate:number}>}
@@ -304,8 +306,8 @@ function computeCoreBreakExposure(perMeta) {
   return [...bySpecies.values()]
     .filter((a) => a.teams >= CORE_BREAK_MIN_TEAMS)
     .map((a) => ({ ...a, winRate: (a.wins + 0.5 * a.ties) / (a.wins + a.losses + a.ties) }))
-    .sort((a, b) => a.winRate - b.winRate || b.teams - a.teams || (a.id < b.id ? -1 : 1))
-    .slice(0, CORE_BREAK_SPECIES_CAP);
+    .filter((a) => a.winRate <= CORE_BREAK_WIN_RATE_MAX)
+    .sort((a, b) => a.winRate - b.winRate || b.teams - a.teams || (a.id < b.id ? -1 : 1));
 }
 
 const LEADS = [0, 1, 2];
@@ -1556,6 +1558,9 @@ function renderEvolveReport(result) {
     out.push(
       `- **Designated closer:** ${t.designatedCloser ? `${t.designatedCloser.name} (closer score ${pct(t.designatedCloser.closer)})` : 'n/a'}`
     );
+    out.push(
+      `- **Core breakers:** ${t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => s.name).join(', ') : 'none'}`
+    );
     out.push('');
     out.push('5 hardest opponents (by win%):');
     out.push('');
@@ -1563,16 +1568,6 @@ function renderEvolveReport(result) {
     out.push('| --- | ---: | ---: | ---: | ---: | ---: |');
     for (const h of t.hardestOpponents) {
       out.push(`| ${h.name}${h.label ? ` _(${h.label})_` : ''} | ${pct(h.winRate)} | ${h.wins} | ${h.losses} | ${h.ties} | ${signed(h.avgHpMargin)} |`);
-    }
-    if (t.coreBreakExposure?.length) {
-      out.push('');
-      out.push(`Core-break exposure -- win rate vs the elites-pass opponent teams containing each species (species in >=${CORE_BREAK_MIN_TEAMS} teams, worst ${CORE_BREAK_SPECIES_CAP} shown; visibility only, no score uses this):`);
-      out.push('');
-      out.push('| Species | Teams | W | L | T | Win% |');
-      out.push('| --- | ---: | ---: | ---: | ---: | ---: |');
-      for (const s of t.coreBreakExposure) {
-        out.push(`| ${s.name} | ${s.teams} | ${s.wins} | ${s.losses} | ${s.ties} | ${pct(s.winRate)} |`);
-      }
     }
     out.push('');
   });
@@ -1843,6 +1838,9 @@ function renderEvolveReportHtml(result) {
     out.push(
       `<li><strong>Designated closer:</strong> ${t.designatedCloser ? `${escapeHtml(t.designatedCloser.name)} (closer score ${pct(t.designatedCloser.closer)})` : 'n/a'}</li>`
     );
+    out.push(
+      `<li><strong>Core breakers:</strong> ${t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => escapeHtml(s.name)).join(', ') : 'none'}</li>`
+    );
     out.push('</ul>');
     out.push('<p>5 hardest opponents (by win%):</p>');
     out.push('<table>');
@@ -1856,16 +1854,6 @@ function renderEvolveReportHtml(result) {
       );
     }
     out.push('</tbody></table>');
-    if (t.coreBreakExposure?.length) {
-      out.push(`<p>Core-break exposure -- win rate vs the elites-pass opponent teams containing each species (species in &ge;${CORE_BREAK_MIN_TEAMS} teams, worst ${CORE_BREAK_SPECIES_CAP} shown; visibility only, no score uses this):</p>`);
-      out.push('<table>');
-      out.push('<thead><tr><th>Species</th><th>Teams</th><th>W</th><th>L</th><th>T</th><th>Win%</th></tr></thead>');
-      out.push('<tbody>');
-      for (const s of t.coreBreakExposure) {
-        out.push(`<tr><td>${escapeHtml(s.name)}</td><td>${s.teams}</td><td>${s.wins}</td><td>${s.losses}</td><td>${s.ties}</td><td>${pct(s.winRate)}</td></tr>`);
-      }
-      out.push('</tbody></table>');
-    }
     out.push('</section>');
   });
 
