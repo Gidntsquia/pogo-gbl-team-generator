@@ -157,7 +157,7 @@ import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
 import { loadMovesetPool, DEFAULT_META_POOL_SIZE } from '../src/meta/sampleTeams.js';
-import { loadMetaTeams } from '../src/meta/teams.js';
+import { loadMetaTeams, curatedTierWeight } from '../src/meta/teams.js';
 import {
   initOpponentPool,
   nextOpponentPool,
@@ -227,6 +227,15 @@ const FITNESS_MODES = ['classic', 'battle-reality'];
  * whether a team is durably good or just had a favorable final matchup set.
  */
 const RANKING_WEIGHTS = Object.freeze({ elitePass: 0.7, recent: 0.3 });
+
+// Elites-pass opponent weighting (Jaxon 2026-08-27: "weight ladder teams more
+// than the curated/off meta teams, which should be weighted more than the
+// sample teams"). Curated opponents weigh in at their tier's
+// CURATED_TIER_WEIGHTS value (src/meta/teams.js: meta/ladder 1, recommended
+// 0.5, off-meta 0.25); the GA's own evolved opponents continue that halving
+// gradient one step further down. Only the elites-pass win rate is weighted --
+// per-generation fitness and the `recent` ranking term stay unweighted.
+const ELITES_PASS_SAMPLED_WEIGHT = 0.125;
 
 /**
  * How many trailing generations the `recent` term above averages over: the
@@ -1045,8 +1054,10 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   pairingsFor: (opp: object) => Array<{leadA:number, leadB:number}>,
  *   difficulty?: number, trackLeads?: boolean, executor?: object,
  *   onLog?: (msg:string)=>void, roleScores?: Map<string, object>,
- *   cache?: object,
- * }} params
+ *   cache?: object, opponentWeights?: number[],
+ * }} params -- `opponentWeights[j]` (optional, parallel to `opponents`)
+ *   weights opponent j's battles in each team's `winRate`; raw counts
+ *   (`battles`, per-opponent tallies) are never weighted.
  * @returns {Promise<{results:object[], opponentTally:Array<{winPoints:number, battles:number}>,
  *   battleCount:number, cachedCount:number, errorCount:number, elapsedMs:number,
  *   startedAt:number, finishedAt:number}>}
@@ -1075,6 +1086,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     executor,
     onLog,
     roleScores,
+    opponentWeights = null,
   } = params;
   const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
@@ -1179,6 +1191,8 @@ async function evaluateTeamsInOrder(ctx, params) {
     const { members, oppPlans } = prepared[idx];
 
     let winPoints = 0;
+    let weightedWinPoints = 0;
+    let weightedBattles = 0;
     let hpSum = 0;
     let battles = 0;
     let candidateErrors = 0;
@@ -1193,6 +1207,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     const swapHpCount = [0, 0, 0];
 
     for (const { opp, oppIndex, pairings } of oppPlans) {
+      const oppWeight = opponentWeights ? (opponentWeights[oppIndex] ?? 1) : 1;
       let oppWinPoints = 0;
       let oppHpSum = 0;
       let oppBattles = 0;
@@ -1216,16 +1231,19 @@ async function evaluateTeamsInOrder(ctx, params) {
         else battleCount += 1;
 
         battles += 1;
+        weightedBattles += oppWeight;
         oppBattles += 1;
         const margin = r.survivorsHp.a - r.survivorsHp.b;
         hpSum += margin;
         oppHpSum += margin;
         if (r.winner === 'a') {
           winPoints += 1;
+          weightedWinPoints += oppWeight;
           oppWinPoints += 1;
           oppWins += 1;
         } else if (r.winner === 'tie') {
           winPoints += 0.5;
+          weightedWinPoints += oppWeight * 0.5;
           oppWinPoints += 0.5;
           oppTies += 1;
         } else {
@@ -1278,7 +1296,8 @@ async function evaluateTeamsInOrder(ctx, params) {
       }
     }
 
-    const winRate = battles > 0 ? winPoints / battles : 0;
+    // With no opponentWeights every oppWeight is 1 and this IS winPoints/battles.
+    const winRate = weightedBattles > 0 ? weightedWinPoints / weightedBattles : 0;
     const avgHpMargin = battles > 0 ? hpSum / battles : 0;
     const snowballScore = computeSnowballScore(exchangeWon, exchangeLost, winRate);
     const closerScore = computeCloserScore(members, roleScores);
@@ -1503,7 +1522,10 @@ function renderEvolveReport(result) {
   out.push(
     `Each elite fought all ${eo.total} elites-pass opponents once: every one of the ${eo.curated} curated teams, ` +
       `untouched and at its own established lead, plus the ${eo.evolved} strongest teams the opponent pool evolved ` +
-      'over the run. Both sides lead with their designated lead -- no averaging over leads nobody plays.'
+      'over the run. Both sides lead with their designated lead -- no averaging over leads nobody plays. ' +
+      'The elites-pass win% is a weighted mean: ladder-observed meta teams count in full, "recommended" curated ' +
+      'teams at half weight, off-meta curated teams at a quarter, and the evolved opponents at an eighth -- ' +
+      'battle counts shown stay raw.'
   );
   out.push('');
   out.push(
@@ -1777,7 +1799,10 @@ function renderEvolveReportHtml(result) {
   out.push(
     `<p>Each elite fought all ${eo.total} elites-pass opponents once: every one of the ${eo.curated} curated teams, ` +
       `untouched and at its own established lead, plus the ${eo.evolved} strongest teams the opponent pool evolved ` +
-      'over the run. Both sides lead with their designated lead -- no averaging over leads nobody plays.</p>'
+      'over the run. Both sides lead with their designated lead -- no averaging over leads nobody plays. ' +
+      'The elites-pass win% is a weighted mean: ladder-observed meta teams count in full, ' +
+      '&quot;recommended&quot; curated teams at half weight, off-meta curated teams at a quarter, and the evolved ' +
+      'opponents at an eighth -- battle counts shown stay raw.</p>'
   );
   out.push(
     `<p><strong>Score</strong> is what the ranking sorts on: ${rk.weights.elitePass} x the elites-pass win% plus ` +
@@ -2239,6 +2264,10 @@ export async function runEvolution(csvPath, opts = {}) {
     const eliteEvolved = evolvedRanked.slice(0, Math.min(evolvedWanted, evolvedRanked.length)).map(({ entry }) => entry);
     const eliteCurated = curatedPool.map((t) => ({ ...t, label: 'curated', leadIndex: t.leadIndex ?? 0 }));
     const eliteOpponents = [...eliteCurated, ...eliteEvolved];
+    const eliteOpponentWeights = [
+      ...eliteCurated.map((t) => curatedTierWeight(t)),
+      ...eliteEvolved.map(() => ELITES_PASS_SAMPLED_WEIGHT),
+    ];
 
     log(
       `evolve: final elites pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents ` +
@@ -2255,6 +2284,7 @@ export async function runEvolution(csvPath, opts = {}) {
       onLog: log,
       roleScores,
       cache: battleCache,
+      opponentWeights: eliteOpponentWeights,
     });
 
     // ---- Final ranking (Jaxon 2026-08-26) ---------------------------------
