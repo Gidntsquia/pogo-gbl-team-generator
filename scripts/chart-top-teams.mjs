@@ -215,7 +215,7 @@ if (DATA.fieldCount > 0) {
   sw.className = 'swatch';
   sw.style.background = 'rgba(127,127,127,0.4)';
   li.appendChild(sw);
-  li.appendChild(document.createTextNode('+' + DATA.fieldCount + ' more teams that cracked a generation\'s top 10'));
+  li.appendChild(document.createTextNode('+' + DATA.fieldCount + " more teams that cracked a generation's top 10"));
   legend.appendChild(li);
 }
 function dFor(series, upTo) {
