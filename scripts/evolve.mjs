@@ -113,8 +113,9 @@
 //
 // GA TUNABLES: deliberately NOT exposed as CLI flags. The candidate side's
 // (deathRate/mutationFloor/mutationCeil/leadRotationRate/immigrantFraction/
-// alpha, convergence window/topN) live as exported DEFAULT_* constants in
-// src/teams/evolve.js; the opponent side's live the same way in
+// alpha, convergence window/topN/trailing/maxChurn/minLiftGain) live as
+// exported DEFAULT_* constants in src/teams/evolve.js; the opponent
+// side's live the same way in
 // src/meta/opponentPool.js. A future ticket can add flags if tuning them from
 // the CLI turns out to matter in practice.
 //

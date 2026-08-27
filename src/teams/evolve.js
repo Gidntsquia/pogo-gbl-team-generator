@@ -57,8 +57,20 @@ export const DEFAULT_MUTATION_CEIL = 0.4;
 export const DEFAULT_LEAD_ROTATION_RATE = 0.3;
 // A floor of ~10% of P fresh IMMIGRANT teams is always reserved.
 export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
+// Convergence (see `hasConverged`). TRAILING is the number of generations of
+// a team's own fitness history averaged before teams are ranked against each
+// other -- 10 was chosen from four real runs (383 generations): it takes
+// late-run top-10 turnover to 1.2-1.9 per generation against 2.8-5.0 in the
+// first quarter, a separation that a 5-generation window does not produce
+// (2.2-2.9 vs 3.2-5.2, which overlap). MAX_CHURN sits at 1 because that is
+// below the 1.2-1.9 noise floor a still-moving run cannot hold under.
+// MIN_LIFT_GAIN is half a point of win rate: smaller than any per-quarter
+// gain observed while a run was still improving.
 export const DEFAULT_CONVERGENCE_WINDOW = 3;
 export const DEFAULT_CONVERGENCE_TOP_N = 10;
+export const DEFAULT_CONVERGENCE_TRAILING = 10;
+export const DEFAULT_CONVERGENCE_MAX_CHURN = 1;
+export const DEFAULT_CONVERGENCE_MIN_LIFT_GAIN = 0.005;
 
 // Sampling without replacement (mutant swap-ins, immigrant draws) can collide
 // with an already-used species-set signature, especially on a small pool;
@@ -385,45 +397,147 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   return { population: nextPopulation, lineage: { died, entries } };
 }
 
-/** Top-N-by-fitness team signatures for one `{population, fitness}` generation snapshot. */
-function topSetSignature(generation, topN) {
-  const { population, fitness } = generation;
-  const rankedBestFirst = population.map((_, i) => i).sort((a, b) => fitness[b] - fitness[a] || a - b);
-  const top = rankedBestFirst.slice(0, Math.min(topN, population.length));
-  return new Set(top.map((i) => teamSignature(population[i])));
-}
-
-function setsEqual(a, b) {
-  if (a.size !== b.size) return false;
-  for (const value of a) if (!b.has(value)) return false;
-  return true;
+/**
+ * Mean fitness per team signature over the `trailing` generations ending at
+ * `end` (inclusive), for the signatures alive in generation `end`.
+ *
+ * A single generation's fitness is a win rate over one freshly-drawn opponent
+ * sample -- at the default 20 opponents its standard error is ~11 points,
+ * which is ~35x the fitness gap that separates rank 10 from rank 11. Averaging
+ * a team's own history is what makes cross-team comparison mean anything at
+ * the elite boundary. Measured on four real runs (383 generations), it lifts
+ * generation-to-generation top-10 carryover from 2.6/10 to ~8/10.
+ *
+ * Teams with fewer than `trailing` observations are still scored (on what
+ * they have) rather than excluded: an eligibility cliff makes the early
+ * generations trivially "stable" because almost nothing qualifies.
+ */
+function smoothedScores(history, end, trailing) {
+  const start = Math.max(0, end - trailing + 1);
+  const sums = new Map();
+  const counts = new Map();
+  const alive = new Set(history[end].population.map(teamSignature));
+  for (let g = start; g <= end; g++) {
+    const { population, fitness } = history[g];
+    for (let i = 0; i < population.length; i++) {
+      const signature = teamSignature(population[i]);
+      if (!alive.has(signature)) continue;
+      sums.set(signature, (sums.get(signature) ?? 0) + fitness[i]);
+      counts.set(signature, (counts.get(signature) ?? 0) + 1);
+    }
+  }
+  const scores = new Map();
+  for (const [signature, sum] of sums) scores.set(signature, sum / counts.get(signature));
+  return scores;
 }
 
 /**
- * Convergence: converged once the top-N (default 10, by
- * fitness) team-composition set has been IDENTICAL for `window` (default 3)
- * consecutive generations. Deliberately does NOT know about `--generations`
- * caps or `--deadline-minutes` -- those are scripts/evolve.mjs's job,
- * driven by wall-clock/config concerns this pure module has no business
- * touching.
+ * The `topN` best signatures by smoothed score, plus that generation's ELITE
+ * LIFT: how far the elite mean sits above the population mean.
+ *
+ * Lift is the drift-immune half of the convergence test. Raw fitness is not
+ * comparable across generations -- the opponent pool co-evolves, so a team
+ * that is genuinely improving can post a FALLING win rate against opponents
+ * that improved faster. Both terms of the lift are measured against the same
+ * generation's opponents, so the difference survives that drift: it asks "how
+ * much better than its own population is the elite?", which is a question
+ * about the candidates alone.
+ */
+function eliteSnapshot(history, end, trailing, topN) {
+  const scores = smoothedScores(history, end, trailing);
+  const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  const top = ranked.slice(0, Math.min(topN, ranked.length));
+  const populationMean = ranked.reduce((sum, [, v]) => sum + v, 0) / (ranked.length || 1);
+  const eliteMean = top.reduce((sum, [, v]) => sum + v, 0) / (top.length || 1);
+  return { set: new Set(top.map(([signature]) => signature)), lift: eliteMean - populationMean };
+}
+
+/** How many of `next`'s members are not in `prev`. */
+function churn(prev, next) {
+  let carried = 0;
+  for (const signature of next) if (prev.has(signature)) carried++;
+  return next.size - carried;
+}
+
+/**
+ * Convergence: converged once the run has stopped finding better teams, as
+ * opposed to stopped SHUFFLING them.
+ *
+ * Two conditions, both required, both measured on the smoothed score
+ * (`smoothedScores`) rather than on a single generation's win rate:
+ *
+ *  1. ELITE STABILITY -- at most `maxChurn` of the smoothed top-`topN` turns
+ *     over in each of the last `window` generations.
+ *  2. NO FRESH LIFT -- the elite's mean advantage over its own population
+ *     (`eliteSnapshot`) is no more than `minLiftGain` above what it averaged
+ *     over the preceding `trailing` generations. This is the condition that
+ *     stops the run from halting while it is still climbing but happens to
+ *     have held a stable top-10 for a few generations.
+ *
+ * The predecessor demanded that the top-10 be IDENTICAL for 3 generations
+ * running. Backtested over 383 generations from four real runs it fired zero
+ * times, longest stable streak 1 -- it was asking a ~0.3-point question of a
+ * ~11-point-noise measurement, and 7.0 of the 7.4 top-10 slots that turned
+ * over each generation were teams already in the population re-crossing the
+ * rank-10 line. Exact identity is also the wrong thing to ask for: on those
+ * same runs the top-10 from the halfway point overlapped the FINAL top-10 by
+ * only 2-5 members, yet those teams still ranked in the 78th-92nd percentile
+ * of the final population. Late churn is diffusion among near-equivalent
+ * teams, so what a stopping rule must detect is a fitness plateau, not a
+ * frozen roster.
+ *
+ * Needs `trailing + window` generations of history before it can fire at all,
+ * so a short run (the 15-generation default) is cap-bound by construction.
+ *
+ * Deliberately does NOT know about `--generations` caps or
+ * `--deadline-minutes` -- those are scripts/evolve.mjs's job, driven by
+ * wall-clock/config concerns this pure module has no business touching.
  *
  * @param {Array<{population: string[][], fitness: number[]}>} history
  *   Ordered oldest-to-newest, one entry per generation actually run.
- * @param {{window?: number, topN?: number}} [opts]
+ * @param {{window?: number, topN?: number, trailing?: number,
+ *          maxChurn?: number, minLiftGain?: number}} [opts]
  * @returns {{converged: boolean, reason: string|null}}
  */
 export function hasConverged(history, opts = {}) {
   const window = opts.window ?? DEFAULT_CONVERGENCE_WINDOW;
   const topN = opts.topN ?? DEFAULT_CONVERGENCE_TOP_N;
-  if (!Array.isArray(history) || history.length < window) {
-    return { converged: false, reason: null };
+  const trailing = opts.trailing ?? DEFAULT_CONVERGENCE_TRAILING;
+  const maxChurn = opts.maxChurn ?? DEFAULT_CONVERGENCE_MAX_CHURN;
+  const minLiftGain = opts.minLiftGain ?? DEFAULT_CONVERGENCE_MIN_LIFT_GAIN;
+  const notConverged = { converged: false, reason: null };
+  if (!Array.isArray(history) || history.length < trailing + window) return notConverged;
+
+  const newest = history.length - 1;
+  // One extra snapshot below the window supplies the `prev` that the window's
+  // oldest generation is compared against.
+  const snapshots = new Map();
+  const snapshotAt = (g) => {
+    if (!snapshots.has(g)) snapshots.set(g, eliteSnapshot(history, g, trailing, topN));
+    return snapshots.get(g);
+  };
+
+  for (let g = newest - window + 1; g <= newest; g++) {
+    if (churn(snapshotAt(g - 1).set, snapshotAt(g).set) > maxChurn) return notConverged;
   }
-  const recent = history.slice(-window);
-  const signatures = recent.map((generation) => topSetSignature(generation, topN));
-  const stable = signatures.every((set) => setsEqual(set, signatures[0]));
-  if (!stable) return { converged: false, reason: null };
+
+  const windowLift = [];
+  for (let g = newest - window + 1; g <= newest; g++) windowLift.push(snapshotAt(g).lift);
+  const baseline = [];
+  for (let g = Math.max(0, newest - window + 1 - trailing); g < newest - window + 1; g++) {
+    baseline.push(snapshotAt(g).lift);
+  }
+  if (!baseline.length) return notConverged;
+  const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length;
+  const gain = mean(windowLift) - mean(baseline);
+  if (gain > minLiftGain) return notConverged;
+
   return {
     converged: true,
-    reason: `top-${topN} composition unchanged for ${window} consecutive generations`,
+    reason:
+      `top-${topN} (by ${trailing}-generation mean win rate) turned over by at most ` +
+      `${maxChurn} for ${window} consecutive generations, and the elite's lead over ` +
+      `the population gained ${(gain * 100).toFixed(1)} points against a ` +
+      `${(minLiftGain * 100).toFixed(1)}-point threshold`,
   };
 }

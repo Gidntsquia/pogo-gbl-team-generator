@@ -551,9 +551,25 @@ pick from your collection, or (about 30% of successful rolls) promotes a
 bench member to lead instead. The dead slots are refilled by these mutants
 plus a small floor (~10% of the population) of brand-new random "immigrant"
 teams, so the population never fully closes off to new ideas. This repeats
-either until the top-10 team composition hasn't changed for 3 generations
-in a row (convergence), or a generation/time cap is hit — the report says
-which one stopped the run.
+either until the run converges or a generation/time cap is hit — the report
+says which one stopped it.
+
+Convergence is judged on each team's **mean win rate over the last 10
+generations**, not on one generation's result. A single generation scores a
+team against one freshly drawn opponent sample, so at the default 20
+opponents its standard error is around 11 points — about 35× the gap that
+separates rank 10 from rank 11. Ranking on raw fitness, roughly 7 of the top
+10 slots turn over every generation from noise alone, and the run reads as
+though it never settles. The run is called converged when two things hold for
+3 generations running: at most 1 of the smoothed top 10 turns over, and the
+elite's lead over the rest of its own population has stopped growing. That
+second condition is measured within a generation on purpose — the opponent
+pool co-evolves, so a team that is genuinely improving can post a falling win
+rate, and only the elite-vs-field gap is comparable across generations.
+
+Backtested on four real runs (383 generations), it stops them 9–79
+generations early, and the teams it stops on still sit in the 91st–98th
+percentile of the population those runs finished with.
 
 **Locked leads:** a team isn't just 3 species — it's a
 *(lead, back, back)*, and which mon leads is part of what makes two teams
