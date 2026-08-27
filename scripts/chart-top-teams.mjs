@@ -148,6 +148,7 @@ export function renderChartHtml(data, title) {
   .legend li { display: flex; align-items: center; gap: 0.5rem; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
   .legend .swatch { width: 1.1em; height: 0.35em; border-radius: 0.2em; flex: none; }
+  #picked { min-height: 1.5em; margin: 0.4rem 0 0.3rem; font-size: 0.92rem; color: rgba(127,127,127,0.95); }
 </style>
 </head>
 <body>
@@ -157,6 +158,7 @@ export function renderChartHtml(data, title) {
   <input id="scrub" type="range" min="0" value="0" step="1">
   <span id="genlabel"></span>
 </div>
+<p id="picked">Click or tap any line — grey ones too — to see which team it is.</p>
 <svg id="chart" viewBox="0 0 960 480" role="img" aria-label="win rate by generation"></svg>
 <ul class="legend" id="legend"></ul>
 <script>
@@ -198,6 +200,48 @@ const paths = DATA.teams.map(t =>
 );
 const cursor = el('line', { stroke: 'rgba(127,127,127,0.7)', 'stroke-dasharray': '4 3',
   y1: M.top, y2: H - M.bottom, x1: x(0), x2: x(0) });
+// Invisible wide twins of every line, appended last so they sit on top: the
+// tap target for identifying a line (the 1.1px field strokes are unhittable).
+const hitPaths = DATA.teams.map((t, i) => {
+  const hp = el('path', { fill: 'none', stroke: 'transparent', 'stroke-width': 12,
+    'stroke-linejoin': 'round' });
+  hp.style.pointerEvents = 'stroke';
+  hp.style.cursor = 'pointer';
+  hp.addEventListener('click', (ev) => { ev.stopPropagation(); select(i); });
+  return hp;
+});
+const picked = document.getElementById('picked');
+const pickedHint = picked.textContent;
+let sel = null;
+function describe(t) {
+  let peak = -1, peakGen = 0, first = null, last = null;
+  t.series.forEach((v, g) => {
+    if (v === null) return;
+    if (first === null) first = g;
+    last = g;
+    if (v > peak) { peak = v; peakGen = g; }
+  });
+  const head = t.rank !== null ? '#' + t.rank + ' ' + t.name : t.name;
+  const fate = t.rank !== null ? 'final top 10' : 'bred out';
+  return head + ' \u2014 ' + fate + '; alive gens ' + first + '\u2013' + last +
+    ', peak ' + Math.round(peak * 100) + '% (gen ' + peakGen + ')';
+}
+function select(i) {
+  if (sel !== null) {
+    const t0 = DATA.teams[sel];
+    paths[sel].setAttribute('stroke', t0.color ?? 'rgba(127,127,127,0.4)');
+    paths[sel].setAttribute('stroke-width', t0.color ? 2.25 : 1.1);
+  }
+  if (i === null || i === sel) { sel = null; picked.textContent = pickedHint; return; }
+  sel = i;
+  const t = DATA.teams[i];
+  paths[i].setAttribute('stroke', t.color ?? 'currentColor');
+  paths[i].setAttribute('stroke-width', 3.25);
+  svg.appendChild(paths[i]);
+  for (const hp of hitPaths) svg.appendChild(hp);
+  picked.textContent = describe(t);
+}
+svg.addEventListener('click', () => select(null));
 const legend = document.getElementById('legend');
 for (const t of DATA.teams) {
   if (t.color === null) continue;
@@ -234,7 +278,11 @@ const genlabel = document.getElementById('genlabel');
 scrub.max = gens - 1;
 let shown = 0, playing = true, last = 0;
 function draw() {
-  DATA.teams.forEach((t, i) => paths[i].setAttribute('d', dFor(t.series, shown)));
+  DATA.teams.forEach((t, i) => {
+    const d = dFor(t.series, shown);
+    paths[i].setAttribute('d', d);
+    hitPaths[i].setAttribute('d', d);
+  });
   cursor.setAttribute('x1', x(shown));
   cursor.setAttribute('x2', x(shown));
   scrub.value = shown;
