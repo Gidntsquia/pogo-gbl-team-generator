@@ -89,7 +89,7 @@ test('limit caps how many teams are built', () => {
 
 // Community-curated opponent teams (data/meta-teams-community.json).
 
-test('community file loads and its teams resolve fully battle-ready (>=102 of 105)', () => {
+test('community file loads and its teams resolve fully battle-ready (>=104 of 107)', () => {
   // 2026-08-26 (Jaxon): the 12 JP Nature Cup + 3 JP player-party teams and all 3
   // Mimikyu teams were deleted (Mimikyu is banned in Competitor's Cup, the GL
   // format he plays), and 17 teams he fought on ladder that day were added.
@@ -99,13 +99,14 @@ test('community file loads and its teams resolve fully battle-ready (>=102 of 10
   // ladder teams (jaxon-ladder-15..19). 82 + 5 = 87. And 5 more the next day
   // (2026-08-27, jaxon-ladder-20..24). 87 + 5 = 92. Then 12 top-ladder teams
   // (high-ladder-22..33) and 1 more ladder team (jaxon-ladder-25), same day.
-  // 92 + 13 = 105.
-  assert.equal(communityRaw.teams.length, 105, 'source file has 105 entries under the pinned data (57, plus 13 Jaxon ladder + 2 PvPoke top-performer + 33 high-ladder teams)');
+  // 92 + 13 = 105. Then 2 more ladder teams (jaxon-ladder-26/27, also
+  // 2026-08-27). 105 + 2 = 107.
+  assert.equal(communityRaw.teams.length, 107, 'source file has 107 entries under the pinned data (57, plus 15 Jaxon ladder + 2 PvPoke top-performer + 33 high-ladder teams)');
 
   const teams = loadCommunityTeams(ctx);
   assert.ok(
-    teams.length >= 102,
-    `expected >=102/105 community teams to resolve (the JP ids that used to fail here, e.g. arctibax, went out with the JP-cup teams), got ${teams.length}`
+    teams.length >= 104,
+    `expected >=104/107 community teams to resolve (the JP ids that used to fail here, e.g. arctibax, went out with the JP-cup teams), got ${teams.length}`
   );
   for (const team of teams) {
     assert.ok(team.id.startsWith('community:'), `${team.id} should be namespaced`);
@@ -228,7 +229,7 @@ test('every community team is stamped leadIndex: 0 (declared-lead doctrine)', ()
 // and must resolve whole -- one parameterized test over the batches, not one
 // test each.
 const JAXON_BATCHES = [
-  ['jaxon-ladder-', 25],
+  ['jaxon-ladder-', 27],
   ['jet-ladder-', 17],
   ['pvpoke-top-', 2],
   ['high-ladder-', 33],
