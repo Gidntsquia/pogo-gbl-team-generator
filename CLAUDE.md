@@ -11,6 +11,87 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 - Workers: do NOT `git commit` (the orchestrator commits); keep your diff inside the files your task owns.
 - Output artifacts (reports, caches) go in `out/` (gitignored).
 
+## Orientation — what this is and where things live
+
+Feed in a Pokemon GO collection CSV, get back the best 3-mon GO Battle League
+teams buildable from it, ranked by real 3v3 battles run through pvpoke's
+vendored engine. The pipeline (wired end-to-end in `src/cli.js`):
+
+**import CSV → 1v1-score to prune → sample candidate teams → 3v3-battle them
+against a meta opponent pool → rank → report (`out/report.md` + `.html`)**
+
+README.md documents every feature in depth (flags, sampling weights, the GA,
+the video scanner, cost math) — go there for behavior questions; the map below
+is for finding code.
+
+### Entry points
+
+| command | what it runs |
+|---|---|
+| `node src/cli.js <collection.csv>` | the main pipeline above (`--cp 2500` for Ultra League; `--help` for all flags) |
+| `scripts/evolve.mjs` | genetic-algorithm team search; both sides evolve (`src/teams/evolve.js` + `src/meta/opponentPool.js`), checkpoints/resumes in `out/` |
+| `scripts/tournament.mjs` | large offline sampled runs |
+| `scripts/scan-video.mjs` | macOS-only: screen recording → collection CSV (`src/videoscan/`) |
+| `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
+| `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
+| `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs` | one-off benchmarks/analyses, not part of the pipeline |
+
+### Module map (`src/`)
+
+- `importer/` — CSV → NormalizedMon. `index.js` (Poke Genie + generic row
+  mapping), `csv.js` (dep-free parser), `gamemaster.js` (species/form
+  resolution against vendored gamemaster), `moves.js` (move-name →
+  moveId for `--current-moves`), `util.js` (parsing helpers).
+- `engine/` — the only code that touches pvpoke. `pvpokeLoader.js` boots
+  vendor sources in a Node `vm`; `harness.js` (`buildPokemon`, 1v1
+  `simBattle`); `teamBattle.js` (3v3 `battleTeams`, Training/emulate mode);
+  `parallel.js`/`parallelWorker.js` (worker-thread executor, `--threads`).
+  **Has its own README.md** for engine internals and determinism history.
+- `scoring/` — the 1v1 pruning matrix (`scoreCollection`), shield-scenario
+  weighted. Prunes candidates only; never the final ranking.
+- `teams/` — the candidate side: `index.js` (3v3 evaluation + ranking,
+  `dedupeBestPerSpecies` lineage collapse), `sample.js` (weighted candidate
+  sampler), `evolve.js` (GA core).
+- `meta/` — the opponent side: `teams.js` (curated pvpoke presets +
+  `data/meta-teams-community.json`, tier weights), `sampleTeams.js` (weighted
+  opponent sampler), `usage.js` (per-species usage weights), `roles.js`
+  (lead/closer/switch priors), `opponentPool.js` (opponent-side GA).
+- `evolution/` — expands a collection so each mon also competes as its
+  possible evolutions (default on; `--no-evolutions`).
+- `cost/` — `powerup.js` (Stardust/Candy build cost, pure arithmetic) +
+  `evolutionCandy.json` (generated).
+- `report/` — Markdown + HTML report rendering, pure (no engine).
+- `util/` — `leagues.js` (CP cap → league identity), `rng.js` (seeded PRNG +
+  weighted sampling; the only randomness source in the repo).
+- `videoscan/` — the macOS video importer; `scan.swift` is the only
+  non-JS piece (AVFoundation/Vision), everything decision-making is JS
+  tested against `fixtures/videoscan/`.
+
+### Data & artifacts
+
+- `vendor/pvpoke` — pinned sparse clone, absent until `scripts/setup.sh`;
+  read-only (see rules above).
+- `data/` — our own data: `meta-teams-community.json` (curated GL teams,
+  `members[0]` = lead), optional `meta-usage.json`/`meta-roles.json`
+  freshness snapshots (loaders fall back to vendored rankings when absent).
+- `fixtures/` — sample collections + recorded videoscan frames for tests.
+- Repo root may hold the user's real collection CSVs (`jaxon-gbl-collection.csv`,
+  `jet_GL_collection.csv`, `jaxon-ultra-league.csv`) — gitignored, personal
+  data; don't commit or move them.
+
+### Invariants an agent should know before editing
+
+- Everything is deterministic: same seed ⇒ identical results, serial or
+  threaded. All randomness flows through `src/util/rng.js`.
+- Candidate teams always battle as "team A" (fixed-side convention — relative
+  ranking is what's trusted, absolute win% carries a small side offset).
+- `members[0]` of any team is its designated lead, everywhere.
+- One lineage (a CSV row + its evolutions) contributes at most one candidate
+  pool entry (`dedupeBestPerSpecies`).
+- Battle math is never reimplemented — only pvpoke's vendored code fights.
+- Tests map ~1:1 to modules (`test/<area>.test.js`); `test/e2e.test.js` is
+  the only file running real battles (see Tests below).
+
 ## Tests
 
 ### What to run, and when

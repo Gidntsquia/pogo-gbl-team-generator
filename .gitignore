@@ -2,7 +2,7 @@ vendor/
 node_modules/
 out/
 .DS_Store
-my-collection.csv
+jaxon-gbl-collection.csv
 jaxon-ultra-league.csv
 .claude/*
 !.claude/settings.json
