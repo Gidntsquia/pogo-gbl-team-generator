@@ -65,8 +65,12 @@ export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 // (2.2-2.9 vs 3.2-5.2, which overlap). MAX_CHURN sits at 1 because that is
 // below the 1.2-1.9 noise floor a still-moving run cannot hold under.
 // MIN_LIFT_GAIN is half a point of win rate: smaller than any per-quarter
-// gain observed while a run was still improving.
-export const DEFAULT_CONVERGENCE_WINDOW = 3;
+// gain observed while a run was still improving. WINDOW sat at 3 until the
+// meta-top200-1 run (2026-08-26) stopped at the FIRST generation a 3-streak
+// existed -- replaying its 33-generation history, no window of 4 or more ever
+// fired -- so a run now has to hold still for 6 consecutive generations
+// before it is called done.
+export const DEFAULT_CONVERGENCE_WINDOW = 6;
 export const DEFAULT_CONVERGENCE_TOP_N = 10;
 export const DEFAULT_CONVERGENCE_TRAILING = 10;
 export const DEFAULT_CONVERGENCE_MAX_CHURN = 1;
