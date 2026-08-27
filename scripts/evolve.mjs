@@ -249,6 +249,64 @@ const SPECIES_STATS_CAP = 25; // report/analytics-JSON cap on how many species r
 const TOP_CORES_CAP = 15;
 const TRAJECTORY_SPECIES_CAP = 15;
 const TOUGHEST_OPPONENTS_CAP = 15; // report/analytics-JSON cap on how many opponent rows are kept (same documented-not-silent rule as SPECIES_STATS_CAP).
+// Core-break exposure (REPORT ONLY -- never part of any score or fitness;
+// Jaxon 2026-08-27: the ranking stays pure win rate, "a hard loss and a
+// slight loss cost the same"). Groups each elite's elites-pass results by
+// the species its opponents contained, so a high-mean team whose average
+// hides a systematic hole (an elite that went 2/8 into Altaria teams while
+// holding 63% overall) is visible in the report rather than discovered on
+// the ladder. A species must appear in at least CORE_BREAK_MIN_TEAMS
+// opponent teams before its group win rate means anything; the worst
+// CORE_BREAK_SPECIES_CAP qualifying species are shown (documented cap, same
+// rule as SPECIES_STATS_CAP).
+const CORE_BREAK_MIN_TEAMS = 5;
+const CORE_BREAK_SPECIES_CAP = 6;
+
+/**
+ * Distinct base species of one opponent team, with display names -- shadow
+ * and base group together (a "loses to Altaria" hole does not care which).
+ *
+ * @param {{members: Array<object>}} opp - elites-pass opponent entry.
+ * @returns {Array<{id: string, name: string}>}
+ */
+function teamBaseSpecies(opp) {
+  const seen = new Map();
+  for (const m of opp.members) {
+    const id = String(m.spec?.speciesId ?? m.speciesId ?? '').replace(/_shadow$/, '');
+    if (!id || seen.has(id)) continue;
+    const raw = m.pokemon?.speciesName ?? m.name ?? id;
+    seen.set(id, { id, name: String(raw).replace(/ \(Shadow\)$/, '') });
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Per-species win rates over one elite's per-opponent elites-pass rows: for
+ * every species appearing in at least CORE_BREAK_MIN_TEAMS of those opponent
+ * teams, the elite's record across the teams containing it, worst
+ * CORE_BREAK_SPECIES_CAP first. Report only (see the constants' comment).
+ *
+ * @param {Array<object>} perMeta - per-opponent rows (wins/losses/ties + species).
+ * @returns {Array<{id:string,name:string,teams:number,wins:number,losses:number,ties:number,winRate:number}>}
+ */
+function computeCoreBreakExposure(perMeta) {
+  const bySpecies = new Map();
+  for (const row of perMeta) {
+    for (const s of row.species ?? []) {
+      const a = bySpecies.get(s.id) ?? { id: s.id, name: s.name, teams: 0, wins: 0, losses: 0, ties: 0 };
+      a.teams += 1;
+      a.wins += row.wins;
+      a.losses += row.losses;
+      a.ties += row.ties;
+      bySpecies.set(s.id, a);
+    }
+  }
+  return [...bySpecies.values()]
+    .filter((a) => a.teams >= CORE_BREAK_MIN_TEAMS)
+    .map((a) => ({ ...a, winRate: (a.wins + 0.5 * a.ties) / (a.wins + a.losses + a.ties) }))
+    .sort((a, b) => a.winRate - b.winRate || b.teams - a.teams || (a.id < b.id ? -1 : 1))
+    .slice(0, CORE_BREAK_SPECIES_CAP);
+}
 
 const LEADS = [0, 1, 2];
 
@@ -1208,6 +1266,7 @@ async function evaluateTeamsInOrder(ctx, params) {
           metaTeamId: opp.id,
           name: opp.name,
           label: opp.label ?? null,
+          species: teamBaseSpecies(opp),
           wins: oppWins,
           losses: oppLosses,
           ties: oppTies,
@@ -1269,6 +1328,7 @@ async function evaluateTeamsInOrder(ctx, params) {
       entry.hardestOpponents = [...perMeta]
         .sort((a, b) => a.winRate - b.winRate || a.avgHpMargin - b.avgHpMargin)
         .slice(0, 5);
+      entry.coreBreakExposure = computeCoreBreakExposure(perMeta);
     }
 
     results.push(entry); // positional -- NOT sorted, unlike tournament.mjs's runFunnelStage
@@ -1503,6 +1563,16 @@ function renderEvolveReport(result) {
     out.push('| --- | ---: | ---: | ---: | ---: | ---: |');
     for (const h of t.hardestOpponents) {
       out.push(`| ${h.name}${h.label ? ` _(${h.label})_` : ''} | ${pct(h.winRate)} | ${h.wins} | ${h.losses} | ${h.ties} | ${signed(h.avgHpMargin)} |`);
+    }
+    if (t.coreBreakExposure?.length) {
+      out.push('');
+      out.push(`Core-break exposure -- win rate vs the elites-pass opponent teams containing each species (species in >=${CORE_BREAK_MIN_TEAMS} teams, worst ${CORE_BREAK_SPECIES_CAP} shown; visibility only, no score uses this):`);
+      out.push('');
+      out.push('| Species | Teams | W | L | T | Win% |');
+      out.push('| --- | ---: | ---: | ---: | ---: | ---: |');
+      for (const s of t.coreBreakExposure) {
+        out.push(`| ${s.name} | ${s.teams} | ${s.wins} | ${s.losses} | ${s.ties} | ${pct(s.winRate)} |`);
+      }
     }
     out.push('');
   });
@@ -1786,6 +1856,16 @@ function renderEvolveReportHtml(result) {
       );
     }
     out.push('</tbody></table>');
+    if (t.coreBreakExposure?.length) {
+      out.push(`<p>Core-break exposure -- win rate vs the elites-pass opponent teams containing each species (species in &ge;${CORE_BREAK_MIN_TEAMS} teams, worst ${CORE_BREAK_SPECIES_CAP} shown; visibility only, no score uses this):</p>`);
+      out.push('<table>');
+      out.push('<thead><tr><th>Species</th><th>Teams</th><th>W</th><th>L</th><th>T</th><th>Win%</th></tr></thead>');
+      out.push('<tbody>');
+      for (const s of t.coreBreakExposure) {
+        out.push(`<tr><td>${escapeHtml(s.name)}</td><td>${s.teams}</td><td>${s.wins}</td><td>${s.losses}</td><td>${s.ties}</td><td>${pct(s.winRate)}</td></tr>`);
+      }
+      out.push('</tbody></table>');
+    }
     out.push('</section>');
   });
 
