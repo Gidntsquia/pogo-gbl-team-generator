@@ -301,6 +301,20 @@ function escapeHtml(s) {
 }
 
 /**
+ * Report-facing member name: stamp the shadow qualifier exactly the way
+ * src/teams/index.js does at its own member-construction site (see the
+ * comment there) -- a shadow and its ordinary counterpart share `b.name`,
+ * so without this a team built on a shadow reads as the normal form.
+ * Guarded so a name that already carries it is not double-suffixed.
+ *
+ * @param {object} b - built mon from matrix.builtMons.
+ * @returns {string}
+ */
+function memberDisplayName(b) {
+  return b.spec?.shadow && !/\(Shadow\)/.test(b.name) ? `${b.name} (Shadow)` : b.name;
+}
+
+/**
  * "Lead / Back / Back" team-name formatting (locked
  * leads) -- `members[0]` is always the designated lead end-to-end (see the
  * LOCKED LEADS note above and evaluateTeamsInOrder's own comment on why
@@ -905,7 +919,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
       rank: rank + 1,
       members: population[i].map((key) => {
         const b = matrix.builtMons[key];
-        return { key, speciesId: b.speciesId, name: b.name };
+        return { key, speciesId: b.speciesId, name: memberDisplayName(b) };
       }),
       fitness: fitness[i],
       winRate: r?.winRate ?? null,
@@ -1015,7 +1029,7 @@ async function evaluateTeamsInOrder(ctx, params) {
       return {
         key,
         speciesId: b.speciesId,
-        name: b.name,
+        name: memberDisplayName(b),
         pokemon: b.pokemon,
         spec: b.spec,
         // Build-cost inputs, same fields src/teams/index.js passes through:
