@@ -4,11 +4,14 @@
 //   node scripts/chart-top-teams.mjs <out-dir> [--top N] [--out PATH]
 //
 // <out-dir> is a scripts/evolve.mjs checkpoint directory. The teams charted
-// are the top N of evolve-ranking.json (the final weighted elites ranking)
-// when it exists, else the last generation's top N by fitness. Each team's
-// line is its RAW per-generation win rate (winRateBySignature), with gaps for
-// generations the team was not alive. Output is one self-contained HTML file
-// (inline SVG + JS, opens via file://) with play/pause and a scrubber.
+// are EVERY team that cracked any generation's top N by fitness
+// (analytics.topTeams), so the chart shows challengers rising and dying, not
+// just the survivors. Teams that also hold a spot in evolve-ranking.json (the
+// final weighted elites ranking) carry that rank; the rest rank null and
+// renderers draw them as the muted field. Each team's line is its RAW
+// per-generation win rate (winRateBySignature), with gaps for generations the
+// team was not alive. Output is one self-contained HTML file (inline SVG +
+// JS, opens via file://) with play/pause and a scrubber.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -28,12 +31,15 @@ function teamSignature(team) {
 }
 
 /**
- * Collect the chart's data from a checkpoint directory: which teams to trace
- * (final ranking when available) and each one's per-generation win rate.
+ * Collect the chart's data from a checkpoint directory: every team that ever
+ * appeared in a generation's top `topCount` by fitness, with its full
+ * per-generation win-rate series. Teams also present in evolve-ranking.json
+ * carry their final rank; the rest have rank null. Ordered: ranked teams
+ * first (by rank), then the field by total top-N appearances descending.
  *
  * @param {string} outDir - evolve checkpoint directory.
- * @param {number} topCount - how many teams to trace.
- * @returns {{teams: Array<{name: string, rank: number, series: Array<number|null>}>,
+ * @param {number} topCount - per-generation top-set size to union over.
+ * @returns {{teams: Array<{name: string, rank: number|null, series: Array<number|null>}>,
  *   generations: number}} series[g] is the team's gen-g win rate or null.
  */
 export function collectTopTeamSeries(outDir, topCount) {
@@ -53,29 +59,47 @@ export function collectTopTeamSeries(outDir, topCount) {
     throw new Error(`no evolve-gen*.json checkpoints found in ${outDir}`);
   }
 
-  let tracked;
-  const rankingPath = path.join(outDir, 'evolve-ranking.json');
-  if (existsSync(rankingPath)) {
-    tracked = readJson(rankingPath)
-      .slice(0, topCount)
-      .map((e) => ({ name: e.name, rank: e.rank, signature: e.signature }));
-  } else {
-    // Fallback for a dir whose run predates evolve-ranking.json: the last
-    // generation's top teams by fitness (analytics.topTeams carries names).
-    const last = checkpoints[checkpoints.length - 1];
-    tracked = last.topTeams.slice(0, topCount).map((t) => ({
-      name: t.members.map((m) => m.name).join(' / '),
-      rank: t.rank,
-      signature: teamSignature(t.members.map((m) => m.key)),
-    }));
+  // Union of every generation's top-N (first-seen order; names come from the
+  // same analytics entries).
+  const bySignature = new Map();
+  for (const cp of checkpoints) {
+    for (const t of cp.topTeams.slice(0, topCount)) {
+      const signature = teamSignature(t.members.map((m) => m.key));
+      let entry = bySignature.get(signature);
+      if (!entry) {
+        entry = { name: t.members.map((m) => m.name).join(' / '), signature, appearances: 0 };
+        bySignature.set(signature, entry);
+      }
+      entry.appearances += 1;
+    }
   }
-  if (tracked.length === 0) throw new Error(`no teams to trace in ${outDir}`);
+  if (bySignature.size === 0) throw new Error(`no teams to trace in ${outDir}`);
 
-  const teams = tracked.map((t) => ({
-    name: t.name,
-    rank: t.rank,
-    series: checkpoints.map((cp) => cp.winRateBySignature[t.signature] ?? null),
-  }));
+  const rankingPath = path.join(outDir, 'evolve-ranking.json');
+  const rankingEntries = existsSync(rankingPath) ? readJson(rankingPath) : [];
+  const rankBySignature = new Map(rankingEntries.map((e) => [e.signature, e.rank]));
+  // A final-ranking team can miss every per-generation top-N (the final rank
+  // blends the elites pass in; raw fitness never had it that high) -- include
+  // it anyway, so the chart always carries the whole final ranking.
+  for (const e of rankingEntries) {
+    if (!bySignature.has(e.signature)) {
+      bySignature.set(e.signature, { name: e.name.replace(' (Lead)', ''), signature: e.signature, appearances: 0 });
+    }
+  }
+
+  const teams = [...bySignature.values()]
+    .map((t) => ({
+      name: t.name,
+      rank: rankBySignature.get(t.signature) ?? null,
+      appearances: t.appearances,
+      series: checkpoints.map((cp) => cp.winRateBySignature[t.signature] ?? null),
+    }))
+    .sort((a, b) => {
+      if (a.rank !== null && b.rank !== null) return a.rank - b.rank;
+      if (a.rank !== null) return -1;
+      if (b.rank !== null) return 1;
+      return b.appearances - a.appearances;
+    });
   return { teams, generations: checkpoints.length };
 }
 
@@ -88,12 +112,16 @@ export function collectTopTeamSeries(outDir, topCount) {
  * @returns {string} HTML document text.
  */
 export function renderChartHtml(data, title) {
+  const ranked = data.teams.filter((t) => t.rank !== null);
   const payload = JSON.stringify({
     generations: data.generations,
-    teams: data.teams.map((t, i) => ({
+    fieldCount: data.teams.length - ranked.length,
+    teams: data.teams.map((t) => ({
       name: t.name,
       rank: t.rank,
-      color: PALETTE[i % PALETTE.length],
+      // Final-ranked teams get the strong palette; the rest of the field a
+      // shared muted stroke, so 100+ lines stay readable.
+      color: t.rank !== null ? PALETTE[(t.rank - 1) % PALETTE.length] : null,
       series: t.series.map((v) => (v === null ? null : Math.round(v * 1000) / 1000)),
     })),
   });
@@ -165,18 +193,29 @@ xt.textContent = 'generation';
 // One <path> per team; the animation rewrites each path's "d" up to the
 // current generation (gaps where series[g] is null).
 const paths = DATA.teams.map(t =>
-  el('path', { fill: 'none', stroke: t.color, 'stroke-width': 2.25, 'stroke-linejoin': 'round' })
+  el('path', { fill: 'none', stroke: t.color ?? 'rgba(127,127,127,0.4)',
+    'stroke-width': t.color ? 2.25 : 1.1, 'stroke-linejoin': 'round' })
 );
 const cursor = el('line', { stroke: 'rgba(127,127,127,0.7)', 'stroke-dasharray': '4 3',
   y1: M.top, y2: H - M.bottom, x1: x(0), x2: x(0) });
 const legend = document.getElementById('legend');
 for (const t of DATA.teams) {
+  if (t.color === null) continue;
   const li = document.createElement('li');
   const sw = document.createElement('span');
   sw.className = 'swatch';
   sw.style.background = t.color;
   li.appendChild(sw);
   li.appendChild(document.createTextNode('#' + t.rank + ' ' + t.name));
+  legend.appendChild(li);
+}
+if (DATA.fieldCount > 0) {
+  const li = document.createElement('li');
+  const sw = document.createElement('span');
+  sw.className = 'swatch';
+  sw.style.background = 'rgba(127,127,127,0.4)';
+  li.appendChild(sw);
+  li.appendChild(document.createTextNode('+' + DATA.fieldCount + ' more teams that cracked a generation\'s top 10'));
   legend.appendChild(li);
 }
 function dFor(series, upTo) {
