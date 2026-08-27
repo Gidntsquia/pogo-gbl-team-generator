@@ -8,8 +8,9 @@
 // with a back and keep the same species-set, population stays unique
 // (LEAD-AWARE identity: same species-set + different lead = different
 // individual) + exactly at the target size with the immigrant floor
-// respected, the convergence detector fires exactly when specified, and
-// excludeSpecies is honored end to end (initPopulation + nextGeneration).
+// respected, and excludeSpecies is honored end to end (initPopulation +
+// nextGeneration). The convergence detector is asserted in test/e2e.test.js,
+// against a generation history built from real battles.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +18,6 @@ import assert from 'node:assert/strict';
 import {
   initPopulation,
   nextGeneration,
-  hasConverged,
   DEFAULT_IMMIGRANT_FRACTION,
 } from '../src/teams/evolve.js';
 
@@ -340,71 +340,6 @@ test('excludeSpecies is honored end to end: initPopulation and nextGeneration (m
   for (const team of next) {
     for (const species of excludeSpecies) assert.ok(!speciesOf(team).includes(species));
   }
-});
-
-// Deterministic per-(generation, index) jitter, uniform in [-amp, amp].
-function jitter(g, i, amp) {
-  const x = Math.sin((g + 1) * 12.9898 + (i + 1) * 78.233) * 43758.5453;
-  return (x - Math.floor(x) - 0.5) * 2 * amp;
-}
-
-/**
- * `count` generations over one fixed population whose members have a stable
- * underlying quality (index/P), observed through per-generation noise of
- * amplitude `amp`. `eliteBonus` adds `g * eliteBonus` to the top `topN` teams
- * to simulate a run that is still pulling away from its own population.
- */
-function noisyHistory(population, count, amp, eliteBonus = 0, topN = 0) {
-  const P = population.length;
-  const history = [];
-  for (let g = 0; g < count; g++) {
-    history.push({
-      population,
-      fitness: population.map((_, i) => i / P + jitter(g, i, amp) + (i >= P - topN ? g * eliteBonus : 0)),
-    });
-  }
-  return history;
-}
-
-test('convergence detector sees through per-generation fitness noise that the raw top-N set never survives', () => {
-  const population = samplePopulation(30, 'converge-stable');
-  const opts = { trailing: 6, window: 3, topN: 5, maxChurn: 1 };
-  // amp 0.1 dwarfs the 1/30 gap between adjacent teams, so the RAW top-5
-  // reshuffles every generation -- the exact-set predecessor could never fire.
-  const history = noisyHistory(population, 12, 0.1);
-  const rawTop = (g) =>
-    history[g].population
-      .map((_, i) => i)
-      .sort((a, b) => history[g].fitness[b] - history[g].fitness[a])
-      .slice(0, 5)
-      .join(',');
-  assert.notEqual(rawTop(11), rawTop(10), 'fixture must actually churn at the raw top-5 boundary');
-
-  assert.deepEqual(hasConverged(history.slice(0, 8), opts), { converged: false, reason: null }, 'needs trailing+window generations first');
-  const converged = hasConverged(history, opts);
-  assert.equal(converged.converged, true);
-  assert.match(converged.reason, /top-5 \(by 6-generation mean win rate\)/);
-
-  // Real turnover in the smoothed elite still blocks it: from generation 8 on
-  // the underlying quality order reverses, so different signatures climb into
-  // the smoothed top-5 faster than maxChurn allows.
-  const P = population.length;
-  const churned = history.map((gen, g) =>
-    g < 8 ? gen : { population, fitness: population.map((_, i) => (P - 1 - i) / P + jitter(g, i, 0.1)) }
-  );
-  assert.equal(hasConverged(churned, opts).converged, false);
-});
-
-test('convergence detector refuses to fire while the elite is still pulling away from its population', () => {
-  const population = samplePopulation(30, 'converge-lift');
-  const opts = { trailing: 6, window: 3, topN: 5, maxChurn: 1 };
-  // Same fixed top-5 throughout -- only their lead over the field grows.
-  const climbing = noisyHistory(population, 12, 0.02, 0.02, 5);
-  assert.equal(hasConverged(climbing, opts).converged, false, 'stable roster is not enough while lift is still growing');
-
-  // Once the climb stops, the same roster converges.
-  const plateaued = noisyHistory(population, 12, 0.02);
-  assert.equal(hasConverged(plateaued, opts).converged, true);
 });
 
 test('a too-small population still returns a coherent (possibly short) result rather than throwing', () => {

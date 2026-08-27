@@ -10,10 +10,10 @@
 // single run already proves. Here the expensive work happens once, at module
 // scope, and the tests are assertions against those results.
 //
-// Parallelism comes from two places: the four pipeline runs are launched
-// concurrently, and each is handed `threads`, which runPipeline forwards to
-// evaluateTeams' worker-pool executor -- so the battles inside a run spread
-// across cores instead of queueing on one.
+// Parallelism comes from two places: the shared runs at module scope are
+// launched concurrently, and each is handed `threads`, which runPipeline
+// forwards to evaluateTeams' worker-pool executor -- so the battles inside a
+// run spread across cores instead of queueing on one.
 //
 // @slow -- the suite's only real-battle file; runs before a push.
 
@@ -30,6 +30,7 @@ import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { runBattles } from '../src/engine/parallel.js';
 import { loadCommunityTeams } from '../src/meta/teams.js';
+import { hasConverged, DEFAULT_CONVERGENCE_TRAILING, DEFAULT_CONVERGENCE_WINDOW } from '../src/teams/evolve.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
@@ -39,6 +40,55 @@ const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
 const IVS = { atk: 0, def: 15, hp: 15 };
 const STRONG_IDS = ['azumarill', 'registeel', 'altaria'];
 const WEAK_IDS = ['magikarp', 'sunkern', 'feebas'];
+
+// A generation history for the convergence detector, built from real battles.
+// 12 candidate teams x 8 opponent teams = 96 battles, run once; a "generation"
+// is then a win rate over a 5-of-8 subsample of those opponents, which is what
+// a real generation is. Nothing here is synthesized -- the noise under test is
+// the sampling noise of real pvpoke outcomes.
+const CONV_CANDIDATES = [
+  ['azumarill', 'registeel', 'altaria'], ['medicham', 'bastiodon', 'swampert'],
+  ['skarmory', 'umbreon', 'whiscash'], ['lanturn', 'venusaur', 'galvantula'],
+  ['toxapex', 'trevenant', 'sableye'], ['carbink', 'azumarill', 'medicham'],
+  ['registeel', 'swampert', 'venusaur'], ['altaria', 'whiscash', 'skarmory'],
+  ['bastiodon', 'umbreon', 'lanturn'], ['galvantula', 'sableye', 'carbink'],
+  ['trevenant', 'toxapex', 'azumarill'], ['swampert', 'skarmory', 'medicham'],
+];
+const CONV_OPPONENTS = [
+  ['azumarill', 'registeel', 'altaria'], ['medicham', 'swampert', 'skarmory'],
+  ['bastiodon', 'umbreon', 'whiscash'], ['lanturn', 'venusaur', 'sableye'],
+  ['toxapex', 'carbink', 'trevenant'], ['galvantula', 'azumarill', 'swampert'],
+  ['registeel', 'medicham', 'venusaur'], ['altaria', 'umbreon', 'toxapex'],
+];
+const CONV_GENERATIONS = DEFAULT_CONVERGENCE_TRAILING + DEFAULT_CONVERGENCE_WINDOW;
+
+/** 96 real battles -> `count` generations of real, resampled win rates. */
+async function evolutionHistory(count) {
+  const specs = [];
+  for (const teamAIds of CONV_CANDIDATES) {
+    for (const [o, teamBIds] of CONV_OPPONENTS.entries()) {
+      specs.push({
+        teamA: teamAIds.map((speciesId) => ({ speciesId, ivs: IVS })),
+        teamB: teamBIds.map((speciesId) => ({ speciesId, ivs: IVS })),
+        leadA: 0,
+        leadB: 0,
+        seed: specs.length,
+      });
+    }
+  }
+  const results = await runBattles(specs, { threads: 2 });
+  const points = results.map((r) => (r.winner === 'a' ? 1 : r.winner === 'tie' ? 0.5 : 0));
+  const O = CONV_OPPONENTS.length;
+  return Array.from({ length: count }, (_, g) => {
+    // A different 5-of-8 opponent draw each generation -- the resampling that
+    // makes one generation's win rate a noisy estimate of a team's quality.
+    const drawn = [0, 1, 2, 3, 4].map((k) => (g * 5 + k * 3) % O);
+    return {
+      population: CONV_CANDIDATES,
+      fitness: CONV_CANDIDATES.map((_, i) => drawn.reduce((sum, o) => sum + points[i * O + o], 0) / drawn.length),
+    };
+  });
+}
 
 // Small enough to finish quickly, large enough to form >= 1 team.
 const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 3, seed: 'e2e-test-seed' };
@@ -51,11 +101,12 @@ const ULTRA_TINY = { candidates: 3, opponents: 1, pool: 5, scoreMeta: 3, top: 2,
 // they share no state, and `threads` puts the battles inside each one onto the
 // worker pool. `sampledRepeat` is the same config and seed as `sampled` --
 // the determinism check compares the two.
-const [sampled, sampledRepeat, ultra, exhaustive] = await Promise.all([
+const [sampled, sampledRepeat, ultra, exhaustive, evolutionRun] = await Promise.all([
   runPipeline(FIXTURE, { ...SAMPLED_TINY, threads: 2 }),
   runPipeline(FIXTURE, { ...SAMPLED_TINY, threads: 2 }),
   runPipeline(FIXTURE, ULTRA_TINY),
   runPipeline(FIXTURE, EXHAUSTIVE_TINY),
+  evolutionHistory(CONV_GENERATIONS),
 ]);
 
 let ctx;
@@ -158,6 +209,37 @@ describe('pipeline: fixture CSV -> runPipeline -> report.md on disk', () => {
       sampled.rankedTeams.map((t) => [t.members.map((m) => m.key), t.winRate]),
       'a repeat run at the same seed ranks identically'
     );
+  });
+});
+
+// ------------------------------------------------------------- convergence
+
+// What the detector has to survive, on real data: a generation's fitness is a
+// win rate over one opponent subsample, so the raw ranking reshuffles every
+// generation even though the teams and their true quality never change. The
+// predecessor rule demanded that the raw top-N be IDENTICAL for 3 generations
+// and therefore never fired -- 0 times in 383 generations of real runs.
+describe('hasConverged on a real generation history', () => {
+  const rawTop = (g, n = 5) =>
+    evolutionRun[g].population
+      .map((_, i) => i)
+      .sort((a, b) => evolutionRun[g].fitness[b] - evolutionRun[g].fitness[a] || a - b)
+      .slice(0, n)
+      .join(',');
+
+  test('fires on a plateaued run whose raw top-N never holds still, and not before it has the history to judge', () => {
+    const churned = evolutionRun.some((_, g) => g > 0 && rawTop(g) !== rawTop(g - 1));
+    assert.ok(churned, 'real resampling must actually reshuffle the raw top-5, or this proves nothing');
+
+    assert.deepEqual(
+      hasConverged(evolutionRun.slice(0, CONV_GENERATIONS - 1)),
+      { converged: false, reason: null },
+      'holds off until it has trailing + window generations'
+    );
+
+    const converged = hasConverged(evolutionRun);
+    assert.equal(converged.converged, true, 'a plateaued run converges once there is enough history');
+    assert.match(converged.reason, /mean win rate/);
   });
 });
 
