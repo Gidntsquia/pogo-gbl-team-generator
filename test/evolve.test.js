@@ -474,7 +474,7 @@ function fakeResult() {
     fakeMember({ key: 'c3', name: 'India', evolveFrom: 'Indigo', evolveItems: ['Sinnoh Stone'] }),
   ];
 
-  const eliteEntry = (members, signature, score) => ({
+  const eliteEntry = (members, signature, score, buildCost) => ({
     members,
     signature,
     combinedScore: score,
@@ -489,15 +489,29 @@ function fakeResult() {
     hardestOpponents: [
       { name: 'Toughy', label: 'curated', winRate: 0.3, wins: 3, losses: 7, ties: 0, avgHpMargin: -12.5 },
     ],
+    buildCost,
   });
 
   const elites = [
-    eliteEntry(teamA, sig(['a1', 'a2', 'a3']), 0.7),
-    eliteEntry(teamB, sig(['b1', 'b2', 'b3']), 0.65),
+    eliteEntry(teamA, sig(['a1', 'a2', 'a3']), 0.7, {
+      stardust: 45000, candy: 120, candyXl: 0, evolveItems: [], unknownLevels: 0, unpricedEvolutions: 0, members: [],
+    }),
+    // Team B's buildCost is genuinely absent (e.g. an older checkpoint) --
+    // the card must say so, not fabricate a number.
+    eliteEntry(teamB, sig(['b1', 'b2', 'b3']), 0.65, undefined),
     // Team C has no safeSwap/coreBreakExposure/hardestOpponents -- the
     // "not tracked" branches (guarded with `?.`/`if`) must not crash or
-    // print "undefined".
-    { ...eliteEntry(teamC, sig(['c1', 'c2', 'c3']), 0.6), safeSwap: null, coreBreakExposure: [], hardestOpponents: [] },
+    // print "undefined". Its buildCost exercises Candy XL, an evolution
+    // item, an evolve-from note and the unknown-level caveat all at once.
+    {
+      ...eliteEntry(teamC, sig(['c1', 'c2', 'c3']), 0.6, {
+        stardust: 32000, candy: 80, candyXl: 15, evolveItems: ['Sinnoh Stone'], unknownLevels: 1, unpricedEvolutions: 0,
+        members: [{ name: 'India', evolveFrom: 'Indigo' }],
+      }),
+      safeSwap: null,
+      coreBreakExposure: [],
+      hardestOpponents: [],
+    },
   ];
 
   const generationRecords = [
@@ -576,6 +590,14 @@ test('renderEvolveReportHtml: podium, detail cards, embedded race, standings and
   assert.match(html, /no level on file/); // Golf, currentLevel: null
   assert.match(html, /already at or above the level simulated/); // Hotel
   assert.match(html, /evolve from Indigo/); // India
+  // Per-team total build cost (buildCostHtml): a real total, a genuinely
+  // absent one said plainly, and Candy XL + evolve item + caveat together.
+  assert.match(html, /Build cost:.*45,000 Stardust \+ 120 Candy/);
+  assert.match(html, /Build cost: not available for this team/);
+  assert.match(html, /32,000 Stardust \+ 80 Candy \+ 15 Candy XL/);
+  assert.match(html, /plus Sinnoh Stone/);
+  assert.match(html, /Indigo.*India/); // evolve-from note in the build-cost line
+  assert.match(html, /excludes 1 with no level in the CSV/);
   // The race section: embedded chart, not just a link out.
   assert.match(html, /<h2>The race<span class="rule"><\/span><\/h2>/);
   assert.match(html, /id="chart"/);

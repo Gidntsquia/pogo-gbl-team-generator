@@ -16,14 +16,12 @@
 // owns reading files off disk; this module never touches the filesystem).
 
 // Stroke colors for the final top-10 (or fewer); cycles if there are more.
-// Ranks 1-3 deliberately match the podium/standings medal hues (gold/silver/
-// bronze, brightened for contrast against the report's dark stage
-// background) so a line's color reads as the SAME fact everywhere on the
-// page -- the rest of the field is a vivid, curated jewel-tone set chosen to
-// stay legible on near-black rather than a default primary-color rainbow.
+// Verbatim from out/artifact-sources/podium-report.html's own embedded chart
+// (built by this same script, pre-refactor) -- ported as directly as
+// possible rather than recolored.
 export const PALETTE = [
-  '#F7C948', '#E2E6EE', '#E8935A', '#4FB6E8', '#B98CF2',
-  '#FF6F59', '#5FD68A', '#F26FA6', '#7FA6FF', '#C7D24A',
+  '#e6194b', '#3c78d8', '#3cb44b', '#ff8c00', '#911eb4',
+  '#00a8a8', '#b8860b', '#f032e6', '#7f8c1f', '#800000',
 ];
 
 /** Same lead-aware team identity src/teams/evolve.js and scripts/evolve.mjs use. */
@@ -312,32 +310,23 @@ export function renderChartHtml(data, title) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
 <style>
-  :root { color-scheme: dark; }
-  /* Same fixed night-stage look as scripts/evolve.mjs's embedded copy of
-     this chart (see PALETTE above) -- a committed dark theme rather than a
-     light/dark switch, so line colors stay legible against the background
-     they were tuned for. */
-  body { background: #0A0D12; color: #F5F2E8; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 62rem; margin: 0 auto; padding: 1.75rem 1.5rem 3rem; }
-  h1 { font: 800 1.3rem/1.25 "Arial Black", "Helvetica Neue", Impact, sans-serif; text-transform: uppercase;
-    letter-spacing: 0.02em; margin: 0 0 1rem; }
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 62rem; margin: 0 auto; padding: 1.5rem; }
+  h1 { font-size: 1.3rem; line-height: 1.25; }
   svg { width: 100%; height: auto; }
-  .grid { stroke: rgba(255,255,255,0.09); }
-  text { fill: #93A0AF; font: 12px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; }
+  .axis line, .axis path { stroke: rgba(127,127,127,0.5); }
+  .grid { stroke: rgba(127,127,127,0.18); }
+  text { fill: currentColor; font-size: 12px; }
   .controls { display: flex; gap: 0.75rem; align-items: center; margin: 0.5rem 0 1rem; }
-  .controls input[type=range] { flex: 1; accent-color: #F7C948; }
-  button { font: 700 0.82rem ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; letter-spacing: 0.04em;
-    text-transform: uppercase; color: #0A0D12; background: #F7C948; border: 0; border-radius: 999px;
-    padding: 0.5rem 1.25rem; cursor: pointer; }
-  button:focus-visible, input:focus-visible { outline: 2px solid #F7C948; outline-offset: 2px; }
-  #genlabel { font: 12px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; color: #93A0AF; }
+  .controls input[type=range] { flex: 1; }
+  button { font: inherit; padding: 0.25rem 0.9rem; }
   .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr));
-    gap: 0.15rem 1rem; list-style: none; padding: 0; margin: 0.75rem 0 0;
-    font: 13px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; }
+    gap: 0.15rem 1rem; list-style: none; padding: 0; margin: 0.5rem 0; }
   .legend li { display: flex; align-items: center; gap: 0.5rem; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
   .legend .swatch { width: 1.1em; height: 0.35em; border-radius: 0.2em; flex: none; }
-  #picked { min-height: 1.5em; margin: 0.4rem 0 0.6rem; font-size: 0.92rem; color: #93A0AF; }
+  #picked { min-height: 1.5em; margin: 0.4rem 0 0.3rem; font-size: 0.92rem; color: rgba(127,127,127,0.95); }
 </style>
 </head>
 <body>
