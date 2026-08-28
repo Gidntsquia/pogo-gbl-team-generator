@@ -158,7 +158,7 @@ import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
-import { loadMovesetPool, DEFAULT_META_POOL_SIZE } from '../src/meta/sampleTeams.js';
+import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf } from '../src/meta/sampleTeams.js';
 import { loadMetaTeams, curatedTierWeight } from '../src/meta/teams.js';
 import {
   initOpponentPool,
@@ -172,6 +172,7 @@ import { dedupeBestPerSpecies } from '../src/teams/index.js';
 import { initPopulation, nextGeneration, hasConverged } from '../src/teams/evolve.js';
 import { leagueForCp } from '../src/util/leagues.js';
 import { loadRoleScores } from '../src/meta/roles.js';
+import { buildTopTeamSeries, renderChartInner } from '../src/report/raceChart.js';
 
 const DEFAULTS = Object.freeze({
   population: 100,
@@ -229,6 +230,20 @@ const FITNESS_MODES = ['classic', 'battle-reality'];
  * whether a team is durably good or just had a favorable final matchup set.
  */
 const RANKING_WEIGHTS = Object.freeze({ elitePass: 0.7, recent: 0.3 });
+
+/**
+ * HTML report accent color per league group (src/util/leagues.js's `group`,
+ * pvpoke's own great/ultra/master/little naming) -- light-mode and
+ * dark-mode-override pairs, each with a "hi" (lighter) variant for gradients.
+ * Ties the report's one accent hue to which format the run actually battled
+ * in rather than a fixed brand color.
+ */
+const LEAGUE_ACCENTS = Object.freeze({
+  little: { accent: '#3E6FB0', accentHi: '#6E97D3', accentDark: '#82AEE8', accentDarkHi: '#B3CFF4' },
+  great: { accent: '#2E8B57', accentHi: '#4FAE79', accentDark: '#5FCB8E', accentDarkHi: '#94E4B6' },
+  ultra: { accent: '#B85C1E', accentHi: '#DC833E', accentDark: '#E89A56', accentDarkHi: '#F4C08B' },
+  master: { accent: '#6E4AAE', accentHi: '#9271CE', accentDark: '#A88DE0', accentDarkHi: '#CBB8F0' },
+});
 
 // Elites-pass opponent weighting (Jaxon 2026-08-27: "weight ladder teams more
 // than the curated/off meta teams, which should be weighted more than the
@@ -386,6 +401,46 @@ function memberDisplayName(b) {
 }
 
 /**
+ * Report-facing detail for one evaluated team member: the moveset pvpoke
+ * actually battled it with (recommended, unless `--current-moves` was
+ * requested -- either way this reads the live `pokemon` instance's
+ * post-`selectRecommendedMoveset`/`applyGroupMoveset` moves, not the input
+ * spec) plus the build-cost inputs (current vs. target level/CP, IVs,
+ * shadow/purified, evolution-from). Extracted once here, on the FULL
+ * (untrimmed) `members` entry evaluateTeamsInOrder builds internally, so the
+ * HTML report's detail cards can show real moves/builds rather than only the
+ * aggregate {@link teamBuildCost} totals -- see renderEvolveReportHtml's
+ * movesetLine/buildLine. Every field is plain data (numbers/strings), safe
+ * to carry on the elite entry alongside the existing trimmed
+ * {key, speciesId, name}.
+ *
+ * @param {object} m - one entry of evaluateTeamsInOrder's internal `members`
+ *   array (has `.pokemon`, the live pvpoke instance, and `.spec`/
+ *   `.currentLevel`/`.shadow`/`.purified`/`.evolution`, same fields
+ *   {@link teamBuildCost} reads).
+ * @returns {object}
+ */
+function reportMemberDetail(m) {
+  const currentCp =
+    m.currentLevel != null
+      ? m.pokemon.calculateCP(m.pokemon.getCPMByLevel(m.currentLevel), m.spec.ivs.atk, m.spec.ivs.def, m.spec.ivs.hp)
+      : null;
+  return {
+    ivs: m.spec.ivs,
+    shadow: !!m.shadow,
+    purified: !!m.purified,
+    currentLevel: m.currentLevel,
+    currentCp,
+    targetLevel: m.targetLevel,
+    targetCp: m.pokemon.cp,
+    fastMove: m.pokemon.fastMove?.name ?? null,
+    chargedMoves: (m.pokemon.chargedMoves ?? []).map((c) => c.name),
+    evolveFrom: m.evolution?.fromName ?? null,
+    evolveItems: m.evolution?.items ?? [],
+  };
+}
+
+/**
  * "Lead / Back / Back" team-name formatting (locked
  * leads) -- `members[0]` is always the designated lead end-to-end (see the
  * LOCKED LEADS note above and evaluateTeamsInOrder's own comment on why
@@ -422,11 +477,6 @@ function formatTeamMembers(members) {
   return `${lead.name} (Lead) / ${backs.map((b) => b.name).join(' / ')}`;
 }
 
-/** HTML-escaped counterpart of {@link formatTeamMembers}. */
-function formatTeamMembersHtml(members) {
-  const [lead, ...backs] = members;
-  return `${escapeHtml(lead.name)} <em>(Lead)</em> / ${backs.map((b) => escapeHtml(b.name)).join(' / ')}`;
-}
 
 function formatDuration(ms) {
   if (!Number.isFinite(ms)) return 'unknown';
@@ -757,6 +807,88 @@ function createNullBattleCache() {
 }
 
 // ---------------------------------------------------------------------------
+// `--ban` helpers ("Competitor's Cup: no Mimikyu, no Cramorant"-style
+// format-wide bans, distinct from `--exclude`'s candidate-only exclusion).
+// Every check matches by BASE species id (src/meta/sampleTeams.js's
+// baseIdOf), never an exact speciesId, so a ban on e.g. 'medicham' also
+// catches 'medicham_shadow' -- an exact-match-only ban would miss the shadow
+// variant. NOTE (Jaxon's brief said "forms/shadow variants" -- worth flagging
+// since it proved narrower than written): baseIdOf only strips the literal
+// `_shadow` suffix; it does NOT merge distinct battle/regional forms that are
+// their own gamemaster speciesId (e.g. 'mimikyu' and 'mimikyu_busted' are two
+// separate ids -- a ban on 'mimikyu' does not reach 'mimikyu_busted'). This
+// matches the rest of the codebase's own definition of "base species" for
+// dedup purposes (see src/meta/sampleTeams.js's own doc comment on baseIdOf,
+// and this file's teamBaseSpecies), so it is deliberately NOT strengthened
+// here into a different, --ban-only rule. Pure, no battles -- exported for
+// tests.
+// ---------------------------------------------------------------------------
+
+/** True if any of `speciesIds` has a base form in `banBaseIds`. */
+function anyBaseIdBanned(speciesIds, banBaseIds) {
+  return speciesIds.some((id) => banBaseIds.has(baseIdOf(id)));
+}
+
+/**
+ * Every concrete speciesId present in `builtMons` (a scoreCollection/dedupe
+ * -shaped `{key: {speciesId}}` map, e.g. `dedupeBestPerSpecies`'s output)
+ * whose base id (baseIdOf) is banned. Used to expand a `--ban` base-id list
+ * into the exact-match `excludeSpecies` candidate teams already honor end to
+ * end (src/teams/sample.js's buildScoredPool, src/teams/evolve.js's
+ * initPopulation/nextGeneration) -- so a shadow variant the user happens to
+ * own can't sneak a banned species onto a candidate team.
+ *
+ * @param {Record<string, {speciesId: string}>} builtMons
+ * @param {Iterable<string>} banBaseIds
+ * @returns {string[]}
+ */
+export function expandBanToCandidateSpeciesIds(builtMons, banBaseIds) {
+  const banSet = banBaseIds instanceof Set ? banBaseIds : new Set(banBaseIds);
+  if (banSet.size === 0) return [];
+  const ids = new Set();
+  for (const built of Object.values(builtMons)) {
+    if (banSet.has(baseIdOf(built.speciesId))) ids.add(built.speciesId);
+  }
+  return [...ids];
+}
+
+/**
+ * Drop WHOLE curated teams (src/meta/teams.js's loadMetaTeams output)
+ * containing any banned base species -- a cup rule removes the team
+ * entirely, not just the one banned member. Applying this once to the
+ * `curatedPool` variable at load time reaches every use site downstream: the
+ * per-generation opponent pool (initOpponentPool/nextOpponentPool's
+ * `curated` param) and the final elites pass (`eliteCurated`).
+ *
+ * @param {import('../src/meta/teams.js').MetaTeam[]} teams
+ * @param {Iterable<string>} banBaseIds
+ * @returns {import('../src/meta/teams.js').MetaTeam[]}
+ */
+export function filterBannedCuratedTeams(teams, banBaseIds) {
+  const banSet = banBaseIds instanceof Set ? banBaseIds : new Set(banBaseIds);
+  if (banSet.size === 0) return teams;
+  return teams.filter((t) => !anyBaseIdBanned(t.members.map((m) => m.speciesId), banSet));
+}
+
+/**
+ * Drop banned-base-species entries from a moveset pool
+ * (src/meta/sampleTeams.js's loadMovesetPool output). Applying this once to
+ * the `movesetPool` variable reaches every composed-opponent path that
+ * variable is threaded into: initOpponentPool, nextOpponentPool, and (through
+ * nextOpponentPool's own `movesetPool` param) its buildMemberSwap mutation
+ * and immigrant draws -- none of them load their own copy.
+ *
+ * @param {Array<{speciesId: string}>} pool
+ * @param {Iterable<string>} banBaseIds
+ * @returns {Array<{speciesId: string}>}
+ */
+export function filterBannedMovesetPool(pool, banBaseIds) {
+  const banSet = banBaseIds instanceof Set ? banBaseIds : new Set(banBaseIds);
+  if (banSet.size === 0) return pool;
+  return pool.filter((e) => !banSet.has(baseIdOf(e.speciesId)));
+}
+
+// ---------------------------------------------------------------------------
 // Run config (checkpoint fingerprint) + checkpoint I/O.
 // ---------------------------------------------------------------------------
 
@@ -780,6 +912,12 @@ function buildRunConfig(csvPath, opts) {
     cp: opts.cp ?? DEFAULTS.cp,
     curatedRatio: opts.curatedRatio ?? DEFAULTS.curatedRatio,
     excludeSpecies: [...(opts.excludeSpecies ?? [])].sort(),
+    // Format-wide ban ("no Mimikyu, no Cramorant"), normalized to BASE
+    // species ids up front (see the `--ban` helpers above) so a checkpoint's
+    // fingerprint is stable whatever form the caller happened to type --
+    // always in the fingerprint (like excludeSpecies), never opt-in, since it
+    // changes both sides of what every generation computes.
+    banSpecies: [...new Set((opts.banSpecies ?? []).map(baseIdOf))].sort(),
     difficulty: opts.difficulty ?? null,
     population: opts.population ?? DEFAULTS.population,
     opponentsPerGen: opts.opponentsPerGen ?? DEFAULTS.opponentsPerGen,
@@ -1319,7 +1457,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     const snowballScore = computeSnowballScore(exchangeWon, exchangeLost, winRate);
     const closerScore = computeCloserScore(members, roleScores);
     const entry = {
-      members: members.map(({ key, speciesId, name }) => ({ key, speciesId, name })),
+      members: members.map((m) => ({ key: m.key, speciesId: m.speciesId, name: m.name, ...reportMemberDetail(m) })),
       buildCost: teamBuildCost(members),
       winRate,
       avgHpMargin,
@@ -1471,7 +1609,8 @@ function renderEvolveReport(result) {
       `${opponentsAt(config.generations - 1, config)}, pool=${config.pool}, curated-ratio=${config.curatedRatio}, ` +
       `fitness=${config.fitness}` +
       (config.evolutions === false ? ', evolutions=off' : '') +
-      (config.fixedOpponents ? ', fixed-opponents' : '')
+      (config.fixedOpponents ? ', fixed-opponents' : '') +
+      (config.banSpecies.length ? `, ban=${config.banSpecies.join(',')}` : '')
   );
   if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
     const ga = [];
@@ -1483,31 +1622,169 @@ function renderEvolveReport(result) {
     out.push(`- GA overrides: ${ga.join(', ')}`);
   }
   if (config.excludeSpecies.length) out.push(`- excluded species: ${config.excludeSpecies.join(', ')}`);
+  if (config.banSpecies.length) out.push(`- banned species (format-wide cup rule, candidates and opponents): ${config.banSpecies.join(', ')}`);
   for (const w of importWarnings) out.push(`- import warning: ${w}`);
   out.push('');
 
   return out.join('\n');
 }
 
+/** Thousands-separate an integer without depending on the host locale. Mirrors src/report/index.js's own `num`. */
+function num(n) {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** A level for display: "24" rather than "24.0", but "24.5" kept. Mirrors src/report/index.js's own `lvl`. */
+function lvl(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/** Plain (no "(Lead)" suffix) HTML-escaped "A / B / C" team name, lead first -- used in podium/card headings. */
+function plainTeamNamesHtml(members) {
+  return members.map((m) => escapeHtml(m.name)).join(' / ');
+}
+
+/**
+ * "<b>Fast Move</b> + Charged1 / Charged2" -- the moveset {@link
+ * reportMemberDetail} read off the member's actual battle-ready `pokemon`
+ * instance. Falls back to a plain note when a member predates this field
+ * (e.g. an old checkpoint's elites, or a hand-built test fixture) rather
+ * than emitting "undefined".
+ */
+function movesetHtml(m) {
+  if (!m.fastMove) return '<span class="movestr">moveset not recorded</span>';
+  const charged = (m.chargedMoves ?? []).map(escapeHtml).join(' / ') || '(no charged moves)';
+  return `<b>${escapeHtml(m.fastMove)}</b> + ${charged}`;
+}
+
+/**
+ * "Your 0/6/14 (CP 600, L11) &rarr; power up to L27.5, CP 1500" -- the build
+ * line for one team member: where the collection's own copy is today vs. the
+ * level/CP the simulator actually battled it at. Mirrors formatBuildCost's
+ * wording/caveats but per-member and CP-aware (formatBuildCost only totals
+ * Stardust/Candy for the whole team). Falls back to formatBuildCost's own
+ * "no level on file" phrasing when the CSV stated none.
+ */
+function buildLineHtml(m) {
+  if (m.ivs == null) return '<span class="build">build not recorded</span>';
+  const ivs = `${m.ivs.atk}/${m.ivs.def}/${m.ivs.hp}`;
+  const tag = m.shadow ? ' (Shadow)' : m.purified ? ' (Purified)' : '';
+  const evolveNote = m.evolveFrom ? `evolve from ${escapeHtml(m.evolveFrom)}, then ` : '';
+  if (m.currentLevel == null) {
+    return (
+      `Your ${ivs}${tag} -- no level on file &rarr; ${evolveNote}` +
+      `simulated at <b>L${lvl(m.targetLevel)}, CP ${m.targetCp}</b>`
+    );
+  }
+  const fromPart = `Your ${ivs}${tag} (CP ${m.currentCp}, L${lvl(m.currentLevel)})`;
+  if (!m.evolveFrom && m.currentLevel >= m.targetLevel) {
+    return `${fromPart} -- already at or above the level simulated`;
+  }
+  return `${fromPart} &rarr; ${evolveNote}power up to <b>L${lvl(m.targetLevel)}, CP ${m.targetCp}</b>`;
+}
+
+/**
+ * One team's detail card: roster table (Pokemon / moveset / build), score
+ * line, safest-switch fact, core-breaker exposure and hardest-opponents
+ * table -- the same facts renderEvolveReport's "Team detail" section prints
+ * per elite, styled as a card. Ranks 1-3 additionally get the medal border
+ * color and a medal-emoji heading (the "podium" cards); every other elite
+ * gets the same card, numbered.
+ *
+ * @param {object} t - one `result.elites` entry.
+ * @param {number} rank - 1-based.
+ * @returns {string} HTML.
+ */
+function renderTeamCardHtml(t, rank) {
+  const medal = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : null;
+  const medalEmoji = { gold: '\u{1F947}', silver: '\u{1F948}', bronze: '\u{1F949}' }[medal];
+  const heading = medal
+    ? `${medalEmoji} ${medal[0].toUpperCase()}${medal.slice(1)} — ${plainTeamNamesHtml(t.members)}`
+    : `${rank}. ${plainTeamNamesHtml(t.members)}`;
+
+  const out = [];
+  out.push('<section>');
+  out.push(`<h2 id="team-${rank}">${heading}<span class="rule"></span></h2>`);
+  out.push(`<div class="card${medal ? ` ${medal}` : ''}">`);
+  out.push(
+    `<p class="scoreline"><b>${pct(t.combinedScore)} score</b> &middot; ${pct(t.winRate)} across the elites pass ` +
+      `(${t.battles} battles${t.errors ? `, ${t.errors} errors` : ''}) &middot; ${pct(t.recentWinRate)} over its last ` +
+      `${t.recentGenerations || 0} generation(s)${t.recentGenerations ? '' : ' (newer than the trailing window; ranks on the elites pass alone)'}</p>`
+  );
+  out.push('<div class="roster-wrap">');
+  out.push('<table><tr><th>Pokémon</th><th>Moves (as simulated)</th><th>Build from your collection</th></tr>');
+  t.members.forEach((m, i) => {
+    out.push(
+      `<tr><td><b>${escapeHtml(m.name)}</b>${i === 0 ? ' — lead' : ''}</td>` +
+        `<td class="movestr">${movesetHtml(m)}</td>` +
+        `<td class="build">${buildLineHtml(m)}</td></tr>`
+    );
+  });
+  out.push('</table>');
+  out.push('</div>');
+  if (t.safeSwap) {
+    out.push(
+      `<p class="factline">Safest first switch: <b>${escapeHtml(t.safeSwap.name)}</b> (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in).</p>`
+    );
+  }
+  out.push(
+    `<p class="breakers">Watch for: <b>${t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => escapeHtml(s.name)).join(', ') : 'nothing so far'}</b>` +
+      ` — the species this team wins under ${Math.round(CORE_BREAK_WIN_RATE_MAX * 100)}% against when they show up.</p>`
+  );
+  if (t.hardestOpponents?.length) {
+    out.push('<div class="table-wrap"><table><tr><th>Hardest opponents</th><th class="num">Win%</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">HP margin</th></tr>');
+    for (const h of t.hardestOpponents) {
+      out.push(
+        `<tr><td>${escapeHtml(h.name)}${h.label ? ` <em>(${escapeHtml(h.label)})</em>` : ''}</td>` +
+          `<td class="num">${pct(h.winRate)}</td><td class="num">${h.wins}</td><td class="num">${h.losses}</td>` +
+          `<td class="num">${h.ties}</td><td class="num">${signed(h.avgHpMargin)}</td></tr>`
+      );
+    }
+    out.push('</table></div>');
+  }
+  out.push('</div>');
+  out.push('</section>');
+  return out.join('\n');
+}
+
 /**
  * Render the same run result as a single self-contained HTML page (no
- * external CSS/JS/fonts -- opens directly via `file://`), mirroring
- * src/report/index.js's renderReportHtml pattern (same section order and
- * content as {@link renderEvolveReport}, just HTML markup). All interpolated
- * text sourced from user CSV/gamemaster data is HTML-escaped.
+ * external requests -- opens directly via `file://` and is safe to publish
+ * as a claude.ai Artifact): a podium hero for the top 3 elites, a full detail
+ * card per elite, the animated per-generation win-rate race (embedded straight
+ * from `result.generationRecords`/`result.elites` -- see
+ * src/report/raceChart.js), a full-standings table, data-driven run notes and
+ * a footer. Same underlying facts as {@link renderEvolveReport} (nothing that
+ * report says is dropped here, only re-homed into this design's sections);
+ * see the module-level design note above renderEvolveReport for the shared
+ * numbers. All interpolated text sourced from user CSV/gamemaster data is
+ * HTML-escaped.
  *
  * @param {object} result - same shape renderEvolveReport takes.
  * @returns {string} HTML document text.
  */
-function renderEvolveReportHtml(result) {
+export function renderEvolveReportHtml(result) {
   const { config, generationRecords, elites, stopReason, importWarnings, league } = result;
   const eo = result.eliteOpponents ?? { total: 0, curated: 0, evolved: 0 };
-  const rk = result.ranking ?? { weights: RANKING_WEIGHTS, recentWindow: 0, generationsRun: generationRecords.length };
   const totalBattles = generationRecords.reduce((s, r) => s + r.timing.battleCount, 0) + result.eliteTiming.battleCount;
   const totalCached = generationRecords.reduce((s, r) => s + (r.timing.cachedCount ?? 0), 0) + (result.eliteTiming.cachedCount ?? 0);
   const totalErrors = generationRecords.reduce((s, r) => s + r.timing.errorCount, 0) + result.eliteTiming.errorCount;
   const lastRecord = generationRecords.length ? generationRecords[generationRecords.length - 1] : null;
   const threadsLabel = lastRecord?.threadsUsed ? `${lastRecord.threadsUsed} threads` : 'serial';
+  const collectionBase = escapeHtml(path.basename(result.collectionPath ?? 'collection.csv'));
+  const podiumCount = Math.min(3, elites.length);
+  // Accent color keyed to the actual league this run battled in (pvpoke's own
+  // group names, see src/util/leagues.js) -- a Great League report reads
+  // differently from a Master League one because they ARE different formats,
+  // not as a decorative flourish. Falls back to Great League's green for any
+  // future group leagueForCp might add.
+  const accents = LEAGUE_ACCENTS[league.group] ?? LEAGUE_ACCENTS.great;
+
+  // Race chart: built straight from the in-memory generation records this
+  // very run just produced (see requirement note above raceChart.js's
+  // buildTopTeamSeries) -- no re-reading the checkpoint files it also wrote.
+  const rankingEntries = elites.map((t, i) => ({ signature: t.signature, rank: i + 1, name: formatTeamMembers(t.members) }));
+  const chartData = buildTopTeamSeries(generationRecords, rankingEntries, 10);
 
   const out = [];
   out.push('<!doctype html>');
@@ -1515,104 +1792,237 @@ function renderEvolveReportHtml(result) {
   out.push('<head>');
   out.push('<meta charset="utf-8">');
   out.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
-  out.push(`<title>${escapeHtml(league.name)} Evolutionary Team Search Report${result.collectionPath ? ` -- ${escapeHtml(result.collectionPath)}` : ''}</title>`);
+  out.push(`<title>${escapeHtml(league.name)} Podium — ${collectionBase}</title>`);
   out.push(`<style>
-  :root { color-scheme: light dark; }
-  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
-  h1, h2, h3 { line-height: 1.25; }
-  .note { font-size: 0.9em; opacity: 0.85; }
-  section.team { border: 1px solid rgba(127,127,127,0.3); border-radius: 0.5rem;
-    padding: 1rem 1.25rem; margin: 1rem 0; }
-  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
-  th, td { text-align: left; padding: 0.3rem 0.6rem; border-bottom: 1px solid rgba(127,127,127,0.25); }
-  th { font-weight: 600; }
-  td:not(:first-child), th:not(:first-child) { text-align: right; }
-  td:last-child, th:last-child { text-align: left; }
-  .team-stats { list-style: none; padding: 0; margin: 0.5rem 0; }
-  .team-stats li { padding: 0.15rem 0; }
+  :root {
+    --ground: #F1F3EC; --card: #FFFFFF; --card-2: #E7EBDF; --ink: #161C14; --muted: #5B6455;
+    --line: #D7DCC9; --gold: #B8892B; --gold-hi: #DEB868; --silver: #8B927E; --silver-hi: #C4CAB6;
+    --bronze: #9C6B3E; --bronze-hi: #C99A6C;
+    --accent: ${accents.accent}; --accent-hi: ${accents.accentHi};
+    --shadow: 0 1px 2px rgba(20,26,17,0.07), 0 10px 26px rgba(20,26,17,0.08);
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Courier New", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12160F; --card: #1B2117; --card-2: #232A1D; --ink: #EAEEE1; --muted: #A2AA95;
+      --line: #333B2B; --gold: #DEB868; --gold-hi: #EED28E; --silver: #A9B096; --silver-hi: #CBD0BE;
+      --bronze: #C99A6C; --bronze-hi: #E0BD97;
+      --accent: ${accents.accentDark}; --accent-hi: ${accents.accentDarkHi};
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #12160F; --card: #1B2117; --card-2: #232A1D; --ink: #EAEEE1; --muted: #A2AA95;
+    --line: #333B2B; --gold: #DEB868; --gold-hi: #EED28E; --silver: #A9B096; --silver-hi: #CBD0BE;
+    --bronze: #C99A6C; --bronze-hi: #E0BD97;
+    --accent: ${accents.accentDark}; --accent-hi: ${accents.accentDarkHi};
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--ground); color: var(--ink); margin: 0;
+    font-family: var(--sans); font-size: 16px; line-height: 1.55; }
+  .league-bar { height: 5px; background: linear-gradient(90deg, var(--accent), var(--accent-hi) 65%, transparent); }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 2.75rem 1.25rem 4rem; }
+  .eyebrow { display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+    font-family: var(--mono); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    font-size: 0.78rem; color: var(--muted); text-align: center; margin: 0 0 0.7rem; }
+  .eyebrow .dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: var(--accent); flex: none; }
+  h1 { font-family: var(--serif); font-weight: 700; font-size: clamp(2.3rem, 6vw, 3.4rem);
+    line-height: 1.05; text-align: center; margin: 0 0 0.5rem; letter-spacing: -0.01em; }
+  .sub { text-align: center; color: var(--muted); max-width: 40rem; margin: 0 auto 2.75rem; }
+  .sub strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .podium { display: grid; gap: 10px; align-items: end; margin: 0 auto 0.75rem; max-width: 56rem; }
+  .step { text-align: center; }
+  .team { font-weight: 600; font-size: clamp(0.95rem, 2.2vw, 1.25rem); line-height: 1.22; margin-bottom: 0.6rem; }
+  .team .mon { display: block; }
+  .team .lead-tag { display: inline-block; vertical-align: 0.08em; margin-left: 0.3rem; font-family: var(--mono);
+    font-size: 0.6em; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 2px; padding: 0 0.3em; }
+  .medal-badge { width: 2.5rem; height: 2.5rem; margin: 0 auto 0.6rem; display: flex; align-items: center;
+    justify-content: center; font-family: var(--mono); font-weight: 700; font-size: 1.2rem; color: #221805;
+    box-shadow: var(--shadow); clip-path: polygon(18% 0, 100% 0, 100% 82%, 82% 100%, 0 100%, 0 18%); }
+  .block { box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-start; padding-top: 0.7rem; color: #191002; position: relative; overflow: hidden; }
+  .block::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(180deg, rgba(255,255,255,0.16) 0 2px, transparent 2px 7px); }
+  .block > * { position: relative; }
+  .block .score { font-family: var(--mono); font-weight: 700; font-size: clamp(1.5rem, 3.6vw, 2.1rem); line-height: 1;
+    font-variant-numeric: tabular-nums; }
+  .block .score-label { font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.8; font-weight: 600; }
+  .p1 .block { height: 9.5rem; background: linear-gradient(180deg, var(--gold-hi), var(--gold)); }
+  .p2 .block { height: 6.9rem; background: linear-gradient(180deg, var(--silver-hi), var(--silver)); }
+  .p3 .block { height: 5.6rem; background: linear-gradient(180deg, var(--bronze-hi), var(--bronze)); }
+  .p1 .medal-badge { background: linear-gradient(160deg, var(--gold-hi), var(--gold)); }
+  .p2 .medal-badge { background: linear-gradient(160deg, var(--silver-hi), var(--silver)); }
+  .p3 .medal-badge { background: linear-gradient(160deg, var(--bronze-hi), var(--bronze)); }
+  .podium-note { text-align: center; color: var(--muted); font-size: 0.9rem; margin: 0 0 3rem; }
+  section { margin-top: 3rem; }
+  h2 { font-family: var(--serif); font-weight: 700; font-size: 1.5rem; letter-spacing: 0.005em; margin: 0 0 1rem;
+    display: flex; align-items: baseline; gap: 0.7rem; }
+  h2 .rule { flex: 1; height: 2px; transform: translateY(-0.3rem);
+    background: linear-gradient(90deg, var(--accent), var(--line) 40%); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 3px; box-shadow: var(--shadow);
+    padding: 1.25rem 1.4rem; margin-bottom: 1.25rem; border-top: 3px solid var(--line); }
+  .card.gold { border-top-color: var(--gold); }
+  .card.silver { border-top-color: var(--silver); }
+  .card.bronze { border-top-color: var(--bronze); }
+  .scoreline { color: var(--muted); font-size: 0.92rem; margin: 0 0 0.9rem; }
+  .scoreline b { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  .roster-wrap, .table-wrap { overflow-x: auto; margin: 0.75rem 0; }
+  th { text-align: left; font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; padding: 0.45rem 0.9rem 0.35rem 0; border-bottom: 1px solid var(--line); }
+  td { padding: 0.5rem 0.9rem 0.5rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+  td.num, .scoreline b, .block .score { font-family: var(--mono); }
+  .movestr { color: var(--muted); } .movestr b { color: var(--ink); font-weight: 600; }
+  .build { font-size: 0.88rem; color: var(--muted); font-variant-numeric: tabular-nums; } .build b { color: var(--ink); }
+  .factline, .breakers { margin: 0.35rem 0 0; font-size: 0.92rem; color: var(--muted); }
+  .factline b, .breakers b { color: var(--ink); }
+  .race-embed { background: var(--card); border: 1px solid var(--line); border-radius: 3px; box-shadow: var(--shadow);
+    padding: 1rem 1.1rem; margin-bottom: 1.1rem; border-top: 3px solid var(--accent); }
+  .race-embed .controls { display: flex; gap: 0.75rem; align-items: center; margin: 0 0 0.75rem; }
+  .race-embed button { font: 600 0.88rem var(--mono); letter-spacing: 0.02em; color: var(--ground);
+    background: var(--accent); border: 0; border-radius: 3px; padding: 0.42rem 1.1rem; min-width: 5.4rem; cursor: pointer; }
+  .race-embed button:focus-visible, .race-embed input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .race-embed input[type=range] { flex: 1; accent-color: var(--accent); margin: 0; }
+  .race-embed #genlabel { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted);
+    font-size: 0.9rem; white-space: nowrap; }
+  .race-embed #picked { min-height: 1.5em; margin: 0 0 0.5rem; font-size: 0.92rem; color: var(--muted); }
+  .race-embed .chart-scroll { overflow-x: auto; }
+  .race-embed svg { display: block; width: 100%; height: auto; min-width: 640px; }
+  .race-embed .grid { stroke: var(--line); }
+  .race-embed text { fill: currentColor; font-family: var(--mono); font-size: 12px; }
+  .race-embed .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
+    gap: 0.2rem 1rem; list-style: none; padding: 0; margin: 0.75rem 0 0; font-size: 0.85rem; font-family: var(--mono); }
+  .race-embed .legend li { display: flex; align-items: center; gap: 0.45rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .race-embed .legend .swatch { width: 1.05em; height: 0.32em; border-radius: 0.18em; flex: none; }
+  .standings td:first-child { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+  .medal-dot { display: inline-block; width: 0.6em; height: 0.6em; margin-right: 0.45em; vertical-align: 0.02em;
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+  ul.notes { padding-left: 0; margin: 0; list-style: none; }
+  ul.notes li { margin-bottom: 0.6rem; padding-left: 1rem; border-left: 2px solid var(--line); }
+  ul.notes b { font-weight: 600; }
+  code { font-family: var(--mono); font-size: 0.85em; background: var(--card-2);
+    border: 1px solid var(--line); border-radius: 3px; padding: 0.06em 0.35em; }
+  a { color: var(--accent); }
+  .foot { margin-top: 3rem; color: var(--muted); font-size: 0.83rem; font-family: var(--mono); border-top: 1px solid var(--line); padding-top: 1rem; }
+  @media (max-width: 560px) { .team .mon { font-size: 0.95em; } .card { padding: 1rem; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .step { animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+    .p2 { animation-delay: 0.08s; } .p3 { animation-delay: 0.16s; } .p1 { animation-delay: 0s; }
+    @keyframes rise { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+  }
 </style>`);
   out.push('</head>');
-  out.push('<body>');
+  out.push('<body><div class="league-bar"></div><div class="wrap">');
 
-  out.push(`<h1>${escapeHtml(league.name)} Evolutionary Team Search Report</h1>`);
-  out.push(`<p>Collection: <code>${escapeHtml(result.collectionPath)}</code> -- generated ${escapeHtml(new Date().toISOString())}</p>`);
-
-  out.push(`<h2>Top ${elites.length} teams</h2>`);
+  out.push(`<p class="eyebrow"><span class="dot"></span>${escapeHtml(league.name)} · CP ${config.cp} · ${collectionBase}</p>`);
+  out.push('<h1>The Podium</h1>');
   out.push(
-    `<p class="note">Win% is a weighted mean over one battle against each of the ${eo.total} elites-pass opponents ` +
-      `(${eo.curated} curated + ${eo.evolved} evolved), both sides at their designated leads: ladder-observed meta ` +
-      'teams count in full, &quot;recommended&quot; curated teams at half weight, off-meta curated at a quarter, evolved ' +
-      `opponents at an eighth. <strong>Score</strong> (the sort key) = ${rk.weights.elitePass} &times; that win% + ` +
-      `${rk.weights.recent} &times; the team's mean win% over the last ${rk.recentWindow} generation(s). Absolute win% ` +
-      "carries pvpoke emulate mode's small constant team-A offset; the ranking is relative, so it cancels.</p>"
+    `<p class="sub">${generationRecords.length} generation${generationRecords.length === 1 ? '' : 's'} of full 3v3 ` +
+      `battle simulation${result.collectionMonCount ? ` over your ${result.collectionMonCount}-mon collection` : ''} ` +
+      `— <strong>${num(totalBattles)} battles fought</strong> against ${eo.total} elites-pass opponents ` +
+      `(${eo.curated} curated + ${eo.evolved} evolved), plus everything the earlier generations battled through. ` +
+      `${podiumCount === 1 ? 'This team' : `These ${podiumCount} teams`} survived everything the run threw at ` +
+      `${podiumCount === 1 ? 'it' : 'them'}.</p>`
   );
+
   if (elites.length === 0) {
     out.push('<p><em>No elite teams were produced.</em></p>');
   } else {
-    out.push('<table><thead><tr><th>Rank</th><th>Team (Lead / Back / Back)</th><th>Score</th>' +
-      '<th>Elites-pass win%</th><th>Last-gens win%</th><th>Core breakers</th></tr></thead><tbody>');
-    elites.forEach((t, i) => {
-      const breakers = t.coreBreakExposure?.length
-        ? t.coreBreakExposure.map((s) => escapeHtml(s.name)).join(', ')
-        : 'none';
-      out.push(
-        `<tr><td>${i + 1}</td><td>${formatTeamMembersHtml(t.members)}</td>` +
-          `<td><strong>${pct(t.combinedScore)}</strong></td><td>${pct(t.winRate)}</td>` +
-          `<td>${pct(t.recentWinRate)}</td><td>${breakers}</td></tr>`
-      );
-    });
-    out.push('</tbody></table>');
+    const podium = elites.slice(0, podiumCount);
+    // DOM order p2/p1/p3 (matches the design's Olympic-podium visual: 1st in
+    // the tall middle column) -- only as many steps as elites exist.
+    const order = [1, 0, 2].filter((i) => i < podium.length);
+    out.push(`<div class="podium" aria-label="Top ${podium.length} teams, Olympic podium" style="grid-template-columns: repeat(${podium.length}, 1fr);">`);
+    for (const i of order) {
+      const t = podium[i];
+      const rank = i + 1;
+      const label = rank === 1 ? 'First place' : rank === 2 ? 'Second place' : 'Third place';
+      out.push(`<div class="step p${rank}">`);
+      out.push(`<div class="medal-badge" aria-label="${label}">${rank}</div>`);
+      out.push('<div class="team">');
+      t.members.forEach((m, mi) => {
+        out.push(`<span class="mon">${escapeHtml(m.name)}${mi === 0 ? '<span class="lead-tag">LEAD</span>' : ''}</span>`);
+      });
+      out.push('</div>');
+      out.push(`<div class="block"><span class="score">${pct(t.combinedScore)}</span><span class="score-label">score</span></div>`);
+      out.push('</div>');
+    }
+    out.push('</div>');
+    const podiumSpecies = [...new Set(podium.flatMap((t) => t.members.map((m) => m.name)))];
+    out.push(
+      `<p class="podium-note">Score = ${result.ranking?.weights?.elitePass ?? RANKING_WEIGHTS.elitePass} &times; the ` +
+        `elites-pass win% + ${result.ranking?.weights?.recent ?? RANKING_WEIGHTS.recent} &times; the mean win% over the ` +
+        `last ${result.ranking?.recentWindow ?? 0} generation(s). ${podiumSpecies.length} build${podiumSpecies.length === 1 ? '' : 's'} ` +
+        `— ${podiumSpecies.map(escapeHtml).join(', ')} — ${podiumSpecies.length === 1 ? 'is' : 'unlock'} ` +
+        `${podiumCount === 1 ? 'this team' : `all ${podiumCount} teams`}.</p>`
+    );
+
+    elites.forEach((t, i) => out.push(renderTeamCardHtml(t, i + 1)));
   }
 
-  out.push('<h2>Team detail</h2>');
-  elites.forEach((t, i) => {
-    out.push('<section class="team">');
-    out.push(`<h3>${i + 1}. ${formatTeamMembersHtml(t.members)}</h3>`);
-    out.push('<ul class="team-stats">');
+  out.push('<section>');
+  out.push('<h2>The race<span class="rule"></span></h2>');
+  out.push('<div class="race-embed">');
+  if (chartData.teams.length > 0) {
     out.push(
-      `<li><strong>Score:</strong> ${pct(t.combinedScore)} -- ${pct(t.winRate)} elites-pass across ${t.battles} battles` +
-        `${t.errors ? ` (${t.errors} errors)` : ''}, ${pct(t.recentWinRate)} over the ` +
-        `${t.recentGenerations || 0} generation(s) it lived through the trailing window` +
-        `${t.recentGenerations ? '' : ' (newer than the window; ranks on the elites pass alone)'}</li>`
+      `<p class="note" style="color:var(--muted);font-size:0.9rem;margin:0 0 0.75rem;">Every team that cracked a ` +
+        `generation's top ${chartData.topCount} by fitness across all ${chartData.generations} generation(s); the ` +
+        `${chartData.teams.filter((t) => t.rank !== null).length} teams in the final ranking are colored, the rest are ` +
+        'the muted field that got bred out.</p>'
     );
-    out.push(
-      `<li><strong>Lead:</strong> ${escapeHtml(t.bestLead.name)}` +
-        (t.safeSwap ? ` -- <strong>safest first switch:</strong> ${escapeHtml(t.safeSwap.name)} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)` : '') +
-        '</li>'
-    );
-    out.push(
-      `<li><strong>Core breakers:</strong> ${t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => escapeHtml(s.name)).join(', ') : 'none'}</li>`
-    );
-    out.push('</ul>');
-    out.push('<p>5 hardest opponents (by win%):</p>');
-    out.push('<table><thead><tr><th>Opponent</th><th>Win%</th><th>W</th><th>L</th><th>T</th><th>HP margin</th></tr></thead><tbody>');
-    for (const h of t.hardestOpponents) {
-      out.push(
-        `<tr><td>${escapeHtml(h.name)}${h.label ? ` <em>(${escapeHtml(h.label)})</em>` : ''}</td>` +
-          `<td>${pct(h.winRate)}</td><td>${h.wins}</td><td>${h.losses}</td><td>${h.ties}</td>` +
-          `<td>${signed(h.avgHpMargin)}</td></tr>`
-      );
-    }
-    out.push('</tbody></table>');
-    out.push('</section>');
-  });
+    out.push('<div class="chart-scroll">');
+    out.push(renderChartInner(chartData));
+    out.push('</div>');
+  } else {
+    out.push('<p><em>No per-generation history to animate (0 generations ran).</em></p>');
+  }
+  out.push('</div>');
+  out.push('</section>');
 
-  out.push('<h2>Run facts</h2>');
-  out.push('<ul>');
-  out.push(`<li>${generationRecords.length} generation(s) of a ${config.generations} cap -- ${escapeHtml(stopReason)}</li>`);
+  out.push('<section>');
+  out.push('<h2>Full standings<span class="rule"></span></h2>');
+  out.push('<div class="table-wrap">');
+  out.push('<table class="standings"><tr><th>#</th><th>Team (lead first)</th><th class="num">Score</th><th class="num">Elites pass</th><th class="num">Last gens</th></tr>');
+  elites.forEach((t, i) => {
+    const rank = i + 1;
+    const dot = rank === 1 ? 'var(--gold)' : rank === 2 ? 'var(--silver)' : rank === 3 ? 'var(--bronze)' : null;
+    out.push(
+      `<tr><td>${rank}</td><td>${dot ? `<span class="medal-dot" style="background:${dot}"></span>` : ''}` +
+        `${plainTeamNamesHtml(t.members)}</td><td class="num">${rank <= 3 ? `<b>${pct(t.combinedScore)}</b>` : pct(t.combinedScore)}</td>` +
+        `<td class="num">${pct(t.winRate)}</td><td class="num">${pct(t.recentWinRate)}</td></tr>`
+    );
+  });
+  out.push('</table>');
+  out.push('</div>');
+  out.push('</section>');
+
+  out.push('<section>');
+  out.push('<h2>Run notes<span class="rule"></span></h2>');
+  out.push('<ul class="notes">');
+  out.push(`<li><b>${generationRecords.length} generation(s)</b> of a ${config.generations} cap — ${escapeHtml(stopReason)}.</li>`);
   out.push(
-    `<li>${totalBattles} battles simulated (+${totalCached} served from the memo cache, ${totalErrors} errors), ` +
-      `${escapeHtml(formatDuration(result.totalElapsedMs))} total, ${escapeHtml(threadsLabel)}</li>`
+    `<li><b>${num(totalBattles)} battles</b> simulated (+${num(totalCached)} served from the memo cache, ${totalErrors} errors), ` +
+      `${escapeHtml(formatDuration(result.totalElapsedMs))} total, ${escapeHtml(threadsLabel)}. Population ${config.population} ` +
+      `→ ${Math.round(config.population * config.populationFinalRatio)} while the opponent pool grew ${config.opponentsPerGen} ` +
+      `→ ${opponentsAt(config.generations - 1, config)}.</li>`
   );
   out.push(
-    `<li>seed <code>${escapeHtml(config.seed)}</code>, cp=${config.cp}, population ${config.population} &rarr; ` +
-      `${Math.round(config.population * config.populationFinalRatio)}, opponents ${config.opponentsPerGen} &rarr; ` +
-      `${opponentsAt(config.generations - 1, config)}, pool=${config.pool}, curated-ratio=${config.curatedRatio}, ` +
-      `fitness=${escapeHtml(config.fitness)}` +
+    `<li><b>Opponent quality is weighted, not flat.</b> The final elites pass ran each finalist against all ${eo.total} ` +
+      'opponents: real ladder-observed teams count in full, "recommended" curated teams at half weight, off-meta curated ' +
+      'at a quarter, and the GA\'s own evolved opponents at an eighth.</li>'
+  );
+  out.push(
+    `<li><b>Setup:</b> seed <code>${escapeHtml(config.seed)}</code>, cp=${config.cp}, pool=${config.pool}, ` +
+      `curated-ratio=${config.curatedRatio}, fitness=${escapeHtml(config.fitness)}` +
       (config.evolutions === false ? ', evolutions=off' : '') +
       (config.fixedOpponents ? ', fixed-opponents' : '') +
-      '</li>'
+      '.</li>'
   );
   if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
     const ga = [];
@@ -1621,13 +2031,22 @@ function renderEvolveReportHtml(result) {
     if (config.mutationCeil !== undefined) ga.push(`mutation-ceil=${config.mutationCeil}`);
     if (config.immigrantFraction !== undefined) ga.push(`immigrant-fraction=${config.immigrantFraction}`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
-    out.push(`<li>GA overrides: ${escapeHtml(ga.join(', '))}</li>`);
+    out.push(`<li><b>GA overrides:</b> ${escapeHtml(ga.join(', '))}.</li>`);
   }
-  if (config.excludeSpecies.length) out.push(`<li>excluded species: ${config.excludeSpecies.map(escapeHtml).join(', ')}</li>`);
-  for (const w of importWarnings) out.push(`<li>import warning: ${escapeHtml(w)}</li>`);
+  if (config.excludeSpecies.length) out.push(`<li><b>Excluded species:</b> ${config.excludeSpecies.map(escapeHtml).join(', ')}.</li>`);
+  if (config.banSpecies.length) out.push(`<li><b>Banned species</b> (format-wide cup rule, candidates and opponents): ${config.banSpecies.map(escapeHtml).join(', ')}.</li>`);
+  for (const w of importWarnings) out.push(`<li><b>Import warning:</b> ${escapeHtml(w)}</li>`);
   out.push('</ul>');
+  out.push('</section>');
 
-  out.push('</body>');
+  out.push(
+    `<p class="foot">${escapeHtml(path.basename(result.outDir ?? '.'))} &middot; seed <code>${escapeHtml(config.seed)}</code> ` +
+      `&middot; ${collectionBase}${result.collectionMonCount ? ` (${result.collectionMonCount} mons${result.scoredMonCount && result.scoredMonCount !== result.collectionMonCount ? `, ${result.scoredMonCount} scored with evolutions` : ''})` : ''} ` +
+      `&middot; simulated ${escapeHtml(new Date().toISOString().slice(0, 10))} with pvpoke's own battle engine &middot; ` +
+      `full details in <code>${escapeHtml(result.reportPath ?? 'my-teams-evolve.md')}</code></p>`
+  );
+
+  out.push('</div></body>');
   out.push('</html>');
 
   return out.join('\n');
@@ -1644,6 +2063,9 @@ function renderDoneMarker(result) {
     );
   } else {
     lines.push('No elite teams were produced.');
+  }
+  if (result.config.banSpecies?.length) {
+    lines.push(`Banned species (format-wide cup rule): ${result.config.banSpecies.join(', ')}.`);
   }
   const totalBattles = result.generationRecords.reduce((s, r) => s + r.timing.battleCount, 0) + result.eliteTiming.battleCount;
   const totalErrors = result.generationRecords.reduce((s, r) => s + r.timing.errorCount, 0) + result.eliteTiming.errorCount;
@@ -1667,6 +2089,13 @@ function renderDoneMarker(result) {
  * @param {{
  *   scoreMeta?:number, pool?:number, seed?:number|string, cp?:number,
  *   curatedRatio?:number, excludeSpecies?:string[], difficulty?:number,
+ *   banSpecies?:string[], - format-wide ban ("no Mimikyu, no Cramorant"):
+ *     matched by BASE species id (src/meta/sampleTeams.js's baseIdOf), so a
+ *     shadow variant is caught too (NOT a distinct battle/regional form --
+ *     see the `--ban` helpers' own comment above). Unlike excludeSpecies
+ *     (candidates only), this also drops whole curated teams and
+ *     moveset-pool entries containing a banned species on the opponent side.
+ *     Always in the checkpoint fingerprint.
  *   population?:number, opponentsPerGen?:number, generations?:number,
  *   fixedOpponents?:boolean, eliteCount?:number,
  *   deathRate?:number, mutationFloor?:number, mutationCeil?:number,
@@ -1728,14 +2157,30 @@ export async function runEvolution(csvPath, opts = {}) {
   const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta });
   const deduped = dedupeBestPerSpecies(matrix);
   const weights = loadUsageWeights(ctx);
-  const pool = buildSamplingPool(deduped, config.pool, config.excludeSpecies);
+  const banBaseIds = new Set(config.banSpecies);
+  // --ban is format-wide: on the candidate side it is folded into
+  // excludeSpecies (expanded from base ids to every concrete speciesId the
+  // collection actually has, so a shadow variant can't sneak through
+  // --exclude's exact-match check) BEFORE the sampling pool is built, so a
+  // banned species never enters `pool` in the first place.
+  const candidateExcludeSpecies = banBaseIds.size
+    ? [...new Set([...config.excludeSpecies, ...expandBanToCandidateSpeciesIds(deduped.builtMons, banBaseIds)])]
+    : config.excludeSpecies;
+  const pool = buildSamplingPool(deduped, config.pool, candidateExcludeSpecies);
   const roleScores = loadRoleScores(ctx); // lead/closer/switch priors, cheap local-file read
   // The opponent side's two fixed inputs, both loaded once for the whole run:
   // every curated team for this CP cap (the pool the opponent GA's protected
   // entries are drawn from, and the opponent set the final elites pass uses in
   // full), and the meta-capped species pool composed teams are built out of.
-  const curatedPool = loadMetaTeams(ctx);
-  const movesetPool = loadMovesetPool(ctx, { metaPoolSize: config.opponentMetaPool });
+  // Both are filtered by --ban here, once, so every downstream use (the
+  // per-generation opponent pool AND the final elites pass for curatedPool;
+  // initOpponentPool/nextOpponentPool and their mutation/immigrant draws for
+  // movesetPool) sees an already-clean pool -- see the --ban helpers above.
+  const curatedPool = filterBannedCuratedTeams(loadMetaTeams(ctx), banBaseIds);
+  const movesetPool = filterBannedMovesetPool(
+    loadMovesetPool(ctx, { metaPoolSize: config.opponentMetaPool }),
+    banBaseIds
+  );
   const battleCache = opts.battleCache === false ? createNullBattleCache() : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
   log(
     `evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, ` +
@@ -1792,7 +2237,7 @@ export async function runEvolution(csvPath, opts = {}) {
         weights,
         count: populationAt(0, config),
         seed: `${config.seed}-gen0`,
-        excludeSpecies: config.excludeSpecies,
+        excludeSpecies: candidateExcludeSpecies,
       });
       opponentPool = initOpponentPool(ctx, {
         size: opponentsAt(0, config),
@@ -1876,7 +2321,7 @@ export async function runEvolution(csvPath, opts = {}) {
           weights,
           seed: `${config.seed}-next${generation}`,
           opts: {
-            excludeSpecies: config.excludeSpecies,
+            excludeSpecies: candidateExcludeSpecies,
             targetSize: populationAt(generation + 1, config),
             deathRate: config.deathRate,
             mutationFloor: config.mutationFloor,
@@ -2098,6 +2543,11 @@ export async function runEvolution(csvPath, opts = {}) {
       league,
       runStartedAt: new Date(runStartedAtMs).toISOString(),
       importWarnings: [...importWarnings, ...expanded.warnings],
+      // Collection-size facts for the report's hero/footer -- raw CSV rows vs.
+      // how many were actually scored once evolutions (default on) expanded
+      // the pool. Both already computed above; just threaded through.
+      collectionMonCount: importedMons.length,
+      scoredMonCount: matrix.mons.length,
       generationRecords,
       stopReason,
       elites,
@@ -2204,6 +2654,15 @@ Options:
                             numbers -- this is an escape hatch, not a
                             correctness knob)                          (default: cache on)
   --exclude a,b            species ids excluded from candidate teams   (default: none)
+  --ban a,b                species ids banned FORMAT-WIDE for a cup rule
+                            (e.g. "no Mimikyu, no Cramorant"): dropped from
+                            candidate teams AND from the opponent side (whole
+                            curated teams containing one, and the composed/
+                            evolved-opponent moveset pool). Matched by BASE
+                            species id, so a shadow variant is caught too
+                            (not a distinct battle/regional-form id --
+                            same "base species" rule the rest of this repo
+                            uses)                                       (default: none)
   --difficulty D           AI difficulty 0-3 override                 (default: engine default, 3)
   --out PATH               final Markdown report path                 (default <out-dir>/my-teams-evolve.md)
   --html PATH              final HTML report path                     (default <out-dir>/${DEFAULTS.html})
@@ -2279,6 +2738,7 @@ async function main(argv) {
         'opponent-meta-pool': { type: 'string' },
         'no-battle-cache': { type: 'boolean' },
         exclude: { type: 'string' },
+        ban: { type: 'string' },
         difficulty: { type: 'string' },
         out: { type: 'string' },
         html: { type: 'string' },
@@ -2327,6 +2787,7 @@ async function main(argv) {
     opponentMetaPool: intFlag(values['opponent-meta-pool'], 'opponent-meta-pool', DEFAULTS.opponentMetaPool),
     battleCache: !values['no-battle-cache'],
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],
+    banSpecies: values.ban ? values.ban.split(',').map((s) => s.trim()).filter(Boolean) : [],
     difficulty: values.difficulty !== undefined ? intFlag(values.difficulty, 'difficulty', undefined) : undefined,
     outDir: values['out-dir'] ?? DEFAULTS.outDir,
     out: values.out,

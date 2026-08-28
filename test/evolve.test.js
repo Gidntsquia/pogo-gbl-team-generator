@@ -11,6 +11,12 @@
 // respected, and excludeSpecies is honored end to end (initPopulation +
 // nextGeneration). The convergence detector is asserted in test/e2e.test.js,
 // against a generation history built from real battles.
+//
+// Also covers scripts/evolve.mjs's `--ban` (format-wide species ban) pure
+// helpers -- no dedicated test file exists for that driver script (it has no
+// other unit coverage; runEvolution itself is an integration path, not
+// exercised here), so its few pure, battle-free helpers land in this file
+// alongside the sibling GA module they support. No engine boot, no battles.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +26,13 @@ import {
   nextGeneration,
   DEFAULT_IMMIGRANT_FRACTION,
 } from '../src/teams/evolve.js';
+
+import {
+  expandBanToCandidateSpeciesIds,
+  filterBannedCuratedTeams,
+  filterBannedMovesetPool,
+  renderEvolveReportHtml,
+} from '../scripts/evolve.mjs';
 
 /** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
 function mon(key, speciesId, score) {
@@ -362,4 +375,233 @@ test('a too-small population still returns a coherent (possibly short) result ra
   const signatures = new Set(next.map(teamSignature));
   assert.equal(signatures.size, next.length, 'no duplicate team compositions even under pool exhaustion');
   assert.ok(Array.isArray(lineage.died));
+});
+
+// ---------------------------------------------------------------------------
+// scripts/evolve.mjs's `--ban` helpers -- format-wide species bans ("no
+// Mimikyu, no Cramorant") matched by BASE species id, unlike --exclude's
+// exact-match-only candidate exclusion. No engine boot, no battles.
+// ---------------------------------------------------------------------------
+
+test('filterBannedCuratedTeams drops a WHOLE curated team containing a banned base species (shadow variant included)', () => {
+  const teams = [
+    { id: 'a', name: 'Altaria team', members: [{ speciesId: 'altaria' }, { speciesId: 'skarmory' }, { speciesId: 'clodsire' }] },
+    { id: 'b', name: 'Mimikyu team', members: [{ speciesId: 'medicham' }, { speciesId: 'mimikyu' }, { speciesId: 'swampert' }] },
+    { id: 'c', name: 'Shadow Mimikyu team', members: [{ speciesId: 'mimikyu_shadow' }, { speciesId: 'azumarill' }, { speciesId: 'registeel' }] },
+  ];
+
+  const filtered = filterBannedCuratedTeams(teams, ['mimikyu']);
+  assert.deepEqual(filtered.map((t) => t.id), ['a'], 'both the exact-match and shadow-form Mimikyu teams are dropped entirely, base-species-only team survives');
+
+  assert.deepEqual(filterBannedCuratedTeams(teams, []), teams, 'an empty ban list is a no-op');
+  assert.deepEqual(filterBannedCuratedTeams(teams, ['cramorant']), teams, 'a ban that matches nothing changes nothing');
+});
+
+test('filterBannedMovesetPool removes banned species by BASE id (baseIdOf: exact id or its shadow variant)', () => {
+  const pool = [
+    { speciesId: 'mimikyu', fastMove: 'shadow_claw', chargedMoves: ['play_rough'] },
+    { speciesId: 'mimikyu_shadow', fastMove: 'shadow_claw', chargedMoves: ['play_rough'] },
+    { speciesId: 'cramorant', fastMove: 'water_gun', chargedMoves: ['surf'] },
+    { speciesId: 'altaria', fastMove: 'dragon_breath', chargedMoves: ['sky_attack'] },
+  ];
+
+  const filtered = filterBannedMovesetPool(pool, ['mimikyu', 'cramorant']);
+  assert.deepEqual(filtered.map((e) => e.speciesId), ['altaria'], 'exact match (cramorant) and both the base and shadow Mimikyu entries are removed');
+
+  assert.deepEqual(filterBannedMovesetPool(pool, []), pool, 'an empty ban list is a no-op');
+});
+
+test('expandBanToCandidateSpeciesIds expands base-id bans to every concrete speciesId present (baseIdOf: exact id or its shadow variant)', () => {
+  const builtMons = {
+    key1: { speciesId: 'mimikyu' },
+    key2: { speciesId: 'mimikyu_shadow' },
+    key3: { speciesId: 'cramorant' },
+    key4: { speciesId: 'altaria' },
+  };
+
+  const expanded = expandBanToCandidateSpeciesIds(builtMons, ['mimikyu']);
+  assert.deepEqual(new Set(expanded), new Set(['mimikyu', 'mimikyu_shadow']));
+
+  assert.deepEqual(expandBanToCandidateSpeciesIds(builtMons, []), [], 'an empty ban list expands to nothing');
+  assert.deepEqual(expandBanToCandidateSpeciesIds(builtMons, ['registeel']), [], 'a ban matching no owned species expands to nothing');
+});
+
+// ---------------------------------------------------------------------------
+// renderEvolveReportHtml -- the podium-style HTML report. A synthetic
+// `result` (no engine, no battles, no real GA run) exercises the podium,
+// per-elite detail cards, the embedded race chart (fed straight from
+// generationRecords, exactly as a real run would), the full-standings table
+// and the data-driven run notes, checking every section renders and that
+// nothing reads as "undefined"/"NaN" -- the failure mode a missing/renamed
+// field on a real run would produce, which wouldn't surface until the very
+// end of an hours-long run otherwise.
+// ---------------------------------------------------------------------------
+
+/** Same lead-aware identity src/teams/evolve.js / src/report/raceChart.js use. */
+function sig(keys) {
+  return `${keys[0]}||${[...keys.slice(1)].sort().join('|')}`;
+}
+
+/** One synthetic elite-team member with every field renderEvolveReportHtml's detail card reads. */
+function fakeMember(overrides) {
+  return {
+    key: overrides.key,
+    speciesId: overrides.key,
+    name: overrides.name,
+    ivs: { atk: 1, def: 14, hp: 15 },
+    shadow: false,
+    purified: false,
+    currentLevel: 20,
+    currentCp: 900,
+    targetLevel: 30,
+    targetCp: 1490,
+    fastMove: 'Counter',
+    chargedMoves: ['Power-Up Punch', 'Ice Punch'],
+    evolveFrom: null,
+    evolveItems: [],
+    ...overrides,
+  };
+}
+
+function fakeResult() {
+  const teamA = [fakeMember({ key: 'a1', name: 'Alpha' }), fakeMember({ key: 'a2', name: 'Bravo' }), fakeMember({ key: 'a3', name: 'Charlie' })];
+  const teamB = [fakeMember({ key: 'b1', name: 'Delta' }), fakeMember({ key: 'b2', name: 'Echo' }), fakeMember({ key: 'b3', name: 'Foxtrot' })];
+  const teamC = [
+    // Exercises the three buildLineHtml branches: unknown current level,
+    // already-built (current >= target), and an evolution.
+    fakeMember({ key: 'c1', name: 'Golf', currentLevel: null, currentCp: null }),
+    fakeMember({ key: 'c2', name: 'Hotel', currentLevel: 35, currentCp: 1500, targetLevel: 30, targetCp: 1490 }),
+    fakeMember({ key: 'c3', name: 'India', evolveFrom: 'Indigo', evolveItems: ['Sinnoh Stone'] }),
+  ];
+
+  const eliteEntry = (members, signature, score) => ({
+    members,
+    signature,
+    combinedScore: score,
+    winRate: score + 0.03,
+    recentWinRate: score - 0.02,
+    recentGenerations: 2,
+    battles: 150,
+    errors: 0,
+    bestLead: { name: members[0].name },
+    safeSwap: { name: members[1].name, avgHpPct: 0.42 },
+    coreBreakExposure: [{ name: 'Nemesis' }],
+    hardestOpponents: [
+      { name: 'Toughy', label: 'curated', winRate: 0.3, wins: 3, losses: 7, ties: 0, avgHpMargin: -12.5 },
+    ],
+  });
+
+  const elites = [
+    eliteEntry(teamA, sig(['a1', 'a2', 'a3']), 0.7),
+    eliteEntry(teamB, sig(['b1', 'b2', 'b3']), 0.65),
+    // Team C has no safeSwap/coreBreakExposure/hardestOpponents -- the
+    // "not tracked" branches (guarded with `?.`/`if`) must not crash or
+    // print "undefined".
+    { ...eliteEntry(teamC, sig(['c1', 'c2', 'c3']), 0.6), safeSwap: null, coreBreakExposure: [], hardestOpponents: [] },
+  ];
+
+  const generationRecords = [
+    {
+      timing: { battleCount: 100, cachedCount: 20, errorCount: 0 },
+      threadsUsed: 4,
+      winRateBySignature: { [sig(['a1', 'a2', 'a3'])]: 0.6, [sig(['b1', 'b2', 'b3'])]: 0.5 },
+      analytics: {
+        topTeams: [
+          { members: [{ key: 'a1', name: 'Alpha' }, { key: 'a2', name: 'Bravo' }, { key: 'a3', name: 'Charlie' }] },
+          { members: [{ key: 'b1', name: 'Delta' }, { key: 'b2', name: 'Echo' }, { key: 'b3', name: 'Foxtrot' }] },
+        ],
+      },
+    },
+    {
+      timing: { battleCount: 90, cachedCount: 30, errorCount: 1 },
+      threadsUsed: 4,
+      // Team B died before this generation (no entry); team C is alive here
+      // but never cracked a per-gen top-N, so it only shows up via the final
+      // ranking (buildTopTeamSeries's "ranking-only team" path).
+      winRateBySignature: { [sig(['a1', 'a2', 'a3'])]: 0.68, [sig(['c1', 'c2', 'c3'])]: 0.6 },
+      analytics: {
+        topTeams: [{ members: [{ key: 'a1', name: 'Alpha' }, { key: 'a2', name: 'Bravo' }, { key: 'a3', name: 'Charlie' }] }],
+      },
+    },
+  ];
+
+  return {
+    collectionPath: 'fixtures/my-collection.csv',
+    collectionMonCount: 42,
+    scoredMonCount: 55,
+    outDir: 'out/test-run',
+    reportPath: 'out/test-run/my-teams-evolve.md',
+    league: { name: 'Great League' },
+    config: {
+      generations: 5,
+      cp: 1500,
+      seed: 'test-seed',
+      population: 40,
+      populationFinalRatio: 0.4,
+      opponentsPerGen: 10,
+      pool: 20,
+      curatedRatio: 0.66,
+      fitness: 'battle-reality',
+      evolutions: true,
+      fixedOpponents: false,
+      banSpecies: ['mimikyu'],
+      excludeSpecies: ['smeargle'],
+    },
+    stopReason: 'generation cap reached',
+    importWarnings: ['skipped weird-row: unrecognized species'],
+    generationRecords,
+    elites,
+    eliteTiming: { battleCount: 200, cachedCount: 10, errorCount: 0 },
+    eliteOpponents: { total: 30, curated: 20, evolved: 10 },
+    ranking: { weights: { elitePass: 0.7, recent: 0.3 }, recentWindow: 2 },
+    totalElapsedMs: 3_723_000,
+  };
+}
+
+test('renderEvolveReportHtml: podium, detail cards, embedded race, standings and notes render with no undefined/NaN', () => {
+  const html = renderEvolveReportHtml(fakeResult());
+
+  assert.match(html, /<h1>The Podium<\/h1>/);
+  assert.match(html, /Great League/);
+  assert.match(html, /Alpha/);
+  assert.match(html, /Delta/);
+  assert.match(html, /Golf/);
+  // Podium medals for the top 3.
+  assert.match(html, /Gold — Alpha \/ Bravo \/ Charlie/);
+  assert.match(html, /Silver — Delta \/ Echo \/ Foxtrot/);
+  assert.match(html, /Bronze — Golf \/ Hotel \/ India/);
+  // Per-member moveset/build lines (movesetLine/buildLineHtml).
+  assert.match(html, /Counter/);
+  assert.match(html, /Power-Up Punch \/ Ice Punch/);
+  assert.match(html, /no level on file/); // Golf, currentLevel: null
+  assert.match(html, /already at or above the level simulated/); // Hotel
+  assert.match(html, /evolve from Indigo/); // India
+  // The race section: embedded chart, not just a link out.
+  assert.match(html, /<h2>The race<span class="rule"><\/span><\/h2>/);
+  assert.match(html, /id="chart"/);
+  assert.match(html, /"generations":2/, 'chart data carries one entry per generationRecords entry');
+  // Full standings: one row per elite.
+  assert.match(html, /Full standings/);
+  const standingsRows = html.match(/<span class="medal-dot"/g) ?? [];
+  assert.equal(standingsRows.length, 3, 'one medal dot per top-3 standings row');
+  // Run notes: data-driven facts, not fabricated prose.
+  assert.match(html, /Run notes/);
+  assert.match(html, /generation cap reached/);
+  assert.match(html, /ban=|Banned species/i);
+  assert.match(html, /skipped weird-row: unrecognized species/);
+
+  assert.doesNotMatch(html, /undefined/, 'no field read off a missing key leaked through as the literal string');
+  assert.doesNotMatch(html, /NaN/, 'no arithmetic on a missing/wrong-shaped field leaked through as NaN');
+});
+
+test('renderEvolveReportHtml: zero elites renders gracefully (no podium/cards, race + standings + notes still present)', () => {
+  const result = { ...fakeResult(), elites: [] };
+  const html = renderEvolveReportHtml(result);
+
+  assert.match(html, /No elite teams were produced/);
+  assert.match(html, /<h2>The race<span class="rule"><\/span><\/h2>/);
+  assert.match(html, /Full standings/);
+  assert.match(html, /Run notes/);
+  assert.doesNotMatch(html, /undefined/);
+  assert.doesNotMatch(html, /NaN/);
 });
