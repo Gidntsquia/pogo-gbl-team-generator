@@ -233,16 +233,18 @@ const RANKING_WEIGHTS = Object.freeze({ elitePass: 0.7, recent: 0.3 });
 
 /**
  * HTML report accent color per league group (src/util/leagues.js's `group`,
- * pvpoke's own great/ultra/master/little naming) -- light-mode and
- * dark-mode-override pairs, each with a "hi" (lighter) variant for gradients.
- * Ties the report's one accent hue to which format the run actually battled
- * in rather than a fixed brand color.
+ * pvpoke's own great/ultra/master/little naming) -- a bright, glow-friendly
+ * hue against the report's fixed dark "stage" background (see
+ * renderEvolveReportHtml). Ties the report's one accent hue to which format
+ * the run actually battled in rather than a fixed brand color: a Great
+ * League report reads differently from a Master League one because they
+ * ARE different formats, not as a decorative flourish.
  */
 const LEAGUE_ACCENTS = Object.freeze({
-  little: { accent: '#3E6FB0', accentHi: '#6E97D3', accentDark: '#82AEE8', accentDarkHi: '#B3CFF4' },
-  great: { accent: '#2E8B57', accentHi: '#4FAE79', accentDark: '#5FCB8E', accentDarkHi: '#94E4B6' },
-  ultra: { accent: '#B85C1E', accentHi: '#DC833E', accentDark: '#E89A56', accentDarkHi: '#F4C08B' },
-  master: { accent: '#6E4AAE', accentHi: '#9271CE', accentDark: '#A88DE0', accentDarkHi: '#CBB8F0' },
+  little: { accent: '#6FA8FF', accentHi: '#B0D0FF' },
+  great: { accent: '#3DDC9B', accentHi: '#9BF3D0' },
+  ultra: { accent: '#FF9D4D', accentHi: '#FFC98A' },
+  master: { accent: '#B98CF2', accentHi: '#DEC5FA' },
 });
 
 // Elites-pass opponent weighting (Jaxon 2026-08-27: "weight ladder teams more
@@ -1795,130 +1797,164 @@ export function renderEvolveReportHtml(result) {
   out.push(`<title>${escapeHtml(league.name)} Podium — ${collectionBase}</title>`);
   out.push(`<style>
   :root {
-    --ground: #F1F3EC; --card: #FFFFFF; --card-2: #E7EBDF; --ink: #161C14; --muted: #5B6455;
-    --line: #D7DCC9; --gold: #B8892B; --gold-hi: #DEB868; --silver: #8B927E; --silver-hi: #C4CAB6;
-    --bronze: #9C6B3E; --bronze-hi: #C99A6C;
+    color-scheme: dark;
+    --stage: #0A0D12; --stage-2: #14181F; --stage-3: #1C212B;
+    --ink: #F5F2E8; --muted: #93A0AF; --line: rgba(255,255,255,0.09);
+    --gold: #F7C948; --gold-hi: #FFE79A; --gold-ink: #2B1D02;
+    --silver: #E2E6EE; --silver-hi: #FFFFFF; --silver-ink: #1B1F28;
+    --bronze: #E8935A; --bronze-hi: #FFC28F; --bronze-ink: #2B1704;
     --accent: ${accents.accent}; --accent-hi: ${accents.accentHi};
-    --shadow: 0 1px 2px rgba(20,26,17,0.07), 0 10px 26px rgba(20,26,17,0.08);
-    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    --shadow: 0 24px 60px rgba(0,0,0,0.55), 0 2px 10px rgba(0,0,0,0.45);
+    --display: "Arial Black", "Arial Bold", "Helvetica Neue", Impact, "Segoe UI", sans-serif;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Courier New", monospace;
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --ground: #12160F; --card: #1B2117; --card-2: #232A1D; --ink: #EAEEE1; --muted: #A2AA95;
-      --line: #333B2B; --gold: #DEB868; --gold-hi: #EED28E; --silver: #A9B096; --silver-hi: #CBD0BE;
-      --bronze: #C99A6C; --bronze-hi: #E0BD97;
-      --accent: ${accents.accentDark}; --accent-hi: ${accents.accentDarkHi};
-      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.4);
-    }
-  }
-  :root[data-theme="dark"] {
-    --ground: #12160F; --card: #1B2117; --card-2: #232A1D; --ink: #EAEEE1; --muted: #A2AA95;
-    --line: #333B2B; --gold: #DEB868; --gold-hi: #EED28E; --silver: #A9B096; --silver-hi: #CBD0BE;
-    --bronze: #C99A6C; --bronze-hi: #E0BD97;
-    --accent: ${accents.accentDark}; --accent-hi: ${accents.accentDarkHi};
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.4);
-  }
+  /* One committed look (a night stadium stage) rather than a light/dark
+     swap -- the podium spotlight concept doesn't have a coherent daylight
+     reading, so every background/color below is explicit and fixed instead
+     of branching on prefers-color-scheme. */
   * { box-sizing: border-box; }
-  body { background: var(--ground); color: var(--ink); margin: 0;
-    font-family: var(--sans); font-size: 16px; line-height: 1.55; }
-  .league-bar { height: 5px; background: linear-gradient(90deg, var(--accent), var(--accent-hi) 65%, transparent); }
-  .wrap { max-width: 62rem; margin: 0 auto; padding: 2.75rem 1.25rem 4rem; }
-  .eyebrow { display: flex; align-items: center; justify-content: center; gap: 0.5rem;
-    font-family: var(--mono); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-    font-size: 0.78rem; color: var(--muted); text-align: center; margin: 0 0 0.7rem; }
-  .eyebrow .dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: var(--accent); flex: none; }
-  h1 { font-family: var(--serif); font-weight: 700; font-size: clamp(2.3rem, 6vw, 3.4rem);
-    line-height: 1.05; text-align: center; margin: 0 0 0.5rem; letter-spacing: -0.01em; }
-  .sub { text-align: center; color: var(--muted); max-width: 40rem; margin: 0 auto 2.75rem; }
-  .sub strong { color: var(--ink); font-variant-numeric: tabular-nums; }
-  .podium { display: grid; gap: 10px; align-items: end; margin: 0 auto 0.75rem; max-width: 56rem; }
-  .step { text-align: center; }
-  .team { font-weight: 600; font-size: clamp(0.95rem, 2.2vw, 1.25rem); line-height: 1.22; margin-bottom: 0.6rem; }
-  .team .mon { display: block; }
-  .team .lead-tag { display: inline-block; vertical-align: 0.08em; margin-left: 0.3rem; font-family: var(--mono);
-    font-size: 0.6em; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); border: 1px solid var(--line);
-    border-radius: 2px; padding: 0 0.3em; }
-  .medal-badge { width: 2.5rem; height: 2.5rem; margin: 0 auto 0.6rem; display: flex; align-items: center;
-    justify-content: center; font-family: var(--mono); font-weight: 700; font-size: 1.2rem; color: #221805;
-    box-shadow: var(--shadow); clip-path: polygon(18% 0, 100% 0, 100% 82%, 82% 100%, 0 100%, 0 18%); }
-  .block { box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center;
-    justify-content: flex-start; padding-top: 0.7rem; color: #191002; position: relative; overflow: hidden; }
+  body { background: var(--stage); color: var(--ink); margin: 0;
+    font-family: var(--sans); font-size: 16px; line-height: 1.6; }
+  .wrap { max-width: 60rem; margin: 0 auto; padding: 0 1.25rem 4rem; }
+
+  /* ---------- stage: the podium hero, full-bleed ---------- */
+  .stage { position: relative; overflow: hidden; padding: 4.5rem 1.25rem 4rem; text-align: center;
+    background: radial-gradient(58% 60% at 50% 18%, rgba(255,225,160,0.16), transparent 68%), var(--stage); }
+  .stage::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 85% at 50% -15%, transparent 45%, rgba(0,0,0,0.6) 100%); }
+  .confetti-field { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .confetti-field i { position: absolute; width: 0.5rem; height: 1.1rem; opacity: 0.55; border-radius: 1px; }
+  .confetti-field i:nth-child(1) { top: 8%; left: 9%; background: var(--gold); transform: rotate(22deg); }
+  .confetti-field i:nth-child(2) { top: 22%; left: 18%; background: var(--accent); transform: rotate(-12deg) scale(0.8); }
+  .confetti-field i:nth-child(3) { top: 6%; left: 27%; background: var(--bronze); transform: rotate(58deg) scale(0.7); }
+  .confetti-field i:nth-child(4) { top: 30%; left: 6%; background: var(--silver); transform: rotate(-30deg) scale(0.9); }
+  .confetti-field i:nth-child(5) { top: 14%; right: 11%; background: var(--accent); transform: rotate(35deg); }
+  .confetti-field i:nth-child(6) { top: 28%; right: 21%; background: var(--gold); transform: rotate(-18deg) scale(0.75); }
+  .confetti-field i:nth-child(7) { top: 4%; right: 30%; background: var(--silver); transform: rotate(12deg) scale(0.85); }
+  .confetti-field i:nth-child(8) { top: 36%; right: 6%; background: var(--bronze); transform: rotate(-48deg) scale(0.7); }
+  .confetti-field i:nth-child(9) { top: 46%; left: 14%; background: var(--gold-hi); transform: rotate(8deg) scale(0.6); opacity: 0.35; }
+  .confetti-field i:nth-child(10) { top: 44%; right: 16%; background: var(--accent-hi); transform: rotate(-20deg) scale(0.65); opacity: 0.35; }
+  .stage > * { position: relative; z-index: 1; }
+  .eyebrow { display: flex; align-items: center; justify-content: center; gap: 0.55rem;
+    font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    font-size: 0.78rem; color: var(--muted); margin: 0 0 1rem; }
+  .eyebrow .dot { width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0.6em var(--accent); flex: none; }
+  h1 { font-family: var(--display); font-weight: 900; font-size: clamp(2.8rem, 8vw, 5rem);
+    line-height: 0.96; margin: 0 0 0.65rem; letter-spacing: -0.01em; text-transform: uppercase;
+    background: linear-gradient(180deg, #FFFFFF, #CBD2DE 70%, #98A2B3);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: var(--muted); max-width: 38rem; margin: 0 auto 3.25rem; font-size: 1.02rem; }
+  .sub strong { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .podium { display: grid; gap: clamp(0.6rem, 2vw, 1.5rem); align-items: end; margin: 0 auto 1.5rem;
+    max-width: 52rem; }
+  .step { position: relative; text-align: center; padding-top: 2.75rem; }
+  .step .rank-watermark { position: absolute; top: -1.3rem; left: 50%; transform: translateX(-50%);
+    font-family: var(--display); font-weight: 900; font-size: 7rem; line-height: 1; z-index: 0;
+    color: transparent; -webkit-text-stroke: 1.5px rgba(255,255,255,0.08); user-select: none; }
+  .p1 .rank-watermark { font-size: 9.5rem; top: -2rem; }
+  .step > * { position: relative; z-index: 1; }
+  .team { font-family: var(--display); font-weight: 900; text-transform: uppercase;
+    font-size: clamp(1rem, 2.5vw, 1.4rem); line-height: 1.18; margin-bottom: 0.85rem; letter-spacing: 0.01em; }
+  .team .mon { display: block; color: var(--ink); }
+  .team .lead-tag { display: inline-block; vertical-align: 0.15em; margin-left: 0.35rem; font-family: var(--mono);
+    font-size: 0.5em; font-weight: 700; letter-spacing: 0.1em; color: var(--stage); background: var(--accent);
+    border-radius: 2px; padding: 0.1em 0.4em; }
+
+  .medal-badge { width: 3.4rem; height: 3.4rem; margin: 0 auto 0.85rem; display: flex; align-items: center;
+    justify-content: center; font-family: var(--mono); font-weight: 800; font-size: 1.4rem; border-radius: 50%;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5), inset 0 2px 3px rgba(255,255,255,0.55), inset 0 -3px 5px rgba(0,0,0,0.25); }
+  .p1 .medal-badge { background: radial-gradient(65% 65% at 35% 28%, var(--gold-hi), var(--gold) 70%); color: var(--gold-ink);
+    box-shadow: 0 8px 26px rgba(247,201,72,0.45), inset 0 2px 3px rgba(255,255,255,0.6), inset 0 -3px 5px rgba(0,0,0,0.25); }
+  .p2 .medal-badge { background: radial-gradient(65% 65% at 35% 28%, var(--silver-hi), var(--silver) 70%); color: var(--silver-ink);
+    box-shadow: 0 8px 26px rgba(226,230,238,0.28), inset 0 2px 3px rgba(255,255,255,0.7), inset 0 -3px 5px rgba(0,0,0,0.2); }
+  .p3 .medal-badge { background: radial-gradient(65% 65% at 35% 28%, var(--bronze-hi), var(--bronze) 70%); color: var(--bronze-ink);
+    box-shadow: 0 8px 26px rgba(232,147,90,0.4), inset 0 2px 3px rgba(255,255,255,0.5), inset 0 -3px 5px rgba(0,0,0,0.25); }
+
+  .block { border-radius: 0.35rem 0.35rem 0 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-start; padding-top: 0.9rem; position: relative; overflow: hidden; }
   .block::after { content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: repeating-linear-gradient(180deg, rgba(255,255,255,0.16) 0 2px, transparent 2px 7px); }
+    background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.35) 46%, transparent 62%); }
   .block > * { position: relative; }
-  .block .score { font-family: var(--mono); font-weight: 700; font-size: clamp(1.5rem, 3.6vw, 2.1rem); line-height: 1;
+  .block .score { font-family: var(--mono); font-weight: 800; font-size: clamp(1.8rem, 4.4vw, 2.6rem); line-height: 1;
     font-variant-numeric: tabular-nums; }
-  .block .score-label { font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.8; font-weight: 600; }
-  .p1 .block { height: 9.5rem; background: linear-gradient(180deg, var(--gold-hi), var(--gold)); }
-  .p2 .block { height: 6.9rem; background: linear-gradient(180deg, var(--silver-hi), var(--silver)); }
-  .p3 .block { height: 5.6rem; background: linear-gradient(180deg, var(--bronze-hi), var(--bronze)); }
-  .p1 .medal-badge { background: linear-gradient(160deg, var(--gold-hi), var(--gold)); }
-  .p2 .medal-badge { background: linear-gradient(160deg, var(--silver-hi), var(--silver)); }
-  .p3 .medal-badge { background: linear-gradient(160deg, var(--bronze-hi), var(--bronze)); }
-  .podium-note { text-align: center; color: var(--muted); font-size: 0.9rem; margin: 0 0 3rem; }
+  .block .score-label { font-size: 0.68rem; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.75; font-weight: 700; margin-top: 0.15rem; }
+  .p1 .block { height: 11.5rem; background: linear-gradient(180deg, var(--gold-hi), var(--gold)); color: var(--gold-ink);
+    box-shadow: 0 14px 34px -8px rgba(247,201,72,0.55); }
+  .p2 .block { height: 8.25rem; background: linear-gradient(180deg, var(--silver-hi), var(--silver)); color: var(--silver-ink);
+    box-shadow: 0 14px 34px -8px rgba(226,230,238,0.35); }
+  .p3 .block { height: 6.75rem; background: linear-gradient(180deg, var(--bronze-hi), var(--bronze)); color: var(--bronze-ink);
+    box-shadow: 0 14px 34px -8px rgba(232,147,90,0.5); }
+  .podium-note { text-align: center; color: var(--muted); font-size: 0.9rem; max-width: 40rem; margin: 0 auto; padding-bottom: 3.5rem; }
+
+  /* ---------- everything below the stage: quieter, contained ---------- */
   section { margin-top: 3rem; }
-  h2 { font-family: var(--serif); font-weight: 700; font-size: 1.5rem; letter-spacing: 0.005em; margin: 0 0 1rem;
-    display: flex; align-items: baseline; gap: 0.7rem; }
-  h2 .rule { flex: 1; height: 2px; transform: translateY(-0.3rem);
-    background: linear-gradient(90deg, var(--accent), var(--line) 40%); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 3px; box-shadow: var(--shadow);
-    padding: 1.25rem 1.4rem; margin-bottom: 1.25rem; border-top: 3px solid var(--line); }
-  .card.gold { border-top-color: var(--gold); }
-  .card.silver { border-top-color: var(--silver); }
-  .card.bronze { border-top-color: var(--bronze); }
-  .scoreline { color: var(--muted); font-size: 0.92rem; margin: 0 0 0.9rem; }
+  h2 { font-family: var(--display); font-weight: 900; text-transform: uppercase; font-size: 1.3rem;
+    letter-spacing: 0.03em; margin: 0 0 1.15rem; display: flex; align-items: baseline; gap: 0.85rem; color: var(--ink); }
+  h2 .rule { flex: 1; height: 2px; transform: translateY(-0.25rem);
+    background: linear-gradient(90deg, var(--accent), transparent); }
+  .card { background: linear-gradient(180deg, var(--stage-3), var(--stage-2)); border: 1px solid var(--line);
+    border-radius: 0.6rem; box-shadow: var(--shadow); padding: 1.4rem 1.5rem; margin-bottom: 1.35rem; }
+  .card.gold { box-shadow: var(--shadow), inset 3px 0 0 var(--gold); }
+  .card.silver { box-shadow: var(--shadow), inset 3px 0 0 var(--silver); }
+  .card.bronze { box-shadow: var(--shadow), inset 3px 0 0 var(--bronze); }
+  .scoreline { color: var(--muted); font-size: 0.92rem; margin: 0 0 1rem; }
   .scoreline b { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
   table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
-  .roster-wrap, .table-wrap { overflow-x: auto; margin: 0.75rem 0; }
-  th { text-align: left; font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--muted); font-weight: 600; padding: 0.45rem 0.9rem 0.35rem 0; border-bottom: 1px solid var(--line); }
-  td { padding: 0.5rem 0.9rem 0.5rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  tr:last-child td { border-bottom: none; }
+  .roster-wrap, .table-wrap { overflow-x: auto; margin: 0.9rem 0; }
+  th { text-align: left; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; padding: 0.5rem 0.9rem 0.5rem 0; }
+  td { padding: 0.65rem 0.9rem 0.65rem 0; vertical-align: top; border-top: 1px solid var(--line); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
   td.num, .scoreline b, .block .score { font-family: var(--mono); }
   .movestr { color: var(--muted); } .movestr b { color: var(--ink); font-weight: 600; }
   .build { font-size: 0.88rem; color: var(--muted); font-variant-numeric: tabular-nums; } .build b { color: var(--ink); }
-  .factline, .breakers { margin: 0.35rem 0 0; font-size: 0.92rem; color: var(--muted); }
+  .factline, .breakers { margin: 0.6rem 0 0; font-size: 0.92rem; color: var(--muted); }
   .factline b, .breakers b { color: var(--ink); }
-  .race-embed { background: var(--card); border: 1px solid var(--line); border-radius: 3px; box-shadow: var(--shadow);
-    padding: 1rem 1.1rem; margin-bottom: 1.1rem; border-top: 3px solid var(--accent); }
-  .race-embed .controls { display: flex; gap: 0.75rem; align-items: center; margin: 0 0 0.75rem; }
-  .race-embed button { font: 600 0.88rem var(--mono); letter-spacing: 0.02em; color: var(--ground);
-    background: var(--accent); border: 0; border-radius: 3px; padding: 0.42rem 1.1rem; min-width: 5.4rem; cursor: pointer; }
+  .race-embed { background: linear-gradient(180deg, var(--stage-3), var(--stage-2)); border: 1px solid var(--line);
+    border-radius: 0.6rem; box-shadow: var(--shadow); padding: 1.15rem 1.3rem; margin-bottom: 1.1rem; }
+  .race-embed .controls { display: flex; gap: 0.75rem; align-items: center; margin: 0 0 0.85rem; }
+  .race-embed button { font: 700 0.82rem var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--stage);
+    background: var(--accent); border: 0; border-radius: 999px; padding: 0.5rem 1.25rem; min-width: 5.6rem; cursor: pointer;
+    box-shadow: 0 0 0.9em -0.1em var(--accent); }
   .race-embed button:focus-visible, .race-embed input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .race-embed input[type=range] { flex: 1; accent-color: var(--accent); margin: 0; }
   .race-embed #genlabel { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted);
     font-size: 0.9rem; white-space: nowrap; }
-  .race-embed #picked { min-height: 1.5em; margin: 0 0 0.5rem; font-size: 0.92rem; color: var(--muted); }
+  .race-embed #picked { min-height: 1.5em; margin: 0 0 0.6rem; font-size: 0.92rem; color: var(--muted); }
   .race-embed .chart-scroll { overflow-x: auto; }
   .race-embed svg { display: block; width: 100%; height: auto; min-width: 640px; }
   .race-embed .grid { stroke: var(--line); }
-  .race-embed text { fill: currentColor; font-family: var(--mono); font-size: 12px; }
+  .race-embed text { fill: var(--muted); font-family: var(--mono); font-size: 12px; }
   .race-embed .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
-    gap: 0.2rem 1rem; list-style: none; padding: 0; margin: 0.75rem 0 0; font-size: 0.85rem; font-family: var(--mono); }
-  .race-embed .legend li { display: flex; align-items: center; gap: 0.45rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    gap: 0.25rem 1rem; list-style: none; padding: 0; margin: 0.9rem 0 0; font-size: 0.85rem; font-family: var(--mono); }
+  .race-embed .legend li { display: flex; align-items: center; gap: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .race-embed .legend .swatch { width: 1.05em; height: 0.32em; border-radius: 0.18em; flex: none; }
   .standings td:first-child { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
-  .medal-dot { display: inline-block; width: 0.6em; height: 0.6em; margin-right: 0.45em; vertical-align: 0.02em;
-    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+  .standings tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  .medal-dot { display: inline-block; width: 0.85em; height: 0.85em; margin-right: 0.5em; vertical-align: -0.1em;
+    border-radius: 50%; box-shadow: inset 0 1px 1px rgba(255,255,255,0.6), inset 0 -1px 2px rgba(0,0,0,0.3); }
   ul.notes { padding-left: 0; margin: 0; list-style: none; }
-  ul.notes li { margin-bottom: 0.6rem; padding-left: 1rem; border-left: 2px solid var(--line); }
-  ul.notes b { font-weight: 600; }
-  code { font-family: var(--mono); font-size: 0.85em; background: var(--card-2);
-    border: 1px solid var(--line); border-radius: 3px; padding: 0.06em 0.35em; }
+  ul.notes li { margin-bottom: 0.65rem; padding-left: 1.1rem; border-left: 2px solid var(--accent); opacity: 0.92; }
+  ul.notes b { font-weight: 700; color: var(--ink); }
+  code { font-family: var(--mono); font-size: 0.85em; background: var(--stage-3);
+    border: 1px solid var(--line); border-radius: 3px; padding: 0.06em 0.4em; color: var(--ink); }
   a { color: var(--accent); }
-  .foot { margin-top: 3rem; color: var(--muted); font-size: 0.83rem; font-family: var(--mono); border-top: 1px solid var(--line); padding-top: 1rem; }
-  @media (max-width: 560px) { .team .mon { font-size: 0.95em; } .card { padding: 1rem; } }
+  .foot { margin-top: 3.5rem; color: var(--muted); font-size: 0.83rem; font-family: var(--mono);
+    border-top: 1px solid var(--line); padding-top: 1.25rem; }
+  @media (max-width: 560px) { .card { padding: 1.1rem; } .step .rank-watermark { font-size: 4.5rem; } .p1 .rank-watermark { font-size: 6rem; } }
   @media (prefers-reduced-motion: no-preference) {
-    .step { animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
-    .p2 { animation-delay: 0.08s; } .p3 { animation-delay: 0.16s; } .p1 { animation-delay: 0s; }
-    @keyframes rise { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .step { animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+    .p2 { animation-delay: 0.1s; } .p3 { animation-delay: 0.2s; } .p1 { animation-delay: 0s; }
+    @keyframes rise { from { transform: translateY(18px); opacity: 0; } to { transform: none; opacity: 1; } }
   }
 </style>`);
   out.push('</head>');
-  out.push('<body><div class="league-bar"></div><div class="wrap">');
+  out.push('<body>');
+  out.push('<header class="stage">');
+  out.push('<div class="confetti-field" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>');
 
   out.push(`<p class="eyebrow"><span class="dot"></span>${escapeHtml(league.name)} · CP ${config.cp} · ${collectionBase}</p>`);
   out.push('<h1>The Podium</h1>');
@@ -1944,6 +1980,7 @@ export function renderEvolveReportHtml(result) {
       const rank = i + 1;
       const label = rank === 1 ? 'First place' : rank === 2 ? 'Second place' : 'Third place';
       out.push(`<div class="step p${rank}">`);
+      out.push(`<span class="rank-watermark" aria-hidden="true">${rank}</span>`);
       out.push(`<div class="medal-badge" aria-label="${label}">${rank}</div>`);
       out.push('<div class="team">');
       t.members.forEach((m, mi) => {
@@ -1962,10 +1999,13 @@ export function renderEvolveReportHtml(result) {
         `— ${podiumSpecies.map(escapeHtml).join(', ')} — ${podiumSpecies.length === 1 ? 'is' : 'unlock'} ` +
         `${podiumCount === 1 ? 'this team' : `all ${podiumCount} teams`}.</p>`
     );
-
-    elites.forEach((t, i) => out.push(renderTeamCardHtml(t, i + 1)));
   }
+  out.push('</header>');
+  out.push('<div class="wrap">');
 
+  // The race sits directly under the podium -- the same story continued,
+  // not a supporting appendix -- so it comes before the per-team detail
+  // cards and standings.
   out.push('<section>');
   out.push('<h2>The race<span class="rule"></span></h2>');
   out.push('<div class="race-embed">');
@@ -1984,6 +2024,10 @@ export function renderEvolveReportHtml(result) {
   }
   out.push('</div>');
   out.push('</section>');
+
+  if (elites.length > 0) {
+    elites.forEach((t, i) => out.push(renderTeamCardHtml(t, i + 1)));
+  }
 
   out.push('<section>');
   out.push('<h2>Full standings<span class="rule"></span></h2>');
