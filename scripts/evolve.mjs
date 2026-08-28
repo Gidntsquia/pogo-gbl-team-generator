@@ -1946,9 +1946,12 @@ export function renderEvolveReportHtml(result) {
     border-top: 1px solid var(--line); padding-top: 1.25rem; }
   @media (max-width: 560px) { .card { padding: 1.1rem; } .step .rank-watermark { font-size: 4.5rem; } .p1 .rank-watermark { font-size: 6rem; } }
   @media (prefers-reduced-motion: no-preference) {
-    .step { animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
-    .p2 { animation-delay: 0.1s; } .p3 { animation-delay: 0.2s; } .p1 { animation-delay: 0s; }
-    @keyframes rise { from { transform: translateY(18px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .stage .eyebrow, .stage h1, .stage .sub, .stage .podium-note { animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+    .stage h1 { animation-delay: 0.1s; }
+    .step { animation: rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+    .p1 { animation-delay: 0.25s; } .p2 { animation-delay: 0.45s; } .p3 { animation-delay: 0.6s; }
+    .stage .sub { animation-delay: 0.8s; } .stage .podium-note { animation-delay: 0.95s; }
+    @keyframes rise { from { transform: translateY(26px); opacity: 0; } to { transform: none; opacity: 1; } }
   }
 </style>`);
   out.push('</head>');
@@ -1958,17 +1961,19 @@ export function renderEvolveReportHtml(result) {
 
   out.push(`<p class="eyebrow"><span class="dot"></span>${escapeHtml(league.name)} · CP ${config.cp} · ${collectionBase}</p>`);
   out.push('<h1>The Podium</h1>');
-  out.push(
+  // The sim-description line renders BELOW the podium (Jaxon's requested
+  // order: medals first, methodology after).
+  const subHtml =
     `<p class="sub">${generationRecords.length} generation${generationRecords.length === 1 ? '' : 's'} of full 3v3 ` +
-      `battle simulation${result.collectionMonCount ? ` over your ${result.collectionMonCount}-mon collection` : ''} ` +
-      `— <strong>${num(totalBattles)} battles fought</strong> against ${eo.total} elites-pass opponents ` +
-      `(${eo.curated} curated + ${eo.evolved} evolved), plus everything the earlier generations battled through. ` +
-      `${podiumCount === 1 ? 'This team' : `These ${podiumCount} teams`} survived everything the run threw at ` +
-      `${podiumCount === 1 ? 'it' : 'them'}.</p>`
-  );
+    `battle simulation${result.collectionMonCount ? ` over your ${result.collectionMonCount}-mon collection` : ''} ` +
+    `— <strong>${num(totalBattles)} battles fought</strong> against ${eo.total} elites-pass opponents ` +
+    `(${eo.curated} curated + ${eo.evolved} evolved), plus everything the earlier generations battled through. ` +
+    `${podiumCount === 1 ? 'This team' : `These ${podiumCount} teams`} survived everything the run threw at ` +
+    `${podiumCount === 1 ? 'it' : 'them'}.</p>`;
 
   if (elites.length === 0) {
     out.push('<p><em>No elite teams were produced.</em></p>');
+    out.push(subHtml);
   } else {
     const podium = elites.slice(0, podiumCount);
     // DOM order p2/p1/p3 (matches the design's Olympic-podium visual: 1st in
@@ -1991,6 +1996,7 @@ export function renderEvolveReportHtml(result) {
       out.push('</div>');
     }
     out.push('</div>');
+    out.push(subHtml);
     const podiumSpecies = [...new Set(podium.flatMap((t) => t.members.map((m) => m.name)))];
     out.push(
       `<p class="podium-note">Score = ${result.ranking?.weights?.elitePass ?? RANKING_WEIGHTS.elitePass} &times; the ` +
