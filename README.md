@@ -1,4 +1,11 @@
-# PoGo GBL Team Generator 🏆
+# Pokémon Go GBL Team Generator 🏆
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/podium-top3-dark.png">
+    <img alt="The top three teams from a run, on a podium" src="docs/podium-top3-light.png">
+  </picture>
+</p>
 
 Node.js tool that finds the strongest GO Battle League teams buildable from
 your own Pokemon collection, by simulating full 3v3 battles against the
@@ -8,16 +15,10 @@ current meta with [pvpoke](https://pvpoke.com)'s battle engine.
   <img alt="Animated race chart of every team's win rate per generation" src="docs/team-race.gif">
 </p>
 
-The run above covers 100 generations of evolutionary search over my 107-mon
-collection — 443,923 battles simulated. Each line is one team's win rate per
-generation; the colored lines are the final top 10. The resulting podium:
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/podium-top3-dark.png">
-    <img alt="The top three teams from the run, on a podium" src="docs/podium-top3-light.png">
-  </picture>
-</p>
+The run above — which produced the podium at the top — covers 100 generations
+of evolutionary search over my 107-mon collection, 443,923 battles simulated.
+Each line is one team's win rate per generation; the colored lines are the
+final top 10.
 
 ## Quickstart 🚀
 
