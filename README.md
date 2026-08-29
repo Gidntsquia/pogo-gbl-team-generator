@@ -49,9 +49,18 @@ the colored lines are the run's final top 10.</sub></p>
 
 Requires Node ≥ 18.
 
+**1. Get your collection as a CSV.** Take a screen recording in Pokemon GO of
+yourself swiping through all your Pokemon with the **appraisal panel open**,
+then run the video through the importer in
+[Pokemon GO Video-to-CSV](https://github.com/Gidntsquia/pokemon-go-video-to-csv)
+(macOS only) — it produces the collection CSV this app reads. A
+[Poke Genie](https://pokegenie.app) export (Settings → Export → CSV) works too.
+
+**2. Run the pipeline on it:**
+
 ```bash
 npm run setup                        # clones pvpoke's engine + data into vendor/ (required after every fresh clone)
-node src/cli.js your-collection.csv  # a Poke Genie CSV export (Settings → Export → CSV)
+node src/cli.js your-collection.csv  # the CSV from the video importer (or Poke Genie)
 ```
 
 This prints the top teams to the terminal and writes `out/report.md` plus a
@@ -69,11 +78,6 @@ node src/cli.js my.csv --cp 2500 --threads 4          # Ultra League, battles ac
 node scripts/evolve.mjs my.csv --deadline-minutes 30  # genetic-algorithm team search
 node src/cli.js --help                                # every flag
 ```
-
-If you'd rather not maintain a Poke Genie export,
-[Pokemon GO Video-to-CSV](https://github.com/Gidntsquia/pokemon-go-video-to-csv)
-turns a screen recording of your box into the collection CSV this pipeline
-reads (macOS only).
 
 ## Documentation
 
