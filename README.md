@@ -78,3 +78,8 @@ Detailed documentation is in the
 - [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm, fitness modes, checkpoints
 - [Shared Collections](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Shared-Collections) — teams two players can both build
 - [Development and Tests](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Development-and-Tests) — test tiers, what to run when
+
+## License 📄
+
+[MIT](LICENSE). The vendored battle engine ([pvpoke](https://github.com/pvpoke/pvpoke))
+is also MIT-licensed and is downloaded at setup rather than distributed here.
