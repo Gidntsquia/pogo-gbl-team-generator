@@ -1,25 +1,21 @@
 # PoGo GBL Team Generator 🏆
 
 Node.js tool that finds the strongest GO Battle League teams buildable from
-your own Pokemon collection. Candidate teams are ranked by simulating full
-3v3 battles — switching, shields, and AI decisions — against the current
-meta, using [pvpoke](https://pvpoke.com)'s own battle engine (vendored and
-executed headlessly, never reimplemented).
-
-Below is a run over my 107-mon collection: 100 generations of evolutionary
-search, 443,923 battles simulated. Each line is one team's win rate per
-generation; the colored lines are the final top 10.
+your own Pokemon collection, by simulating full 3v3 battles against the
+current meta with [pvpoke](https://pvpoke.com)'s battle engine.
 
 <p align="center">
   <img alt="Animated race chart of every team's win rate per generation" src="docs/team-race.gif">
 </p>
 
-The three teams that came out on top:
+The run above covers 100 generations of evolutionary search over my 107-mon
+collection — 443,923 battles simulated. Each line is one team's win rate per
+generation; the colored lines are the final top 10. The resulting podium:
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/podium-dark.png">
-    <img alt="The top three teams from the run, on a podium" src="docs/podium-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/podium-top3-dark.png">
+    <img alt="The top three teams from the run, on a podium" src="docs/podium-top3-light.png">
   </picture>
 </p>
 
@@ -58,23 +54,17 @@ node src/cli.js --help                                # full flag list
 
 ## Features 🔬
 
-- Teams are ranked by simulated battle results rather than stat comparisons:
-  every candidate team fights full 3v3 battles against curated ladder teams
-  and sampled meta compositions, across all 9 lead matchups.
-- `scripts/evolve.mjs` runs a genetic algorithm in which the candidate teams
-  and the opponent pool evolve against each other, which prevents
-  overfitting to a fixed opponent list. Interrupted runs resume from their
+- Rankings come from simulated 3v3 battles (switching, shields, AI), run
+  across all 9 lead matchups.
+- Genetic-algorithm search (`scripts/evolve.mjs`): candidate teams and the
+  opponent pool evolve against each other; interrupted runs resume from
   checkpoints.
-- Each mon is also evaluated as every evolution it can still become,
-  carrying its own IVs and flags, so an unevolved specimen is judged at its
-  potential.
-- Every ranked team includes its build cost — the Stardust, Candy, and
-  Candy XL required to reach the simulated build — with shadow/purified/
-  lucky modifiers and evolution items accounted for.
-- Great League and Ultra League are supported end-to-end (`--cp 2500`),
-  along with cup bans (`--ban`).
-- Runs are deterministic: the same seed produces identical results, whether
-  serial or parallelized with `--threads N`.
+- Mons are also evaluated as each evolution they can still become.
+- Build costs are reported per team: Stardust, Candy, and Candy XL, with
+  shadow/purified/lucky modifiers and evolution items.
+- Great League and Ultra League (`--cp 2500`); cup bans via `--ban`.
+- Deterministic: the same seed gives identical results, serial or with
+  `--threads N`.
 
 ## Documentation 📚
 
