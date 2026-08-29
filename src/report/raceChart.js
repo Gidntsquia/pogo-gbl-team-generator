@@ -11,6 +11,10 @@
 //     extra file reads; the checkpoint files and this data are one and the
 //     same, see runEvolution's `record` object), and embeds the chart as a
 //     fragment inside a larger page.
+//   - src/report/index.js's renderReportHtml -- builds its own same-shaped
+//     series (cumulative win rate per opponent battled, from each team's
+//     perMeta results) and embeds the fragment with relabeled axes (see
+//     renderChartInner's `opts`).
 //
 // Pure formatting/data-shaping: no engine, no I/O (chart-top-teams.mjs still
 // owns reading files off disk; this module never touches the filesystem).
@@ -100,12 +104,13 @@ export function buildTopTeamSeries(checkpoints, rankingEntries, topCount) {
 }
 
 /** JSON payload the chart's inline script reads -- shared by the fragment and the standalone page. */
-function chartPayload(data) {
+function chartPayload(data, labels) {
   const ranked = data.teams.filter((t) => t.rank !== null);
   return JSON.stringify({
     generations: data.generations,
     topCount: data.topCount ?? ranked.length,
     fieldCount: data.teams.length - ranked.length,
+    labels,
     teams: data.teams.map((t) => ({
       name: t.name,
       rank: t.rank,
@@ -125,19 +130,38 @@ function chartPayload(data) {
  * the host page supplies that (see scripts/evolve.mjs's renderEvolveReportHtml
  * and renderChartHtml below for the two current hosts).
  *
+ * The x-axis is "generation" by default (the GA hosts). `opts` relabels the
+ * same machinery for a different step unit -- src/report/index.js's CLI
+ * report animates cumulative win rate per opponent battled -- without
+ * changing what is drawn.
+ *
  * @param {{teams: Array<{name: string, rank: number|null, series: Array<number|null>}>,
- *   generations: number}} data - from buildTopTeamSeries.
+ *   generations: number}} data - from buildTopTeamSeries (or any same-shaped series).
+ * @param {object} [opts]
+ * @param {string} [opts.xLabel='generation'] - x-axis caption.
+ * @param {string} [opts.stepWord='gen'] - unit word in the scrub label / line descriptions.
+ * @param {number} [opts.xStart=0] - number the first series index displays as.
+ * @param {string} [opts.fieldFate] - how a muted (unranked) line's fate reads when clicked.
+ * @param {string} [opts.fieldLegendSuffix] - legend text after "+N" for the muted field.
  * @returns {string} HTML fragment text.
  */
-export function renderChartInner(data) {
-  const payload = chartPayload(data);
+export function renderChartInner(data, opts = {}) {
+  const labels = {
+    xLabel: opts.xLabel ?? 'generation',
+    stepWord: opts.stepWord ?? 'gen',
+    xStart: opts.xStart ?? 0,
+    fieldFate: opts.fieldFate ?? 'bred out (never made the final ranking)',
+    fieldLegendSuffix:
+      opts.fieldLegendSuffix ?? ` more teams that cracked a generation's top ${data.topCount}`,
+  };
+  const payload = chartPayload(data, labels);
   return `<div class="controls">
   <button id="play">Pause</button>
   <input id="scrub" type="range" min="0" value="0" step="1">
   <span id="genlabel"></span>
 </div>
 <p id="picked">Click or tap any line — grey ones too — to see which team it is.</p>
-<svg id="chart" viewBox="0 0 960 480" role="img" aria-label="win rate by generation"></svg>
+<svg id="chart" viewBox="0 0 960 480" role="img" aria-label="win rate by ${labels.xLabel}"></svg>
 <ul class="legend" id="legend"></ul>
 <script>
 const DATA = ${payload};
@@ -166,10 +190,10 @@ for (let v = ymin; v <= ymax + 1e-9; v += 0.05) {
 const xstep = Math.max(1, Math.ceil(gens / 16));
 for (let g = 0; g < gens; g += xstep) {
   const t = el('text', { x: x(g), y: H - M.bottom + 20, 'text-anchor': 'middle' });
-  t.textContent = g;
+  t.textContent = g + DATA.labels.xStart;
 }
 const xt = el('text', { x: M.left + iw / 2, y: H - 4, 'text-anchor': 'middle' });
-xt.textContent = 'generation';
+xt.textContent = DATA.labels.xLabel;
 // One <path> per team; the animation rewrites each path's "d" up to the
 // current generation (gaps where series[g] is null).
 const paths = DATA.teams.map(t =>
@@ -200,9 +224,9 @@ function describe(t) {
     if (v > peak) { peak = v; peakGen = g; }
   });
   const head = t.rank !== null ? '#' + t.rank + ' ' + t.name : t.name;
-  const fate = t.rank !== null ? 'final top ' + DATA.teams.filter(x => x.rank !== null).length : 'bred out (never made the final ranking)';
-  return head + ' \\u2014 ' + fate + '; alive gens ' + first + '\\u2013' + last +
-    ', peak ' + Math.round(peak * 100) + '% (gen ' + peakGen + ')';
+  const fate = t.rank !== null ? 'final top ' + DATA.teams.filter(x => x.rank !== null).length : DATA.labels.fieldFate;
+  return head + ' \\u2014 ' + fate + '; alive ' + DATA.labels.stepWord + 's ' + (first + DATA.labels.xStart) + '\\u2013' + (last + DATA.labels.xStart) +
+    ', peak ' + Math.round(peak * 100) + '% (' + DATA.labels.stepWord + ' ' + (peakGen + DATA.labels.xStart) + ')';
 }
 function select(i) {
   if (sel !== null) {
@@ -237,7 +261,7 @@ if (DATA.fieldCount > 0) {
   sw.className = 'swatch';
   sw.style.background = 'rgba(127,127,127,0.4)';
   li.appendChild(sw);
-  li.appendChild(document.createTextNode('+' + DATA.fieldCount + " more teams that cracked a generation's top " + DATA.topCount));
+  li.appendChild(document.createTextNode('+' + DATA.fieldCount + DATA.labels.fieldLegendSuffix));
   legend.appendChild(li);
 }
 function dFor(series, upTo) {
@@ -264,7 +288,7 @@ function draw() {
   cursor.setAttribute('x1', x(shown));
   cursor.setAttribute('x2', x(shown));
   scrub.value = shown;
-  genlabel.textContent = 'gen ' + shown + ' / ' + Math.max(0, gens - 1);
+  genlabel.textContent = DATA.labels.stepWord + ' ' + (shown + DATA.labels.xStart) + ' / ' + (Math.max(0, gens - 1) + DATA.labels.xStart);
 }
 function tick(ts) {
   if (playing) {

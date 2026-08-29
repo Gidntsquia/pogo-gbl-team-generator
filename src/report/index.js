@@ -12,6 +12,7 @@
 import path from 'node:path';
 import { leagueForCp } from '../util/leagues.js';
 import { LEAGUE_ACCENTS, championshipCss } from './podiumTheme.js';
+import { renderChartInner } from './raceChart.js';
 
 /** Format a 0..1 win rate as a whole-number percentage string, e.g. "72%". */
 function pct(x) {
@@ -421,6 +422,43 @@ function leadIndex(team) {
 }
 
 /**
+ * The CLI report's equivalent of the GA report's per-generation race: each
+ * ranked team's CUMULATIVE win rate after each opposing meta team it battled
+ * (running mean of perMeta winRates -- every candidate faces the same
+ * opponents in the same order, so the series are comparable and every line
+ * converges to the team's final overall win rate). Same series shape
+ * raceChart.js's buildTopTeamSeries produces, so renderChartInner draws it
+ * unmodified; the top `topCount` get the strong palette, the rest are the
+ * muted field. Returns null when there is nothing to animate (no teams, or
+ * teams without perMeta -- e.g. older caller-built inputs).
+ *
+ * @param {import('../teams/index.js').TeamResult[]} rankedTeams
+ * @param {number} [topCount]
+ * @returns {{teams: Array<{name: string, rank: number|null, series: number[]}>,
+ *   generations: number, topCount: number} | null}
+ */
+function buildOpponentRaceSeries(rankedTeams, topCount = 10) {
+  if (!rankedTeams.length || !rankedTeams[0].perMeta?.length) return null;
+  const teams = rankedTeams.map((t, i) => {
+    let sum = 0;
+    const series = t.perMeta.map((pm, k) => {
+      sum += pm.winRate;
+      return sum / (k + 1);
+    });
+    return {
+      name: t.members.map((m) => m.name).join(' / '),
+      rank: i < topCount ? i + 1 : null,
+      series,
+    };
+  });
+  return {
+    teams,
+    generations: rankedTeams[0].perMeta.length,
+    topCount: Math.min(topCount, rankedTeams.length),
+  };
+}
+
+/**
  * One ranked team as a Championship detail card (same design language as
  * scripts/evolve.mjs's renderTeamCardHtml): medal border + medal-emoji
  * heading for ranks 1-3, numbered heading beyond, the scoreline, the
@@ -605,6 +643,34 @@ export function renderReportHtml(input) {
       'shared by all teams &mdash; it cancels in the <em>relative</em> ranking, but absolute win% carries ' +
       'that constant offset.</p>'
   );
+
+  // The race sits directly under the podium, same as the GA report -- here
+  // the x-axis is the opponent gauntlet rather than generations.
+  const raceData = buildOpponentRaceSeries(rankedTeams);
+  if (raceData) {
+    out.push('<section>');
+    out.push('<h2>The race<span class="rule"></span></h2>');
+    out.push('<div class="race-embed">');
+    out.push(
+      `<p class="note" style="color:var(--muted);font-size:0.9rem;margin:0 0 0.75rem;">Each line is one candidate ` +
+        `team's cumulative win rate as it battles through the ${raceData.generations} opposing meta teams ` +
+        `(9 lead pairings each); the final top ${raceData.topCount} are colored. Every line ends at that ` +
+        `team's overall win rate.</p>`
+    );
+    out.push('<div class="chart-scroll">');
+    out.push(
+      renderChartInner(raceData, {
+        xLabel: 'opposing meta teams battled',
+        stepWord: 'opponent',
+        xStart: 1,
+        fieldFate: `outside the final top ${raceData.topCount}`,
+        fieldLegendSuffix: ` more candidate teams below the top ${raceData.topCount}`,
+      })
+    );
+    out.push('</div>');
+    out.push('</div>');
+    out.push('</section>');
+  }
 
   if (rankedTeams.some((t) => t.buildCost)) {
     out.push('<p style="color:var(--muted);font-size:0.92rem;max-width:56rem;margin:0 auto;"><em><strong>Build cost</strong> is what it takes to actually field this team: the Stardust and Candy to bring each member from the level your collection CSV states up to the level the simulator played it at (every mon is played at the highest level whose CP still fits under the cap), plus the Candy to evolve it if the team wants a form you do not own yet. Shadow costs 20% more, purified less, lucky half the Stardust; levels 40+ spend Candy XL, which cannot be bought.</em></p>');
