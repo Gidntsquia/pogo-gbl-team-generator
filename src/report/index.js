@@ -6,7 +6,12 @@
 // collection warnings) and turns them into (a) a short terminal summary and
 // (b) a full Markdown report. No engine, no I/O, no battle math -- callers do
 // the computing and the file writing; this module only formats strings, which
-// keeps it trivially unit-testable.
+// keeps it trivially unit-testable. (node:path and util/leagues.js below are
+// both pure string/naming helpers, not I/O.)
+
+import path from 'node:path';
+import { leagueForCp } from '../util/leagues.js';
+import { LEAGUE_ACCENTS, championshipCss } from './podiumTheme.js';
 
 /** Format a 0..1 win rate as a whole-number percentage string, e.g. "72%". */
 function pct(x) {
@@ -386,35 +391,59 @@ export function renderReport(input) {
   return out.join('\n');
 }
 
-/** One ranked-team block in the HTML report. */
+/**
+ * League group for the HTML accent color (podiumTheme.js's LEAGUE_ACCENTS):
+ * derived from `settings.cp` via src/util/leagues.js. An absent cp is the
+ * pre---cp Great League default; an unrecognized one falls back to Great
+ * League's accent rather than throwing over a color.
+ */
+function accentsFor(settings) {
+  try {
+    return LEAGUE_ACCENTS[leagueForCp(settings?.cp).group] ?? LEAGUE_ACCENTS.great;
+  } catch {
+    return LEAGUE_ACCENTS.great;
+  }
+}
+
+/** HTML-escaped "A / B / C" team name for podium/card headings. */
+function teamNamesHtml(members) {
+  return members.map((m) => escapeHtml(m.name)).join(' / ');
+}
+
+/**
+ * Which member index wears the LEAD tag on the podium: bestLead's index when
+ * the pipeline supplied one, else matched by name (older caller/test-fixture
+ * bestLead objects carry only name + winRate).
+ */
+function leadIndex(team) {
+  if (typeof team.bestLead?.index === 'number') return team.bestLead.index;
+  return team.members.findIndex((m) => m.name === team.bestLead?.name);
+}
+
+/**
+ * One ranked team as a Championship detail card (same design language as
+ * scripts/evolve.mjs's renderTeamCardHtml): medal border + medal-emoji
+ * heading for ranks 1-3, numbered heading beyond, the scoreline, the
+ * per-member build-cost table, and the full per-opponent results table.
+ */
 function renderTeamSectionHtml(team, rank) {
+  const medal = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : null;
+  const medalEmoji = { gold: '\u{1F947}', silver: '\u{1F948}', bronze: '\u{1F949}' }[medal];
+  const heading = medal
+    ? `${medalEmoji} ${medal[0].toUpperCase()}${medal.slice(1)} — ${teamNamesHtml(team.members)}`
+    : `${rank}. ${teamNamesHtml(team.members)}`;
+
   const out = [];
-  out.push(`<section class="team">`);
-  out.push(`<h3>${rank}. ${escapeHtml(memberNames(team))}</h3>`);
-  out.push('<ul class="team-stats">');
-  out.push(`<li><strong>Overall win rate:</strong> ${pct(team.winRate)}</li>`);
+  out.push('<section>');
+  out.push(`<h2 id="team-${rank}">${heading}<span class="rule"></span></h2>`);
+  out.push(`<div class="card${medal ? ` ${medal}` : ''}">`);
   out.push(
-    `<li><strong>Best lead:</strong> ${escapeHtml(team.bestLead.name)} ` +
-      `(${pct(team.bestLead.winRate)} when leading)</li>`
+    `<p class="scoreline"><b>${pct(team.winRate)} win rate</b> &middot; best lead ` +
+      `<b>${escapeHtml(team.bestLead.name)}</b> (${pct(team.bestLead.winRate)} when leading) &middot; ` +
+      `avg surviving-HP margin ${signed(team.avgHpMargin)}</p>`
   );
-  out.push(`<li><strong>Avg surviving-HP margin:</strong> ${signed(team.avgHpMargin)}</li>`);
-  if (team.safeSwap) {
-    out.push(
-      `<li><strong>Safest first switch:</strong> ${escapeHtml(team.safeSwap.name)} ` +
-        `(avg ${pct(team.safeSwap.avgHpPct)} HP remaining when switched in)</li>`
-    );
-  }
-  if (team.hardestTeams.length) {
-    const hard = team.hardestTeams
-      .map((h) => `${escapeHtml(h.name)} (${pct(h.winRate)})`)
-      .join(', ');
-    out.push(`<li><strong>Hardest matchups:</strong> ${hard}</li>`);
-  }
   if (team.buildCost) {
-    out.push(`<li><strong>Build cost:</strong> ${escapeHtml(formatBuildCost(team.buildCost))}</li>`);
-  }
-  out.push('</ul>');
-  if (team.buildCost) {
+    out.push('<div class="table-wrap">');
     out.push('<table>');
     out.push(
       '<thead><tr><th>Member</th><th>Evolve</th><th>Level</th><th>Stardust</th>' +
@@ -440,26 +469,49 @@ function renderTeamSectionHtml(team, rank) {
         `<td><strong>${num(c.candy)}</strong></td><td><strong>${num(c.candyXl)}</strong></td></tr>`
     );
     out.push('</tbody></table>');
+    out.push('</div>');
+    out.push(`<p class="factline">Build cost: ${escapeHtml(formatBuildCost(team.buildCost))}</p>`);
   }
-  out.push('<table>');
-  out.push('<thead><tr><th>Opposing meta team</th><th>Win%</th><th>W</th><th>L</th><th>T</th><th>HP margin</th></tr></thead>');
-  out.push('<tbody>');
-  for (const pm of team.perMeta) {
+  if (team.safeSwap) {
     out.push(
-      `<tr><td>${escapeHtml(pm.name)}</td><td>${pct(pm.winRate)}</td><td>${pm.wins}</td>` +
-        `<td>${pm.losses}</td><td>${pm.ties}</td><td>${signed(pm.avgHpMargin)}</td></tr>`
+      `<p class="factline">Safest first switch: <b>${escapeHtml(team.safeSwap.name)}</b> ` +
+        `(avg ${pct(team.safeSwap.avgHpPct)} HP remaining when switched in).</p>`
     );
   }
-  out.push('</tbody></table>');
+  if (team.hardestTeams.length) {
+    const hard = team.hardestTeams
+      .map((h) => `${escapeHtml(h.name)} (${pct(h.winRate)})`)
+      .join(', ');
+    out.push(`<p class="breakers">Hardest matchups: <b>${hard}</b></p>`);
+  }
+  if (team.perMeta.length) {
+    out.push('<div class="table-wrap"><table>');
+    out.push(
+      '<thead><tr><th>Opposing meta team</th><th class="num">Win%</th><th class="num">W</th>' +
+        '<th class="num">L</th><th class="num">T</th><th class="num">HP margin</th></tr></thead>'
+    );
+    out.push('<tbody>');
+    for (const pm of team.perMeta) {
+      out.push(
+        `<tr><td>${escapeHtml(pm.name)}</td><td class="num">${pct(pm.winRate)}</td><td class="num">${pm.wins}</td>` +
+          `<td class="num">${pm.losses}</td><td class="num">${pm.ties}</td><td class="num">${signed(pm.avgHpMargin)}</td></tr>`
+      );
+    }
+    out.push('</tbody></table></div>');
+  }
+  out.push('</div>');
   out.push('</section>');
   return out.join('\n');
 }
 
 /**
  * Render the full report as a single self-contained HTML page (no external
- * CSS/JS/fonts -- opens directly from disk via `file://`). Same content and
- * section order as {@link renderReport}; purely a nicer-to-read presentation
- * of the same `ReportInput`.
+ * requests -- opens directly from disk via `file://`) in the same
+ * Championship/podium design as the GA report (scripts/evolve.mjs's
+ * renderEvolveReportHtml; shared look in podiumTheme.js): a podium hero for
+ * the top 3 teams, a medal detail card per ranked team, then the opponent
+ * list, the 1v1 appendix and the collection warnings. Same facts and section
+ * content as {@link renderReport}, re-homed into this design.
  *
  * @param {ReportInput} input
  * @returns {string} HTML document text.
@@ -495,65 +547,77 @@ export function renderReportHtml(input) {
     .filter(Boolean)
     .join(', ');
 
+  const collectionBase = escapeHtml(path.basename(input.collectionPath ?? 'collection.csv'));
+  const podiumCount = Math.min(3, rankedTeams.length);
+
   const out = [];
   out.push('<!doctype html>');
   out.push('<html lang="en">');
   out.push('<head>');
   out.push('<meta charset="utf-8">');
   out.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
-  out.push(`<title>${leagueLabel(settings)} Team Report${input.collectionPath ? ` -- ${escapeHtml(input.collectionPath)}` : ''}</title>`);
-  out.push(`<style>
-  :root { color-scheme: light dark; }
-  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
-  h1, h2, h3 { line-height: 1.25; }
-  .callout { background: rgba(127,127,127,0.12); border-left: 4px solid currentColor;
-    padding: 0.75rem 1rem; border-radius: 0.25rem; }
-  .settings { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
-  section.team { border: 1px solid rgba(127,127,127,0.3); border-radius: 0.5rem;
-    padding: 1rem 1.25rem; margin: 1rem 0; }
-  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
-  th, td { text-align: left; padding: 0.3rem 0.6rem; border-bottom: 1px solid rgba(127,127,127,0.25); }
-  th { font-weight: 600; }
-  td:not(:first-child), th:not(:first-child) { text-align: right; }
-  .team-stats { list-style: none; padding: 0; margin: 0.5rem 0; }
-  .team-stats li { padding: 0.15rem 0; }
-</style>`);
+  out.push(`<title>${leagueLabel(settings)} Podium — ${collectionBase}</title>`);
+  out.push(`<style>${championshipCss(accentsFor(settings))}</style>`);
   out.push('</head>');
   out.push('<body>');
+  out.push('<div class="wrap">');
 
-  out.push(`<h1>${leagueLabel(settings)} Team Report</h1>`);
-  out.push(`<p>Collection: <code>${escapeHtml(input.collectionPath)}</code>` +
-    (input.generatedAt ? `<br>Generated: ${escapeHtml(input.generatedAt)}` : '') + '</p>');
-  out.push(
-    `<p>Scored <strong>${input.monCount}</strong> ${formsPhrase(input)} and ranked ` +
-      `candidate teams of 3 by simulated <strong>3v3 team-battle</strong> win rate against ` +
-      `<strong>${metaTeams.length}</strong> curated meta teams, using pvpoke's own battle engine ` +
-      `across all 9 lead pairings per matchup.</p>`
-  );
-  out.push(
-    '<p class="callout"><strong>Reading the win%:</strong> every candidate is evaluated from the ' +
-      "same fixed side, so pvpoke emulate mode's small residual player-1 edge is a constant offset " +
-      'shared by all teams -- it cancels in the <em>relative</em> ranking, but absolute win% carries ' +
-      'that constant offset.</p>'
-  );
-  out.push(`<p class="settings"><strong>Settings:</strong> ${settingsLine}</p>`);
+  out.push(`<p class="eyebrow">${escapeHtml(leagueLabel(settings))} &middot; CP ${s?.cp ?? 1500} &middot; ${collectionBase}</p>`);
+  out.push('<h1>The Podium</h1>');
+  // The sim-description line renders BELOW the podium (same order as the GA
+  // report: medals first, methodology after).
+  const subHtml =
+    `<p class="sub">Scored <strong>${input.monCount}</strong> ${formsPhrase(input)} and ranked ` +
+    `candidate teams of 3 by simulated <strong>3v3 team-battle</strong> win rate against ` +
+    `<strong>${metaTeams.length}</strong> meta teams, using pvpoke's own battle engine ` +
+    `across all 9 lead pairings per matchup.</p>`;
 
-  out.push('<h2>Recommended teams</h2>');
-  if (rankedTeams.some((t) => t.buildCost)) {
-    out.push('<p><em><strong>Build cost</strong> is what it takes to actually field this team: the Stardust and Candy to bring each member from the level your collection CSV states up to the level the simulator played it at (every mon is played at the highest level whose CP still fits under the cap), plus the Candy to evolve it if the team wants a form you do not own yet. Shadow costs 20% more, purified less, lucky half the Stardust; levels 40+ spend Candy XL, which cannot be bought.</em></p>');
-  }
   if (rankedTeams.length === 0) {
     out.push('<p><em>No candidate teams could be formed -- need at least 3 distinct species in the collection.</em></p>');
+    out.push(subHtml);
   } else {
-    rankedTeams.forEach((team, i) => out.push(renderTeamSectionHtml(team, i + 1)));
+    const podium = rankedTeams.slice(0, podiumCount);
+    // DOM order p2/p1/p3 (Olympic podium: 1st on the tall middle column) --
+    // only as many steps as teams exist.
+    const order = [1, 0, 2].filter((i) => i < podium.length);
+    out.push(`<div class="podium" aria-label="Top ${podium.length} teams, Olympic podium" style="grid-template-columns: repeat(${podium.length}, 1fr);">`);
+    for (const i of order) {
+      const t = podium[i];
+      const rank = i + 1;
+      const label = rank === 1 ? 'First place' : rank === 2 ? 'Second place' : 'Third place';
+      const leadIdx = leadIndex(t);
+      out.push(`<div class="step p${rank}">`);
+      out.push(`<div class="medal-badge" aria-label="${label}">${rank}</div>`);
+      out.push('<div class="team">');
+      t.members.forEach((m, mi) => {
+        out.push(`<span class="mon">${escapeHtml(m.name)}${mi === leadIdx ? '<span class="lead-tag">LEAD</span>' : ''}</span>`);
+      });
+      out.push('</div>');
+      out.push(`<div class="block"><span class="score">${pct(t.winRate)}</span><span class="score-label">win rate</span></div>`);
+      out.push('</div>');
+    }
+    out.push('</div>');
+    out.push(subHtml);
   }
-
-  out.push('<h2>Opponent meta teams</h2>');
   out.push(
-    `<p>The candidate teams above were battled against these ${leagueLabel(settings)} teams ` +
+    '<p class="podium-note"><b>Reading the win%:</b> every candidate is evaluated from the ' +
+      "same fixed side, so pvpoke emulate mode's small residual player-1 edge is a constant offset " +
+      'shared by all teams &mdash; it cancels in the <em>relative</em> ranking, but absolute win% carries ' +
+      'that constant offset.</p>'
+  );
+
+  if (rankedTeams.some((t) => t.buildCost)) {
+    out.push('<p style="color:var(--muted);font-size:0.92rem;max-width:56rem;margin:0 auto;"><em><strong>Build cost</strong> is what it takes to actually field this team: the Stardust and Candy to bring each member from the level your collection CSV states up to the level the simulator played it at (every mon is played at the highest level whose CP still fits under the cap), plus the Candy to evolve it if the team wants a form you do not own yet. Shadow costs 20% more, purified less, lucky half the Stardust; levels 40+ spend Candy XL, which cannot be bought.</em></p>');
+  }
+  rankedTeams.forEach((team, i) => out.push(renderTeamSectionHtml(team, i + 1)));
+
+  out.push('<section>');
+  out.push('<h2>Opponent meta teams<span class="rule"></span></h2>');
+  out.push('<div class="card">');
+  out.push(
+    `<p class="scoreline">The candidate teams above were battled against these ${escapeHtml(leagueLabel(settings))} teams ` +
       '(curated presets and community-submitted teams; in sampled mode also ' +
-      'weighted-random compositions from the current meta -- see Settings above ' +
+      'weighted-random compositions from the current meta &mdash; see the settings in the footer ' +
       'for the seed used):</p>'
   );
   out.push('<ol>');
@@ -561,49 +625,65 @@ export function renderReportHtml(input) {
     out.push(`<li>${escapeHtml(m.name)}${m.label ? ` <em>(${escapeHtml(m.label)})</em>` : ''}</li>`)
   );
   out.push('</ol>');
+  out.push('</div>');
+  out.push('</section>');
 
-  out.push('<h2>Appendix: per-Pokemon 1v1 scores</h2>');
+  out.push('<section>');
+  out.push('<h2>Appendix: per-Pokemon 1v1 scores<span class="rule"></span></h2>');
+  out.push('<div class="card">');
   out.push(
-    '<p>Weighted 1v1 battle rating (0.25&middot;s00 + 0.50&middot;s11 + 0.25&middot;s22, ' +
+    '<p class="scoreline">Weighted 1v1 battle rating (0.25&middot;s00 + 0.50&middot;s11 + 0.25&middot;s22, ' +
       'pvpoke 0-1000 scale, averaged over the scoring meta). Used to prune the ' +
       'collection down to the candidate pool; higher is better.</p>'
   );
   if (roleScores) {
     out.push(
-      '<p><em>Lead/Closer/Switch columns are pvpoke&rsquo;s own published ' +
+      '<p class="scoreline"><em>Lead/Closer/Switch columns are pvpoke&rsquo;s own published ' +
         'role-specific priors (rankings/all/{leads,closers,switches}) under its recommended ' +
-        'movesets -- species-level context, not this collection&rsquo;s own instance/IV-specific ' +
+        'movesets &mdash; species-level context, not this collection&rsquo;s own instance/IV-specific ' +
         '1v1 score.</em></p>'
     );
   }
+  out.push('<div class="table-wrap">');
   out.push('<table>');
   out.push(
-    `<thead><tr><th>Pokemon</th><th>Score</th><th>1v1 notes</th>${
-      roleScores ? '<th>Lead</th><th>Closer</th><th>Switch</th>' : ''
+    `<thead><tr><th>Pokemon</th><th class="num">Score</th><th>1v1 notes</th>${
+      roleScores ? '<th class="num">Lead</th><th class="num">Closer</th><th class="num">Switch</th>' : ''
     }</tr></thead>`
   );
   out.push('<tbody>');
   const sortedMons = [...monScores].sort((a, b) => b.score - a.score);
   for (const m of sortedMons) {
     const roleCells = roleScores
-      ? `<td>${roleCell(roleScores, m.speciesId, 'lead')}</td><td>${roleCell(roleScores, m.speciesId, 'closer')}</td><td>${roleCell(roleScores, m.speciesId, 'switch')}</td>`
+      ? `<td class="num">${roleCell(roleScores, m.speciesId, 'lead')}</td><td class="num">${roleCell(roleScores, m.speciesId, 'closer')}</td><td class="num">${roleCell(roleScores, m.speciesId, 'switch')}</td>`
       : '';
     out.push(
-      `<tr><td>${escapeHtml(m.name)}</td><td>${m.score.toFixed(1)}</td><td>${escapeHtml(m.leadIn || '')}</td>${roleCells}</tr>`
+      `<tr><td>${escapeHtml(m.name)}</td><td class="num">${m.score.toFixed(1)}</td><td>${escapeHtml(m.leadIn || '')}</td>${roleCells}</tr>`
     );
   }
   out.push('</tbody></table>');
+  out.push('</div>');
+  out.push('</div>');
+  out.push('</section>');
 
-  out.push('<h2>Collection warnings</h2>');
+  out.push('<section>');
+  out.push('<h2>Collection warnings<span class="rule"></span></h2>');
   if (warnings.length === 0) {
-    out.push('<p><em>None -- every row imported and scored cleanly.</em></p>');
+    out.push('<p class="scoreline"><em>None -- every row imported and scored cleanly.</em></p>');
   } else {
-    out.push('<ul>');
+    out.push('<ul class="notes">');
     for (const w of warnings) out.push(`<li>${escapeHtml(w)}</li>`);
     out.push('</ul>');
   }
+  out.push('</section>');
 
-  out.push('</body>');
+  out.push(
+    `<p class="foot">Collection <code>${escapeHtml(input.collectionPath)}</code>` +
+      (input.generatedAt ? ` &middot; generated ${escapeHtml(input.generatedAt)}` : '') +
+      ` &middot; simulated with pvpoke's own battle engine &middot; settings: <code>${settingsLine}</code></p>`
+  );
+
+  out.push('</div></body>');
   out.push('</html>');
 
   return out.join('\n');
