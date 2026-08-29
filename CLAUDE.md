@@ -7,7 +7,7 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 - Tests: `npm test` (fast tier, ~1s) while working, `npm run test:full` (~13s) before a push. Real battles run in `test/e2e.test.js` and nowhere else. Only node's built-in `node:test` + `node:assert`. Full policy and the rest of the commands under **Tests** below.
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
 - `vendor/pvpoke` is a pinned read-only sparse clone (gitignored). Load/execute its code and data; never edit it, never reimplement its battle math. Need a path not checked out? `git -C vendor/pvpoke sparse-checkout add <path>`.
-- Module interfaces are documented in the JSDoc on each exported function, and README.md explains how the pieces fit — follow them exactly; if one proves wrong, say so in your report rather than silently changing it.
+- Module interfaces are documented in the JSDoc on each exported function, and the GitHub wiki explains how the pieces fit — follow them exactly; if one proves wrong, say so in your report rather than silently changing it.
 - Workers: do NOT `git commit` (the orchestrator commits); keep your diff inside the files your task owns.
 - Output artifacts (reports, caches) go in `out/` (gitignored).
 
@@ -20,17 +20,23 @@ vendored engine. The pipeline (wired end-to-end in `src/cli.js`):
 **import CSV → 1v1-score to prune → sample candidate teams → 3v3-battle them
 against a meta opponent pool → rank → report (`out/report.md` + `.html`)**
 
-README.md documents every feature in depth (flags, sampling weights, the GA,
-cost math) — go there for behavior questions; the map below is for finding
-code. The video scanner (screen recording → collection CSV) lives in its own
-repo: https://github.com/Gidntsquia/pokemon-go-video-to-csv.
+The GitHub wiki documents every feature in depth (flags, sampling weights, the
+GA, cost math) — go there for behavior questions; the map below is for finding
+code. README.md is only a short landing page. Fetch a wiki page raw with
+`curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"`
+(pages: Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions,
+Evolutionary-Team-Search, Shared-Collections, Development-and-Tests), or clone
+`https://github.com/Gidntsquia/pogo-gbl-team-generator.wiki.git`. The video
+scanner (screen recording → collection CSV) lives in its own repo:
+https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 
 ### Entry points
 
 | command | what it runs |
 |---|---|
 | `node src/cli.js <collection.csv>` | the main pipeline above (`--cp 2500` for Ultra League; `--help` for all flags) |
-| `scripts/evolve.mjs` | genetic-algorithm team search; both sides evolve (`src/teams/evolve.js` + `src/meta/opponentPool.js`), checkpoints/resumes in `out/` |
+| `scripts/evolve.mjs` | genetic-algorithm team search; both sides evolve (`src/teams/evolve.js` + `src/meta/opponentPool.js`), checkpoints/resumes in `out/`; `--ban a,b` removes species format-wide, both sides (cup rules) |
+| `scripts/build-shared-collection.mjs` | intersects two collection CSVs into a shared-pool CSV of mons both players can build (weaker side's best specimen per base species) |
 | `scripts/tournament.mjs` | large offline sampled runs |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
@@ -73,7 +79,7 @@ repo: https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   freshness snapshots (loaders fall back to vendored rankings when absent).
 - `fixtures/` — sample collections for tests.
 - Repo root may hold the user's real collection CSVs (`jaxon-gbl-collection.csv`,
-  `jet_GL_collection.csv`, `jaxon-ultra-league.csv`) — gitignored, personal
+  `jet_GL_collection.csv`, `jaxon-ultra-league.csv`, `shared-gbl-collection.csv`) — gitignored, personal
   data; don't commit or move them.
 
 ### Invariants an agent should know before editing
