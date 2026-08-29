@@ -21,8 +21,9 @@ vendored engine. The pipeline (wired end-to-end in `src/cli.js`):
 against a meta opponent pool → rank → report (`out/report.md` + `.html`)**
 
 README.md documents every feature in depth (flags, sampling weights, the GA,
-the video scanner, cost math) — go there for behavior questions; the map below
-is for finding code.
+cost math) — go there for behavior questions; the map below is for finding
+code. The video scanner (screen recording → collection CSV) lives in its own
+repo: https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 
 ### Entry points
 
@@ -31,7 +32,6 @@ is for finding code.
 | `node src/cli.js <collection.csv>` | the main pipeline above (`--cp 2500` for Ultra League; `--help` for all flags) |
 | `scripts/evolve.mjs` | genetic-algorithm team search; both sides evolve (`src/teams/evolve.js` + `src/meta/opponentPool.js`), checkpoints/resumes in `out/` |
 | `scripts/tournament.mjs` | large offline sampled runs |
-| `scripts/scan-video.mjs` | macOS-only: screen recording → collection CSV (`src/videoscan/`) |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
 | `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs` | one-off benchmarks/analyses, not part of the pipeline |
@@ -63,9 +63,6 @@ is for finding code.
 - `report/` — Markdown + HTML report rendering, pure (no engine).
 - `util/` — `leagues.js` (CP cap → league identity), `rng.js` (seeded PRNG +
   weighted sampling; the only randomness source in the repo).
-- `videoscan/` — the macOS video importer; `scan.swift` is the only
-  non-JS piece (AVFoundation/Vision), everything decision-making is JS
-  tested against `fixtures/videoscan/`.
 
 ### Data & artifacts
 
@@ -74,7 +71,7 @@ is for finding code.
 - `data/` — our own data: `meta-teams-community.json` (curated GL teams,
   `members[0]` = lead), optional `meta-usage.json`/`meta-roles.json`
   freshness snapshots (loaders fall back to vendored rankings when absent).
-- `fixtures/` — sample collections + recorded videoscan frames for tests.
+- `fixtures/` — sample collections for tests.
 - Repo root may hold the user's real collection CSVs (`jaxon-gbl-collection.csv`,
   `jet_GL_collection.csv`, `jaxon-ultra-league.csv`) — gitignored, personal
   data; don't commit or move them.

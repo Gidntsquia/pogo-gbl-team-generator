@@ -8,7 +8,6 @@
     "test:slow": "node scripts/tests.mjs slow",
     "test:changed": "node scripts/tests.mjs changed",
     "test:full": "node scripts/tests.mjs all",
-    "setup": "bash scripts/setup.sh",
-    "scan": "node scripts/scan-video.mjs"
+    "setup": "bash scripts/setup.sh"
   }
 }
