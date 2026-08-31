@@ -35,6 +35,7 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 | command | what it runs |
 |---|---|
 | `node src/cli.js <collection.csv>` | the main pipeline above (`--cp 2500` for Ultra League; `--help` for all flags) |
+| `scripts/sim.sh <collection.csv>` | **preferred way to launch an evolve run** — wraps evolve.mjs with the established recipe (pop 300, 100 gens, opponents 120, pool 70, elites 12), `--ban a,b`, `--hours H` budget, detached nohup with `out/evolve-<name>{,.log,.pid}` naming; `scripts/sim.sh status` lists runs, live pids, and checkpoint progress. Compose raw evolve.mjs commands only when the recipe genuinely doesn't fit |
 | `scripts/evolve.mjs` | genetic-algorithm team search; both sides evolve (`src/teams/evolve.js` + `src/meta/opponentPool.js`), checkpoints/resumes in `out/`; `--ban a,b` removes species format-wide, both sides (cup rules) |
 | `scripts/build-shared-collection.mjs` | intersects two collection CSVs into a shared-pool CSV of mons both players can build (weaker side's best specimen per base species) |
 | `scripts/tournament.mjs` | large offline sampled runs |
