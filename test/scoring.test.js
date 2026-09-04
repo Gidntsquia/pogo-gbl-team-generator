@@ -186,6 +186,20 @@ describe('scoreCollection', () => {
     assert.match(m.warnings[0], /notarealmon#9/);
   });
 
+  test('skips a copy whose own level is above the CP-cap level (unbuildable: levels cannot go down)', () => {
+    const withOverCap = [
+      collection[0],
+      // Azumarill's rank-1 build caps around L45; a L50 copy is over 1500 CP
+      // at its own level and can never come back down.
+      { speciesId: 'azumarill', name: 'Azu50', ivs: RANK1_IVS, shadow: false, sourceRow: 9, level: 50 },
+    ];
+    const m = scoreCollection(ctx, withOverCap, { groupEntries: TEST_META });
+    assert.equal(m.mons.length, 1);
+    assert.equal(m.warnings.length, 1);
+    assert.match(m.warnings[0], /azumarill#9: over the CP cap at its own level/);
+    assert.equal(m.builtMons['azumarill#9'], undefined);
+  });
+
   test('onProgress fires once per scored mon', () => {
     const calls = [];
     scoreCollection(ctx, collection, {

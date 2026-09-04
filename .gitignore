@@ -2,11 +2,8 @@ vendor/
 node_modules/
 out/
 .DS_Store
-jaxon-gbl-collection.csv
-jaxon-ultra-league.csv
+/*.csv
 .claude/*
 !.claude/settings.json
 !.claude/test-commands.sh
 !.claude/hooks/
-jet_GL_collection.csv
-shared-gbl-collection.csv

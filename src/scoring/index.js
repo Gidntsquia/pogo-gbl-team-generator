@@ -494,6 +494,19 @@ export function scoreCollection(ctx, mons, opts = {}) {
       };
       const pokemon = buildPokemon(ctx, spec);
 
+      // A copy already above the level buildPokemon solved for can never
+      // reach that build: power-ups only raise level and evolving preserves
+      // it, so its real CP sits over the league's cap. Keeping it would
+      // recommend a Pokemon the collection cannot legally field (applies to
+      // base rows and to src/evolution's evolved variants alike).
+      if (typeof mon.level === 'number' && mon.level > pokemon.level) {
+        warnings.push(
+          `skipped ${key}: over the CP cap at its own level (L${mon.level}; ` +
+            `the cap allows at most L${pokemon.level}, and levels can't go down)`
+        );
+        continue;
+      }
+
       if (opts.currentMoves) {
         if (mon.moves) {
           applyGroupMoveset(pokemon, mon.moves);

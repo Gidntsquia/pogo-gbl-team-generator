@@ -31,6 +31,7 @@ import {
   expandBanToCandidateSpeciesIds,
   filterBannedCuratedTeams,
   filterBannedMovesetPool,
+  mutationRatesAt,
   renderEvolveReportHtml,
 } from '../scripts/evolve.mjs';
 
@@ -465,7 +466,13 @@ function fakeMember(overrides) {
 
 function fakeResult() {
   const teamA = [fakeMember({ key: 'a1', name: 'Alpha' }), fakeMember({ key: 'a2', name: 'Bravo' }), fakeMember({ key: 'a3', name: 'Charlie' })];
-  const teamB = [fakeMember({ key: 'b1', name: 'Delta' }), fakeMember({ key: 'b2', name: 'Echo' }), fakeMember({ key: 'b3', name: 'Foxtrot' })];
+  const teamB = [
+    fakeMember({ key: 'b1', name: 'Delta' }),
+    // An evolution whose copy sits ABOVE the level the sim built it at:
+    // evolving preserves level, so this build is over the cap and impossible.
+    fakeMember({ key: 'b2', name: 'Echo', evolveFrom: 'Ember', currentLevel: 24, currentCp: 1743, targetLevel: 20.5, targetCp: 1489 }),
+    fakeMember({ key: 'b3', name: 'Foxtrot' }),
+  ];
   const teamC = [
     // Exercises the three buildLineHtml branches: unknown current level,
     // already-built (current >= target), and an evolution.
@@ -493,9 +500,17 @@ function fakeResult() {
   });
 
   const elites = [
-    eliteEntry(teamA, sig(['a1', 'a2', 'a3']), 0.7, {
-      stardust: 45000, candy: 120, candyXl: 0, evolveItems: [], unknownLevels: 0, unpricedEvolutions: 0, members: [],
-    }),
+    {
+      ...eliteEntry(teamA, sig(['a1', 'a2', 'a3']), 0.7, {
+        stardust: 45000, candy: 120, candyXl: 0, evolveItems: [], unknownLevels: 0, unpricedEvolutions: 0, members: [],
+      }),
+      // Five qualifiers (worst first): the card splits them at the 20% core
+      // cutoff -- hard losses as core breakers, the 20-40% band as "Threats".
+      coreBreakExposure: [
+        { name: 'Nemesis', winRate: 0.08 }, { name: 'Rival', winRate: 0.15 }, { name: 'Bane', winRate: 0.2 },
+        { name: 'Menace', winRate: 0.24 }, { name: 'Pest', winRate: 0.38 },
+      ],
+    },
     // Team B's buildCost is genuinely absent (e.g. an older checkpoint) --
     // the card must say so, not fabricate a number.
     eliteEntry(teamB, sig(['b1', 'b2', 'b3']), 0.65, undefined),
@@ -606,6 +621,14 @@ test('renderEvolveReportHtml: podium, detail cards, embedded race, standings and
   assert.match(html, /Full standings/);
   const standingsRows = html.match(/<span class="medal-dot"/g) ?? [];
   assert.equal(standingsRows.length, 3, 'one medal dot per top-3 standings row');
+  // Break exposure splits at the 20% cutoff: hard losses are core breakers,
+  // the 20-40% band renders as a Threats line.
+  assert.match(html, /Watch for: <b>Nemesis, Rival, Bane<\/b>/);
+  assert.match(html, /Threats: Menace, Pest/);
+  assert.doesNotMatch(html, /Watch for: <b>[^<]*Menace/);
+  // An evolution stuck above its simulated level is called out as impossible,
+  // not rendered as a power-down.
+  assert.match(html, /Ember \(L24\).*<b>not buildable<\/b>: evolving keeps its level, landing at CP 1743/);
   // Run notes: data-driven facts, not fabricated prose.
   assert.match(html, /Run notes/);
   assert.match(html, /generation cap reached/);
@@ -626,4 +649,22 @@ test('renderEvolveReportHtml: zero elites renders gracefully (no podium/cards, r
   assert.match(html, /Run notes/);
   assert.doesNotMatch(html, /undefined/);
   assert.doesNotMatch(html, /NaN/);
+});
+
+test('mutationRatesAt anneals linearly from the hot-start rates to the standard floor/ceil, and is constant without start values', () => {
+  const config = { generations: 11, mutationFloorStart: 0.15, mutationCeilStart: 0.6 };
+  // Gen 0 uses the hot-start rates verbatim; the last allowed generation uses
+  // the standard rates exactly (defaults here, since no --mutation-floor/ceil
+  // override is set); the midpoint is the linear halfway blend.
+  assert.deepEqual(mutationRatesAt(0, config), { mutationFloor: 0.15, mutationCeil: 0.6 });
+  assert.deepEqual(mutationRatesAt(10, config), { mutationFloor: 0.05, mutationCeil: 0.4 });
+  assert.deepEqual(mutationRatesAt(5, config), { mutationFloor: 0.1, mutationCeil: 0.5 });
+  // Explicit end overrides are the anneal target, not the defaults.
+  const withEnds = { ...config, mutationFloor: 0.09, mutationCeil: 0.2 };
+  assert.deepEqual(mutationRatesAt(10, withEnds), { mutationFloor: 0.09, mutationCeil: 0.2 });
+  // No start values: both rates hold at the standard values for every
+  // generation (the pre-anneal behavior, exactly).
+  for (const g of [0, 5, 10]) {
+    assert.deepEqual(mutationRatesAt(g, { generations: 11 }), { mutationFloor: 0.05, mutationCeil: 0.4 });
+  }
 });

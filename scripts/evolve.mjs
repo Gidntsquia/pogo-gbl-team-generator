@@ -169,7 +169,13 @@ import {
   curatedHeadcount,
 } from '../src/meta/opponentPool.js';
 import { dedupeBestPerSpecies } from '../src/teams/index.js';
-import { initPopulation, nextGeneration, hasConverged } from '../src/teams/evolve.js';
+import {
+  initPopulation,
+  nextGeneration,
+  hasConverged,
+  DEFAULT_MUTATION_FLOOR,
+  DEFAULT_MUTATION_CEIL,
+} from '../src/teams/evolve.js';
 import { leagueForCp } from '../src/util/leagues.js';
 import { loadRoleScores } from '../src/meta/roles.js';
 import { buildTopTeamSeries, renderChartInner } from '../src/report/raceChart.js';
@@ -271,12 +277,14 @@ const TOUGHEST_OPPONENTS_CAP = 15; // report/analytics-JSON cap on how many oppo
 // holding 63% overall) is visible in the report rather than discovered on
 // the ladder. A species must appear in at least CORE_BREAK_MIN_TEAMS
 // opponent teams before its group win rate means anything, and it is called
-// a core breaker only below CORE_BREAK_WIN_RATE_MAX -- a matchup the team
-// loses decisively more often than it wins, not merely a soft spot. Every
-// qualifying species is listed (Jaxon 2026-08-27: names only, "include more
-// than one core breaker if it applies").
+// a core breaker only at or below CORE_BREAK_WIN_RATE_MAX -- a matchup the
+// team loses hard, not merely a soft spot. Species in the milder
+// (CORE_BREAK_WIN_RATE_MAX, THREAT_WIN_RATE_MAX] band are listed under
+// "Threats" instead (Jaxon 2026-08-30: threshold split, not a hard cap;
+// names only per Jaxon 2026-08-27).
 const CORE_BREAK_MIN_TEAMS = 5;
-const CORE_BREAK_WIN_RATE_MAX = 0.4;
+const CORE_BREAK_WIN_RATE_MAX = 0.2;
+const THREAT_WIN_RATE_MAX = 0.4;
 
 /**
  * Distinct base species of one opponent team, with display names -- shadow
@@ -297,10 +305,11 @@ function teamBaseSpecies(opp) {
 }
 
 /**
- * The elite's core breakers: every species appearing in at least
+ * The elite's break exposure: every species appearing in at least
  * CORE_BREAK_MIN_TEAMS of its elites-pass opponent teams against which the
- * elite's group win rate is at most CORE_BREAK_WIN_RATE_MAX, worst first.
- * Report only (see the constants' comment).
+ * elite's group win rate is at most THREAT_WIN_RATE_MAX, worst first. The
+ * report splits this list at CORE_BREAK_WIN_RATE_MAX into core breakers vs
+ * threats (splitBreakExposure). Report only (see the constants' comment).
  *
  * @param {Array<object>} perMeta - per-opponent rows (wins/losses/ties + species).
  * @returns {Array<{id:string,name:string,teams:number,wins:number,losses:number,ties:number,winRate:number}>}
@@ -320,8 +329,24 @@ function computeCoreBreakExposure(perMeta) {
   return [...bySpecies.values()]
     .filter((a) => a.teams >= CORE_BREAK_MIN_TEAMS)
     .map((a) => ({ ...a, winRate: (a.wins + 0.5 * a.ties) / (a.wins + a.losses + a.ties) }))
-    .filter((a) => a.winRate <= CORE_BREAK_WIN_RATE_MAX)
+    .filter((a) => a.winRate <= THREAT_WIN_RATE_MAX)
     .sort((a, b) => a.winRate - b.winRate || b.teams - a.teams || (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * Split a coreBreakExposure list (worst first) at CORE_BREAK_WIN_RATE_MAX:
+ * `core` = the hard losses, `threats` = the milder band up to
+ * THREAT_WIN_RATE_MAX. Entries from old checkpoints that carry no winRate
+ * count as core breakers (they were computed under the old single cutoff).
+ *
+ * @param {Array<{name:string,winRate?:number}>|undefined} cb
+ * @returns {{core: Array<object>, threats: Array<object>}}
+ */
+function splitBreakExposure(cb) {
+  const core = [];
+  const threats = [];
+  for (const s of cb ?? []) ((s.winRate ?? 0) <= CORE_BREAK_WIN_RATE_MAX ? core : threats).push(s);
+  return { core, threats };
 }
 
 const LEADS = [0, 1, 2];
@@ -694,6 +719,34 @@ function populationAt(g, config) {
 }
 
 /**
+ * Candidate mutation floor/ceil for the generation being evolved FROM `g`
+ * (i.e. the rates `nextGeneration` uses when producing generation g+1): a
+ * straight linear anneal from the optional hot-start values
+ * (`--mutation-floor-start` / `--mutation-ceil-start`) at generation 0 down
+ * to the standard floor/ceil (`--mutation-floor` / `--mutation-ceil`, or
+ * src/teams/evolve.js's defaults) at the last allowed generation -- same
+ * ramp shape and indexing as {@link populationAt}. With no start value set,
+ * each rate is constant across the run (the pre-anneal behavior, exactly).
+ * Pure function of (g, config), so a resumed run recomputes the same rates.
+ *
+ * @param {number} g - generation index.
+ * @param {object} config - resolved run config (buildRunConfig shape).
+ * @returns {{mutationFloor: number, mutationCeil: number}}
+ */
+export function mutationRatesAt(g, config) {
+  const endFloor = config.mutationFloor ?? DEFAULT_MUTATION_FLOOR;
+  const endCeil = config.mutationCeil ?? DEFAULT_MUTATION_CEIL;
+  const startFloor = config.mutationFloorStart ?? endFloor;
+  const startCeil = config.mutationCeilStart ?? endCeil;
+  const G = Math.max(1, config.generations);
+  const t = G > 1 ? Math.min(1, g / (G - 1)) : 1;
+  return {
+    mutationFloor: startFloor + t * (endFloor - startFloor),
+    mutationCeil: startCeil + t * (endCeil - startCeil),
+  };
+}
+
+/**
  * Opponent-pool size for generation `g`: DERIVED from the population so the
  * per-generation battle grid (population x opponents) stays at its gen-0
  * value. That is what makes the trade cost-neutral -- the run does not get
@@ -961,6 +1014,8 @@ function buildRunConfig(csvPath, opts) {
     ...(opts.deathRate !== undefined ? { deathRate: opts.deathRate } : {}),
     ...(opts.mutationFloor !== undefined ? { mutationFloor: opts.mutationFloor } : {}),
     ...(opts.mutationCeil !== undefined ? { mutationCeil: opts.mutationCeil } : {}),
+    ...(opts.mutationFloorStart !== undefined ? { mutationFloorStart: opts.mutationFloorStart } : {}),
+    ...(opts.mutationCeilStart !== undefined ? { mutationCeilStart: opts.mutationCeilStart } : {}),
     ...(opts.immigrantFraction !== undefined ? { immigrantFraction: opts.immigrantFraction } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined
       ? {
@@ -1580,7 +1635,8 @@ function renderEvolveReport(result) {
     out.push('| Rank | Team (Lead / Back / Back) | Score | Elites-pass win% | Last-gens win% | Core breakers |');
     out.push('| --- | --- | ---: | ---: | ---: | --- |');
     elites.forEach((t, i) => {
-      const breakers = t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => s.name).join(', ') : 'none';
+      const { core } = splitBreakExposure(t.coreBreakExposure);
+      const breakers = core.length ? core.map((s) => s.name).join(', ') : 'none';
       out.push(
         `| ${i + 1} | ${formatTeamMembers(t.members)} | **${pct(t.combinedScore)}** | ${pct(t.winRate)} | ` +
           `${pct(t.recentWinRate)} | ${breakers} |`
@@ -1604,7 +1660,11 @@ function renderEvolveReport(result) {
       `- **Lead:** ${t.bestLead.name}` +
         (t.safeSwap ? ` -- **safest first switch:** ${t.safeSwap.name} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)` : '')
     );
-    out.push(`- **Core breakers:** ${t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => s.name).join(', ') : 'none'}`);
+    const { core, threats } = splitBreakExposure(t.coreBreakExposure);
+    out.push(`- **Core breakers:** ${core.length ? core.map((s) => s.name).join(', ') : 'none'}`);
+    if (threats.length) {
+      out.push(`- **Threats:** ${threats.map((s) => s.name).join(', ')}`);
+    }
     out.push('');
     out.push('5 hardest opponents (by win%):');
     out.push('');
@@ -1632,11 +1692,13 @@ function renderEvolveReport(result) {
       (config.fixedOpponents ? ', fixed-opponents' : '') +
       (config.banSpecies.length ? `, ban=${config.banSpecies.join(',')}` : '')
   );
-  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
+  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
     const ga = [];
     if (config.deathRate !== undefined) ga.push(`death-rate=${config.deathRate}`);
     if (config.mutationFloor !== undefined) ga.push(`mutation-floor=${config.mutationFloor}`);
     if (config.mutationCeil !== undefined) ga.push(`mutation-ceil=${config.mutationCeil}`);
+    if (config.mutationFloorStart !== undefined) ga.push(`mutation-floor-start=${config.mutationFloorStart} (annealed to ${config.mutationFloor ?? DEFAULT_MUTATION_FLOOR})`);
+    if (config.mutationCeilStart !== undefined) ga.push(`mutation-ceil-start=${config.mutationCeilStart} (annealed to ${config.mutationCeil ?? DEFAULT_MUTATION_CEIL})`);
     if (config.immigrantFraction !== undefined) ga.push(`immigrant-fraction=${config.immigrantFraction}`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
     out.push(`- GA overrides: ${ga.join(', ')}`);
@@ -1700,6 +1762,16 @@ function buildLineHtml(m) {
   if (!m.evolveFrom && m.currentLevel >= m.targetLevel) {
     return `${fromPart} -- already at or above the level simulated`;
   }
+  if (m.evolveFrom && m.currentLevel > m.targetLevel) {
+    // Evolving preserves level and levels can't go down, so this copy lands
+    // above the CP cap -- the simulated build does not exist. (currentCp is
+    // the EVOLVED form's CP at the copy's level -- see reportMemberDetail.)
+    return (
+      `Your ${ivs}${tag} ${escapeHtml(m.evolveFrom)} (L${lvl(m.currentLevel)}) &rarr; ` +
+      `<b>not buildable</b>: evolving keeps its level, landing at CP ${m.currentCp} — over the cap ` +
+      `(the sim used L${lvl(m.targetLevel)}, CP ${m.targetCp}, and levels can't go down)`
+    );
+  }
   return `${fromPart} &rarr; ${evolveNote}power up to <b>L${lvl(m.targetLevel)}, CP ${m.targetCp}</b>`;
 }
 
@@ -1750,10 +1822,17 @@ function renderTeamCardHtml(t, rank) {
       `<p class="factline">Safest first switch: <b>${escapeHtml(t.safeSwap.name)}</b> (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in).</p>`
     );
   }
+  const { core, threats } = splitBreakExposure(t.coreBreakExposure);
   out.push(
-    `<p class="breakers">Watch for: <b>${t.coreBreakExposure?.length ? t.coreBreakExposure.map((s) => escapeHtml(s.name)).join(', ') : 'nothing so far'}</b>` +
+    `<p class="breakers">Watch for: <b>${core.length ? core.map((s) => escapeHtml(s.name)).join(', ') : 'nothing so far'}</b>` +
       ` — the species this team wins under ${Math.round(CORE_BREAK_WIN_RATE_MAX * 100)}% against when they show up.</p>`
   );
+  if (threats.length) {
+    out.push(
+      `<p class="breakers">Threats: ${threats.map((s) => escapeHtml(s.name)).join(', ')}` +
+        ` — matchups it only wins ${Math.round(CORE_BREAK_WIN_RATE_MAX * 100)}–${Math.round(THREAT_WIN_RATE_MAX * 100)}% of the time, worst first.</p>`
+    );
+  }
   if (t.hardestOpponents?.length) {
     out.push('<div class="table-wrap"><table><tr><th>Hardest opponents</th><th class="num">Win%</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">HP margin</th></tr>');
     for (const h of t.hardestOpponents) {
@@ -1933,11 +2012,13 @@ export function renderEvolveReportHtml(result) {
       (config.fixedOpponents ? ', fixed-opponents' : '') +
       '.</li>'
   );
-  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
+  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
     const ga = [];
     if (config.deathRate !== undefined) ga.push(`death-rate=${config.deathRate}`);
     if (config.mutationFloor !== undefined) ga.push(`mutation-floor=${config.mutationFloor}`);
     if (config.mutationCeil !== undefined) ga.push(`mutation-ceil=${config.mutationCeil}`);
+    if (config.mutationFloorStart !== undefined) ga.push(`mutation-floor-start=${config.mutationFloorStart} (annealed to ${config.mutationFloor ?? DEFAULT_MUTATION_FLOOR})`);
+    if (config.mutationCeilStart !== undefined) ga.push(`mutation-ceil-start=${config.mutationCeilStart} (annealed to ${config.mutationCeil ?? DEFAULT_MUTATION_CEIL})`);
     if (config.immigrantFraction !== undefined) ga.push(`immigrant-fraction=${config.immigrantFraction}`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
     out.push(`<li><b>GA overrides:</b> ${escapeHtml(ga.join(', '))}.</li>`);
@@ -2010,6 +2091,10 @@ function renderDoneMarker(result) {
  *   deathRate?:number, mutationFloor?:number, mutationCeil?:number,
  *   immigrantFraction?:number, - candidate-side GA rate overrides, forwarded
  *     to nextGeneration; in the checkpoint fingerprint ONLY when set.
+ *   mutationFloorStart?:number, mutationCeilStart?:number, - hot-start
+ *     mutation rates at generation 0, annealed linearly to the standard
+ *     floor/ceil by the last allowed generation (see mutationRatesAt); same
+ *     only-when-set fingerprint rule.
  *   convWindow?:number, convTopN?:number, - convergence window / top-set-size
  *     overrides for hasConverged; same only-when-set fingerprint rule.
  *   populationFinalRatio?:number, - candidate population at the last
@@ -2233,8 +2318,9 @@ export async function runEvolution(csvPath, opts = {}) {
             excludeSpecies: candidateExcludeSpecies,
             targetSize: populationAt(generation + 1, config),
             deathRate: config.deathRate,
-            mutationFloor: config.mutationFloor,
-            mutationCeil: config.mutationCeil,
+            // Annealed per generation (constant when no start value is set)
+            // -- see mutationRatesAt.
+            ...mutationRatesAt(generation, config),
             immigrantFraction: config.immigrantFraction,
           },
         });
@@ -2586,6 +2672,11 @@ Options:
                             (default: src/teams/evolve.js DEFAULT_DEATH_RATE)
   --mutation-floor R       lowest per-survivor mutation chance    (default: DEFAULT_MUTATION_FLOOR)
   --mutation-ceil R        highest per-survivor mutation chance   (default: DEFAULT_MUTATION_CEIL)
+  --mutation-floor-start R  hot-start mutation floor at generation 0,
+                            annealed linearly down to --mutation-floor (or
+                            its default) by the last generation   (default: no anneal)
+  --mutation-ceil-start R   hot-start mutation ceil at generation 0, same
+                            linear anneal to --mutation-ceil      (default: no anneal)
   --immigrant-fraction R   fresh-immigrant share of the population (default: DEFAULT_IMMIGRANT_FRACTION)
   --conv-window N          convergence: consecutive zero-churn generations
                             required                              (default: DEFAULT_CONVERGENCE_WINDOW)
@@ -2658,6 +2749,8 @@ async function main(argv) {
         'death-rate': { type: 'string' },
         'mutation-floor': { type: 'string' },
         'mutation-ceil': { type: 'string' },
+        'mutation-floor-start': { type: 'string' },
+        'mutation-ceil-start': { type: 'string' },
         'immigrant-fraction': { type: 'string' },
         'conv-window': { type: 'string' },
         'conv-top-n': { type: 'string' },
@@ -2706,6 +2799,8 @@ async function main(argv) {
     deathRate: fractionFlag(values['death-rate'], 'death-rate', undefined),
     mutationFloor: fractionFlag(values['mutation-floor'], 'mutation-floor', undefined),
     mutationCeil: fractionFlag(values['mutation-ceil'], 'mutation-ceil', undefined),
+    mutationFloorStart: fractionFlag(values['mutation-floor-start'], 'mutation-floor-start', undefined),
+    mutationCeilStart: fractionFlag(values['mutation-ceil-start'], 'mutation-ceil-start', undefined),
     immigrantFraction: fractionFlag(values['immigrant-fraction'], 'immigrant-fraction', undefined),
     convWindow: values['conv-window'] !== undefined ? intFlag(values['conv-window'], 'conv-window', undefined) : undefined,
     convTopN: values['conv-top-n'] !== undefined ? intFlag(values['conv-top-n'], 'conv-top-n', undefined) : undefined,
