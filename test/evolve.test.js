@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import {
   initPopulation,
   nextGeneration,
+  shadowBlindSignature,
   DEFAULT_IMMIGRANT_FRACTION,
 } from '../src/teams/evolve.js';
 
@@ -383,6 +384,96 @@ test('a too-small population still returns a coherent (possibly short) result ra
 // Mimikyu, no Cramorant") matched by BASE species id, unlike --exclude's
 // exact-match-only candidate exclusion. No engine boot, no battles.
 // ---------------------------------------------------------------------------
+
+// ---- shadow-flip mutation + shadow rivalry ----
+//
+// A pool where species0..4 each come in a shadow and a non-shadow key (the
+// shadow key scores lower, so the sampler always draws the base key and the
+// shadow twin is reachable only via shadowFlip), plus enough plain species to
+// fill teams.
+const SHADOW_POOL_MONS = (() => {
+  const mons = makeMons(12).map((m) => ({ ...m, builtMon: { ...m.builtMon, spec: { shadow: false } } }));
+  for (let i = 0; i < 5; i++) {
+    mons.push({
+      key: `mon${i}S`,
+      builtMon: { speciesId: `species${i}`, name: `species${i}`, spec: { shadow: true } },
+      ratings: { somemeta: { s00: 900 - i * 7, s11: 900 - i * 7, s22: 900 - i * 7 } },
+    });
+  }
+  return mons;
+})();
+const SHADOW_MATRIX = fakeMatrix(SHADOW_POOL_MONS);
+const SHADOW_POOL = poolKeys(SHADOW_POOL_MONS);
+const shadowOf = (key) => !!SHADOW_MATRIX.builtMons[key].spec?.shadow;
+
+test('shadowFlip mutants swap exactly one member for its opposite-shadow twin (same species, same lead)', () => {
+  const population = initPopulation({ matrix: SHADOW_MATRIX, pool: SHADOW_POOL, count: 30, seed: 'shadow-init' });
+  let flips = 0;
+  for (let seed = 0; seed < 20; seed++) {
+    const fitness = population.map((_, i) => (i * 37) % 100 / 100);
+    const { population: next, lineage } = nextGeneration({
+      population,
+      fitness,
+      pool: SHADOW_POOL,
+      matrix: SHADOW_MATRIX,
+      seed: `flip-${seed}`,
+      opts: { shadowFlipRate: 1, leadRotationRate: 0, mutationFloor: 1, mutationCeil: 1 },
+    });
+    lineage.entries.forEach((e, i) => {
+      if (e.origin !== 'mutant' || e.mutationType !== 'shadowFlip') return;
+      flips++;
+      const parent = population[e.parentIndex];
+      const child = next[i];
+      assert.equal(shadowBlindSignature(child, SHADOW_MATRIX), shadowBlindSignature(parent, SHADOW_MATRIX), 'species and lead unchanged');
+      for (let slot = 0; slot < 3; slot++) {
+        if (slot === e.flippedSlot) {
+          assert.notEqual(child[slot], parent[slot]);
+          assert.notEqual(shadowOf(child[slot]), shadowOf(parent[slot]), 'flipped slot changes shadow state');
+        } else assert.equal(child[slot], parent[slot]);
+      }
+    });
+  }
+  assert.ok(flips > 20, `expected plenty of shadowFlip mutants at rate 1, got ${flips}`);
+});
+
+test('shadowFlipRate 0 (or a pool with no twins) never produces a shadowFlip mutant', () => {
+  const population = samplePopulation(30, 'plain-init');
+  const fitness = population.map((_, i) => i / 30);
+  const a = nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'x', opts: { shadowFlipRate: 1 } });
+  const b = nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'x', opts: { shadowFlipRate: 0 } });
+  assert.ok(a.lineage.entries.every((e) => e.mutationType !== 'shadowFlip'), 'no twins in the pool: falls through to memberSwap');
+  assert.deepEqual(a.population, b.population, 'a twin-less pool evolves identically whatever the rate');
+});
+
+test('shadow rivalry: of two teams identical except shadow-ness only the fitter survives, on top of the normal cull', () => {
+  const base = ['mon0', 'mon1', 'mon2'];
+  const twinA = ['mon0S', 'mon1', 'mon2']; // lead flipped
+  const twinB = ['mon0', 'mon1S', 'mon2']; // a back flipped
+  const otherLead = ['mon1', 'mon0', 'mon2']; // same trio, different lead: NOT a rival
+  const filler = initPopulation({ matrix: SHADOW_MATRIX, pool: SHADOW_POOL, count: 40, seed: 'filler' })
+    .filter((t) => !t.includes('mon0') && !t.includes('mon0S'))
+    .slice(0, 8);
+  const population = [base, twinA, twinB, otherLead, ...filler];
+  // The twins are the three FITTEST teams in the population; base is the best of the three.
+  const fitness = population.map((_, i) => (i === 0 ? 0.95 : i === 1 ? 0.9 : i === 2 ? 0.92 : i === 3 ? 0.85 : 0.5 - i * 0.01));
+  const { population: next, lineage } = nextGeneration({
+    population,
+    fitness,
+    pool: SHADOW_POOL,
+    matrix: SHADOW_MATRIX,
+    seed: 'rivalry',
+    opts: { deathRate: 1 / 3, mutationFloor: 0, mutationCeil: 0 },
+  });
+  assert.deepEqual([...lineage.shadowRivalryDied].sort(), [1, 2], 'both shadow twins lose to the fitter base team');
+  const survivors = lineage.entries.filter((e) => e.origin === 'survived').map((e) => e.parentIndex);
+  assert.ok(survivors.includes(0) && survivors.includes(3), 'the base team and the different-lead team survive');
+  assert.ok(!survivors.includes(1) && !survivors.includes(2));
+  const normalDeaths = Math.round(population.length / 3);
+  assert.equal(lineage.died.length, 2 + normalDeaths, 'rivalry deaths come on top of the deathRate cull');
+  assert.equal(next.length, population.length, 'freed slots are refilled to hold the population size');
+  const sigs = next.map((t) => shadowBlindSignature(t, SHADOW_MATRIX));
+  assert.equal(new Set(sigs).size, sigs.length, 'no shadow twins remain among the carried-over population');
+});
 
 test('filterBannedCuratedTeams drops a WHOLE curated team containing a banned base species (shadow variant included)', () => {
   const teams = [

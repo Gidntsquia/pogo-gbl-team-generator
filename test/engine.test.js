@@ -26,10 +26,10 @@ const PVPOKE_SHADOW_DEF_MULT = 0.83333331;
 // vendor/pvpoke/src/data/rankings/all/overall/rankings-1500.json before
 // being chosen here.
 const VALIDATION_PAIRS = [
-  ['azumarill', 'guzzlord'],
-  ['altaria', 'quagsire'],
-  ['mimikyu', 'jellicent'], // exercises Mimikyu's Disguise form-change path
-  ['lickilicky', 'corsola_galarian'],
+  ['tinkaton', 'furret'],
+  ['corsola_galarian', 'altaria'],
+  ['mimikyu', 'melmetal'], // exercises Mimikyu's Disguise form-change path
+  ['jellicent', 'tinkaton'],
 ];
 
 /** Look up speciesId's own recorded rating against opponentId, pvpoke's "leads" (shields 1/1) scenario. */
@@ -275,7 +275,7 @@ describe('initEngine({ cp }) -- Ultra League (CP 2500) parameterization', () => 
   // "--cp 2500 / Ultra League flag" gap, engine-layer slice) rather than
   // just accepting the option and silently still simulating Great League.
   const UL_VALIDATION_PAIRS = [
-    ['lickilicky', 'corviknight'],
+    ['tinkaton', 'guzzlord'],
     ['tinkaton', 'corviknight'],
   ];
 

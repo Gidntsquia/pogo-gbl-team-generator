@@ -163,3 +163,22 @@ test('dedupeBestPerSpecies still collapses two different mons of one species', (
   };
   assert.deepEqual(Object.keys(dedupeBestPerSpecies(matrix).ratings), ['trevenant#2']);
 });
+
+test('dedupeBestPerSpecies keepShadowVariants keeps the best shadow AND the best non-shadow of one species', () => {
+  const rating = (s11) => ({ metaA: { s00: s11, s11, s22: s11 } });
+  const matrix = {
+    ratings: { 'azu#1': rating(600), 'azu#2': rating(900), 'azu#3': rating(700), 'azu#4': rating(650) },
+    builtMons: {
+      'azu#1': { speciesId: 'azumarill', name: 'Azumarill', lineageKey: 'row1', spec: { shadow: false } },
+      'azu#2': { speciesId: 'azumarill', name: 'Azumarill', lineageKey: 'row2', spec: { shadow: false } },
+      'azu#3': { speciesId: 'azumarill', name: 'Azumarill', lineageKey: 'row3', spec: { shadow: true } },
+      'azu#4': { speciesId: 'azumarill', name: 'Azumarill', lineageKey: 'row4', spec: { shadow: true } },
+    },
+  };
+  assert.deepEqual(Object.keys(dedupeBestPerSpecies(matrix).ratings), ['azu#2'], 'default: one key per species');
+  assert.deepEqual(
+    Object.keys(dedupeBestPerSpecies(matrix, { keepShadowVariants: true }).ratings).sort(),
+    ['azu#2', 'azu#3'],
+    'keepShadowVariants: best non-shadow plus best shadow'
+  );
+});

@@ -214,7 +214,194 @@ export function initTeamBattle(ctx) {
     aiData,
     baseReactionTimes,
   };
+  // POGO_SCENARIO_MEMO=0 disables the memo process-wide (workers included);
+  // it exists to A/B the memo itself.
+  const memoOff = ctx.scenarioMemo === false || process.env.POGO_SCENARIO_MEMO === '0';
+  ctx.__teamBattle.scenarioMemo = memoOff ? null : createScenarioMemo(ctx, { max: ctx.scenarioMemoMax });
   return ctx;
+}
+
+// Scenario memo ceiling per engine context (i.e. per worker thread). Past it
+// the memo is cleared wholesale rather than evicted piecemeal; see
+// createScenarioMemo.
+const DEFAULT_SCENARIO_MEMO_MAX = 200000;
+
+/**
+ * Memo for pvpoke's TrainingAI#runScenario -- the AI's internal 1v1 lookahead
+ * sims. Profiling a 3v3 battle shows ~95% of its CPU goes into these lookaheads
+ * (evaluateMatchup runs four scenarios every time a Pokemon enters, decideShield
+ * and decideSwitch run more), and the real 3v3 turn loop is a rounding error.
+ * The lookahead is a pure function of (scenario type, both Pokemon's build and
+ * current battle state), and a candidate team is re-evaluated against many
+ * opponents from identical starting states, so the same lookahead is
+ * recomputed thousands of times across a run. The memo returns the recorded
+ * result instead.
+ *
+ * Exactness: the only randomness inside a lookahead is Battle#useMove's buff
+ * roll (Battle.js:1389). In simulate mode `buffChanceModifier` is -1 and
+ * `shieldBuffModifier` 0, so the roll's VALUE can never satisfy the apply
+ * condition -- chance buffs apply deterministically via buffApplyMeter -- but
+ * the draw still advances the seeded stream. A memo entry therefore records
+ * how many draws the lookahead consumed, and a hit replays that many draws, so
+ * the outer battle sees the identical random sequence either way. Results with
+ * and without the memo are bit-identical (test/e2e.test.js asserts this).
+ *
+ * The memo lives for the engine context's lifetime and is shared across
+ * battles, which is where the win comes from. Entries are small (a short key
+ * string plus a handful of numbers); at `max` entries it is cleared outright.
+ *
+ * Created once per context by initTeamBattle (ctx.__teamBattle.scenarioMemo);
+ * setting `ctx.scenarioMemo = false` before the first battle, `battleTeams(ctx,
+ * { scenarioMemo: false })`, or the env var POGO_SCENARIO_MEMO=0 runs every
+ * lookahead for real instead. `memo.verify = (mismatch) => ...` turns on a
+ * diagnostic mode that runs every hit for real as well and reports any
+ * disagreement.
+ *
+ * @param {object} ctx - from initEngine(), after initTeamBattle
+ * @param {{ max?: number }} [opts]
+ * @returns {{ map: Map<string, {draws:number, rating:number, carried:Array}>, hits: number, misses: number, max: number }}
+ */
+export function createScenarioMemo(ctx, opts = {}) {
+  return {
+    map: new Map(),
+    hits: 0,
+    misses: 0,
+    max: opts.max ?? DEFAULT_SCENARIO_MEMO_MAX,
+    vmMath: ctx.__teamBattle.vmMath,
+    RealBattle: ctx.Battle,
+    // `new Battle()` inside TrainingAI resolves the vm global at call time;
+    // assign through the vm so the swap lands on the context's own global.
+    setGlobalBattle: vm.runInContext('(function (B) { Battle = B; })', ctx.context),
+  };
+}
+
+/**
+ * Everything one inner `simulate()` depends on for one Pokemon, read at the
+ * moment simulate() is entered: the build (species, active form, final stats,
+ * shadow multiplier, moveset), the start* fields Battle#start's reset() will
+ * load (hp/energy/cooldown/shields/buffs/form), the bait/farm flags the
+ * scenario type set, and the fields pvpoke's sim reads but never resets
+ * (priority, turnsToKO, hasActed, optimizeMoveTiming, chargedMovesOnly,
+ * nativeStatBuffs).
+ */
+function simMonKey(p) {
+  const s = p.stats;
+  const cm = p.chargedMoves.map((m) => (m ? m.moveId : '-')).join(',');
+  return (
+    `${p.speciesId}/${p.startFormId}|${s.atk},${s.def},${s.hp}|${p.shadowType}|` +
+    `${p.fastMove ? p.fastMove.moveId : '-'}/${cm}|${p.priority}|${p.turnsToKO}|` +
+    `${p.baitShields}${p.farmEnergy ? 1 : 0}${p.hasActed ? 1 : 0}` +
+    `${p.optimizeMoveTiming ? 1 : 0}${p.chargedMovesOnly ? 1 : 0}|` +
+    `${p.startHp},${p.startEnergy},${p.startCooldown},${p.startingShields},` +
+    `${p.startStatBuffs[0]},${p.startStatBuffs[1]},${p.nativeStatBuffs[0]},${p.nativeStatBuffs[1]}`
+  );
+}
+
+/**
+ * The state a sim leaves on a Pokemon. runScenario's own restore + reset()
+ * put most of it back, but (a) hasActed/turnsToKO/chargedMovesOnly are never
+ * reset and leak into the outer battle, and (b) reset() re-initializes
+ * pokemon[0]'s moves against pokemon[1]'s not-yet-reset buffs and form, so
+ * the post-sim values of everything reset() touches still shape the outer
+ * battle. A replayed sim therefore leaves the Pokemon exactly as the real one
+ * did.
+ */
+function readCarried(p) {
+  return [
+    p.hasActed, p.turnsToKO, p.chargedMovesOnly,
+    p.hp, p.energy, p.cooldown, p.shields, p.damageWindow, p.faintSource,
+    p.statBuffs[0], p.statBuffs[1], p.activeFormId,
+  ];
+}
+function applyCarried(p, c) {
+  p.hasActed = c[0];
+  p.turnsToKO = c[1];
+  p.chargedMovesOnly = c[2];
+  p.hp = c[3];
+  p.energy = c[4];
+  p.cooldown = c[5];
+  p.shields = c[6];
+  p.damageWindow = c[7];
+  p.faintSource = c[8];
+  p.statBuffs = [c[9], c[10]];
+  if (p.activeFormId !== c[11]) p.changeForm(c[11]);
+}
+
+/**
+ * Run pvpoke's runScenario unchanged, but with the vm's global `Battle`
+ * temporarily swapped for a factory whose instances have `simulate()` and
+ * `getBattleRatings()` intercepted. Every side effect of runScenario on the
+ * real Pokemon (start* fields, reset(), move re-initialization against the
+ * throwaway battle) happens exactly as it would without the memo; only the
+ * individual `simulate()` calls are memoized, each under a key built from both
+ * Pokemon's state at that moment (see simMonKey).
+ *
+ * Miss: simulate() runs for real; the memo records how many seeded draws it
+ * consumed, the rating it produced, and the fields it left behind on the two
+ * Pokemon (see readCarried). Hit: simulate() is skipped, the recorded draws
+ * are replayed against the seeded stream, the carried fields are written
+ * back, and getBattleRatings() hands back the recorded rating.
+ *
+ * Memoizing per sim rather than per scenario matters: pvpoke's NEITHER_BAIT
+ * and NO_BAIT scenarios set identical flags, so every evaluateMatchup runs
+ * the same sims twice, and a per-sim key serves the second set from memo.
+ */
+function memoizedScenario(memo, ai, original, type, pokemon, opponent) {
+  const { vmMath, RealBattle, setGlobalBattle } = memo;
+
+  function MemoBattle() {
+    const b = new RealBattle();
+    const realSimulate = b.simulate;
+    const realRatings = b.getBattleRatings;
+    b.simulate = function () {
+      b.getBattleRatings = realRatings;
+      const [p0, p1] = b.getPokemon();
+      // Battle#start resets pokemon[0] first, and that reset re-initializes
+      // its moves against pokemon[1]'s CURRENT (not yet reset) stat buffs and
+      // form -- pvpoke's own order dependence, so both go in the key.
+      const key = `${simMonKey(p0)}|${simMonKey(p1)}|${p1.activeFormId},${p1.statBuffs[0]},${p1.statBuffs[1]}`;
+      const hit = memo.map.get(key);
+      if (hit && !memo.verify) {
+        memo.hits += 1;
+        for (let i = 0; i < hit.draws; i++) vmMath.random();
+        applyCarried(p0, hit.carried[0]);
+        applyCarried(p1, hit.carried[1]);
+        b.getBattleRatings = () => [hit.rating, 0];
+        return [];
+      }
+      const realRandom = vmMath.random;
+      let draws = 0;
+      vmMath.random = () => {
+        draws += 1;
+        return realRandom();
+      };
+      try {
+        realSimulate.call(b);
+      } finally {
+        vmMath.random = realRandom;
+      }
+      const rec = { draws, rating: realRatings()[0], carried: [readCarried(p0), readCarried(p1)] };
+      if (hit) {
+        // memo.verify: diagnostic mode -- run every hit for real too and
+        // report any entry whose replay would have disagreed.
+        memo.hits += 1;
+        if (JSON.stringify(rec) !== JSON.stringify(hit)) memo.verify({ key, rec, hit, p0, p1 });
+        return [];
+      }
+      memo.misses += 1;
+      if (memo.map.size >= memo.max) memo.map.clear();
+      memo.map.set(key, rec);
+      return [];
+    };
+    return b;
+  }
+
+  setGlobalBattle(MemoBattle);
+  try {
+    return original.call(ai, type, pokemon, opponent);
+  } finally {
+    setGlobalBattle(RealBattle);
+  }
 }
 
 /**
@@ -255,8 +442,9 @@ export function initTeamBattle(ctx) {
  * value* (`.average`), never the mutated fields.
  *
  * @param {object} ai - a TrainingAI instance (e.g. from Player#getAI())
+ * @param {object} [memo] - from createScenarioMemo; omitted = no memoization
  */
-export function wrapRunScenario(ai) {
+export function wrapRunScenario(ai, memo) {
   const original = ai.runScenario;
   ai.runScenario = function (type, pokemon, opponent) {
     const snapshots = [pokemon, opponent].map((mon) => ({
@@ -267,7 +455,8 @@ export function wrapRunScenario(ai) {
       priority: mon.priority,
     }));
     try {
-      return original.call(ai, type, pokemon, opponent);
+      if (!memo) return original.call(ai, type, pokemon, opponent);
+      return memoizedScenario(memo, ai, original, type, pokemon, opponent);
     } finally {
       for (const s of snapshots) {
         s.mon.setBattle(s.battle);
@@ -874,6 +1063,9 @@ export function wrapSwitchCost(battle, opts = {}) {
  *     Pokemon a turn; switches after a charged move, after a faint, and at
  *     the start of the battle are free. Pass false for pvpoke's stock
  *     always-free switching. See wrapSwitchCost.
+ *   - scenarioMemo (default true): serve the AI's lookahead sims from the
+ *     context-wide memo. Pure speed switch; results are bit-identical either
+ *     way. See createScenarioMemo.
  *
  * @param {object} ctx - from initEngine() (initTeamBattle is applied lazily)
  * @param {{
@@ -881,7 +1073,7 @@ export function wrapSwitchCost(battle, opts = {}) {
  *   leadA?: number, leadB?: number,
  *   difficulty?: number, seed?: number,
  *   reactionTimeMs?: number, throwAndGoMoves?: number, bankShields?: boolean,
- *   switchTurnCost?: boolean
+ *   switchTurnCost?: boolean, scenarioMemo?: boolean
  * }} params
  * @returns {{
  *   winner: 'a'|'b'|'tie',
@@ -914,6 +1106,7 @@ export function battleTeams(ctx, params) {
     throwAndGoMoves = DEFAULT_THROW_AND_GO_MOVES,
     bankShields = true,
     switchTurnCost = true,
+    scenarioMemo = true,
   } = params;
 
   if (!Array.isArray(teamA) || !Array.isArray(teamB) || !teamA.length || !teamB.length) {
@@ -960,8 +1153,10 @@ export function battleTeams(ctx, params) {
   const p1 = new Player(1, difficulty, battle);
   // Make runScenario's battle/baitShields/farmEnergy/priority
   // mutations side-effect-transparent (see wrapRunScenario's own doc comment).
-  wrapRunScenario(p0.getAI());
-  wrapRunScenario(p1.getAI());
+  // ...and memoize the AI's lookahead sims (see createScenarioMemo).
+  const memo = scenarioMemo ? ctx.__teamBattle.scenarioMemo : null;
+  wrapRunScenario(p0.getAI(), memo);
+  wrapRunScenario(p1.getAI(), memo);
   // Throw-and-go for both sides -- installed before the leads are set so the
   // setNewPokemon wrapper zeroes their counters too (see wrapThrowAndGo).
   const throwAndGoFired = wrapThrowAndGo(battle, [p0, p1], TimelineAction, {

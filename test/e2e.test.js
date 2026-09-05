@@ -246,6 +246,18 @@ describe('hasConverged on a real generation history', () => {
 // ------------------------------------------------------------ battle engine
 
 describe('battleTeams: the 3v3 driver', () => {
+  test('the scenario memo is a pure speed switch: memo on and off agree bit for bit', () => {
+    // Two evenly matched teams so the AI's lookaheads actually steer switches
+    // and shields; run once with the context memo (warm from earlier tests in
+    // this file) and once bypassing it.
+    const args = () => ({ teamA: team(STRONG_IDS), teamB: team(CONV_OPPONENTS[0]), leadA: 1, leadB: 2, seed: 7 });
+    const memoized = battleTeams(ctx, { ...args(), scenarioMemo: true });
+    const memo = ctx.__teamBattle.scenarioMemo;
+    assert.ok(memo && memo.hits + memo.misses > 0, 'the memo saw this battle\'s lookaheads');
+    const direct = battleTeams(ctx, { ...args(), scenarioMemo: false });
+    assert.deepEqual(memoized, direct, 'memoized lookaheads change nothing about the outcome');
+  });
+
   test('returns a well-formed result object', () => {
     const r = battleTeams(ctx, { teamA: team(STRONG_IDS), teamB: team(WEAK_IDS) });
     assert.ok(['a', 'b', 'tie'].includes(r.winner), 'winner is a|b|tie');

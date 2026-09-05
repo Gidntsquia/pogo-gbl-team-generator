@@ -150,6 +150,7 @@ function displayName(ctx, metaMon) {
 function buildVendorTeams(ctx, teamsFile) {
   const presets = readTeamPresets(ctx, teamsFile);
   const teams = [];
+  const seenIds = new Set();
   for (const preset of presets) {
     const roster = preset.pokemon;
     if (!Array.isArray(roster) || roster.length !== TEAM_SIZE) {
@@ -165,6 +166,11 @@ function buildVendorTeams(ctx, teamsFile) {
       })
     );
     const id = members.map((m) => m.speciesId).join('-');
+    // Preview branches can temporarily contain the same training preset more
+    // than once. Keep the first occurrence so stable IDs remain unique and a
+    // duplicated source row does not overweight that opponent team.
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
     const name = members.map((m) => displayName(ctx, m)).join(' / ');
     teams.push({ id, name, tier: 'meta', members });
   }

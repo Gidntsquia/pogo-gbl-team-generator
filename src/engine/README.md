@@ -547,6 +547,63 @@ To reproduce the profiling: `node --cpu-prof --cpu-prof-dir=out
 --prof`/`--prof-process` for a text report) — bucket `callFrame.url` by
 `vendor/pvpoke` vs `src/engine` to repeat the split above.
 
+### The scenario memo (2026-09-04)
+
+Bucketing the same profile by *what the vendor code is doing* rather than
+by file changed the conclusion above. ~95% of a 3v3 battle's samples are
+inside `TrainingAI.runScenario` — the AI's internal 1v1 lookahead sims
+(`evaluateMatchup` runs four scenario types × up to 9 shield combinations
+every time a Pokemon enters; `decideShield`/`decideSwitch` run more). The
+real 3v3 turn loop is a rounding error. Those lookaheads are pure functions
+of (both Pokemon's build + battle state at that moment), and a run
+re-computes the same ones thousands of times — across the 9 lead pairings of
+one matchup, across the many opponents a candidate meets at full HP, and
+across generations.
+
+`teamBattle.js` therefore memoizes each inner `simulate()` call
+(`createScenarioMemo`, wired in by `initTeamBattle`; one memo per engine
+context, i.e. per worker, shared across every battle that context runs). The
+vendor code is not edited: while `runScenario` runs, the vm's global `Battle`
+is swapped for a factory whose instances intercept `simulate()` and
+`getBattleRatings()`, so every side effect pvpoke's own code has on the real
+Pokemon happens unchanged and only the sim itself is recorded or replayed.
+
+Results are **bit-identical** with the memo on or off
+(`test/e2e.test.js` asserts it; `POGO_SCENARIO_MEMO=0` or
+`battleTeams(ctx, { scenarioMemo: false })` turns it off). Three things had
+to be true for that, all found by running the memo in its `verify` mode
+against real sims:
+
+1. The inner sim's one `Math.random()` draw per charged move (the buff roll)
+   cannot change the outcome in simulate mode, but it advances the seeded
+   stream — so a hit replays the recorded number of draws.
+2. `Battle#start` resets pokemon[0] first, and that reset re-initializes its
+   moves against pokemon[1]'s **not-yet-reset** buffs and form. pvpoke's own
+   order dependence; both go in the key, and a hit writes back the full
+   post-sim state (hp/energy/buffs/form/`turnsToKO`/`hasActed`/…) so the
+   final `reset()` sees exactly what it would have.
+3. pvpoke's `NEITHER_BAIT` and `NO_BAIT` scenarios set identical flags, so
+   memoizing per sim (not per scenario) serves the whole second set from
+   memo on the very first `evaluateMatchup`.
+
+Measured on the i7-10700KF (8C/16T, WSL2):
+
+| workload | memo off | memo on |
+|---|---|---|
+| serial bench, 300 battles, 6 fixed teams | 137 ms/battle | 48 ms/battle (2.85×) |
+| serial, 200 battles of real gen-0 teams, cold memo | 153 ms/battle | 113 ms/battle (30% hit rate) |
+| `evolve.mjs` pop 120 × 60 opponents × 3 gens, 8 threads | 531 s | 391 s (1.36×) |
+
+The real-run gain is smaller than the serial one because a cold memo's hit
+rate on diverse teams is ~30% and grows with the run (and each worker keeps
+its own memo). Memory: ~80k entries per worker after 300 battles; the memo
+clears itself at 200k entries (`ctx.scenarioMemoMax`).
+
+**Thread scaling is hardware-bound, not executor-bound.** Eight independent
+single-worker *processes* each run 2.1× slower than one alone (103 →
+217 ms/battle), so 8 threads yields ~3.8× and 12/15 threads are slower than 8
+on this machine. `--threads 8` stays the right setting.
+
 ## Validation
 
 `test/engine.test.js` rebuilds several real Great League Pokemon using

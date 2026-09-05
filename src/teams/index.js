@@ -110,9 +110,17 @@ function speciesOf(matrix, key) {
  * exactly one implementation instead of drifting. Behavior is unchanged.
  *
  * @param {object} matrix - scoreCollection's return (needs ratings + builtMons).
- * @returns {object} matrix with `ratings`/`builtMons` pruned to one key per species.
+ * @param {{keepShadowVariants?: boolean}} [opts] - `keepShadowVariants: true`
+ *   keys the species pass by (species, shadow flag) instead of species alone,
+ *   so a collection holding BOTH a shadow and a non-shadow of one species keeps
+ *   its best specimen of each. The GA (src/teams/evolve.js) needs that: its
+ *   shadow-flip mutation swaps a team member for its opposite-shadow twin, which
+ *   only exists to swap to if this pass kept it. Default false = one key per
+ *   species, the CLI's behavior.
+ * @returns {object} matrix with `ratings`/`builtMons` pruned to one key per species
+ *   (or per species+shadow when `keepShadowVariants`).
  */
-export function dedupeBestPerSpecies(matrix) {
+export function dedupeBestPerSpecies(matrix, { keepShadowVariants = false } = {}) {
   // Pass 1 (lineage): when src/evolution/index.js has expanded the collection,
   // one physical Pokemon appears several times -- Phantump AND Trevenant off
   // the same CSV row. Keep only whichever form actually scored best, which is
@@ -132,9 +140,10 @@ export function dedupeBestPerSpecies(matrix) {
   // two rows that evolve into it) still can't share a team.
   const bestBySpecies = new Map();
   for (const { key, score } of bestByLineage.values()) {
-    const speciesId = matrix.builtMons[key].speciesId;
-    const cur = bestBySpecies.get(speciesId);
-    if (!cur || score > cur.score) bestBySpecies.set(speciesId, { key, score });
+    const built = matrix.builtMons[key];
+    const groupKey = keepShadowVariants ? `${built.speciesId}|${built.spec?.shadow ? 'shadow' : 'base'}` : built.speciesId;
+    const cur = bestBySpecies.get(groupKey);
+    if (!cur || score > cur.score) bestBySpecies.set(groupKey, { key, score });
   }
   const keep = new Set([...bestBySpecies.values()].map((v) => v.key));
   const ratings = {};
