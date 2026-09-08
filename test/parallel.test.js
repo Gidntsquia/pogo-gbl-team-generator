@@ -19,8 +19,8 @@ import {
 } from '../src/engine/parallel.js';
 
 describe('thread-count resolution', () => {
-  test('defaultThreadCount is max(1, cpus - 1)', () => {
-    assert.equal(defaultThreadCount(), Math.max(1, os.cpus().length - 1));
+  test('defaultThreadCount is max(1, cpus - 1) capped at 8', () => {
+    assert.equal(defaultThreadCount(), Math.min(8, Math.max(1, os.cpus().length - 1)));
   });
 
   test('resolveThreadCount prefers an explicit value over env and default', () => {

@@ -196,15 +196,27 @@ export const THREADS_ENV_VAR = 'POGO_GBL_THREADS';
  *   `runBattles()` return per spec today ({winner, survivorsHp, summary}).
  */
 
+/** Hard ceiling on the automatic default, independent of core count. Each
+ * worker boots its own full pvpoke engine context (a `loading gamemaster`
+ * per thread) before battling starts, so thread count drives peak memory as
+ * much as CPU time. On a 16-core/7.7GB WSL box, `cpus-1` (15) OOM'd the VM
+ * twice during that boot burst; 8 is the measured-fastest count on that same
+ * machine (see src/engine/README.md's Performance section) and stays well
+ * inside its memory budget. Anyone with headroom to spare can still pass
+ * `--threads`/`POGO_GBL_THREADS` explicitly above this. */
+const DEFAULT_THREAD_CAP = 8;
+
 /**
- * `max(1, cpus - 1)` -- leaves one core free for the main thread / OS.
- * Cloud sandboxes tend to have very few vCPUs; the real payoff is
+ * `min(DEFAULT_THREAD_CAP, max(1, cpus - 1))` -- leaves one core free for the
+ * main thread / OS, then caps at `DEFAULT_THREAD_CAP` regardless of core
+ * count (see its doc comment for why more cores doesn't mean more threads
+ * here). Cloud sandboxes tend to have very few vCPUs; the real payoff is
  * on a multi-core dev machine (see src/engine/README.md's Performance
  * section for measured numbers).
  * @returns {number}
  */
 export function defaultThreadCount() {
-  return Math.max(1, os.cpus().length - 1);
+  return Math.min(DEFAULT_THREAD_CAP, Math.max(1, os.cpus().length - 1));
 }
 
 /**

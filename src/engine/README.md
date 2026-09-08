@@ -219,7 +219,13 @@ mirror match** (same species+IVs on both sides) -- building every `teamA`
 from `cacheA` and every `teamB` from `cacheB` guarantees that for free.
 
 **Thread count.** `defaultThreadCount()` is `max(1, os.cpus().length - 1)`
-(leave one core free). `resolveThreadCount(explicit, env)` prefers an
+(leave one core free) capped at 8 regardless of core count -- each worker
+boots its own pvpoke engine context before battling starts, so on a
+16-core/7.7GB WSL box `cpus-1` (15) OOM'd the VM twice during that boot
+burst; 8 is also the measured-fastest count on that machine (see
+"Measured effect" below), so the cap costs nothing there. Pass
+`--threads`/`POGO_GBL_THREADS` explicitly to go higher on a box with memory
+to spare. `resolveThreadCount(explicit, env)` prefers an
 explicit override, then the `POGO_GBL_THREADS` env var, then the default; a
 non-positive or non-numeric override/env value falls through instead of
 throwing. `runBattles` further clamps the resolved count to

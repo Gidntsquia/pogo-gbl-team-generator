@@ -16,12 +16,19 @@
 // worth knowing about: cacheA/cacheB (below) now persist for the pool's
 // entire lifetime rather than just one runBattles() call, so a long-lived
 // executor reused across many batches (e.g. a future multi-stage tournament
-// run) will build any given mon at most once per worker ever,
-// not once per batch -- a nice bonus, but also means the cache can grow
-// across a very large number of DISTINCT mons over a long-lived executor's
-// life; nothing here bounds/evicts it (not needed by anything the
-// persistent executor requires, flagged for whoever tunes a long-running
-// pool later).
+// run) will build any given mon at most once per worker ever, not once per
+// batch -- a nice bonus. But an evolve.mjs run keeps ONE executor alive for
+// its ENTIRE 100-generation run (see scripts/evolve.mjs), and mutation means
+// every generation introduces candidates with new IVs/movesets -- there is no
+// natural ceiling on the number of distinct mons a worker will ever see, so
+// an unbounded cache here grows for as long as the run does. This was the
+// root cause of the RSS growth observed on long evolve runs (mem-watchdog.sh,
+// 2026-09-07): each worker's cache size, not a fixed per-battle allocation,
+// was what kept climbing. `BoundedCache` caps each side's cache at a fixed
+// entry count with LRU eviction so memory plateaus instead of growing with
+// generation count -- while still spanning many generations, so the cross-
+// generation reuse (the whole point of a persistent pool) is kept: see
+// MAX_CACHE_ENTRIES below for the sizing.
 //
 // Pokemon instances built in one thread's vm context cannot be sent to
 // another thread (postMessage's structured clone doesn't preserve class
@@ -39,6 +46,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { initEngine, buildPokemon } from './harness.js';
 import { battleTeams } from './teamBattle.js';
 import { applyGroupMoveset } from '../scoring/index.js';
+import { BoundedCache } from './boundedCache.js';
 
 if (!parentPort) {
   throw new Error('parallelWorker.js must be run as a worker_thread');
@@ -81,14 +89,29 @@ function buildTeam(ctx, cache, monSpecs) {
   });
 }
 
+/** Max distinct built-Pokemon entries kept per side, per worker. The cache is
+ * meant to span MANY generations, not one: a mon that keeps reappearing
+ * (elites, survivors, recurring opponents) is refreshed on every hit and so
+ * never ages out, and the cap only decides how many generations' worth of
+ * churned-out mutants stay around before being evicted. A built Pokemon
+ * measures ~12 KB, so 5000/side is ~60 MB/side, ~120 MB per worker, ~1 GB at
+ * `--threads 8` -- several generations of turnover (the standard recipe sees
+ * at most ~900 distinct teamA and ~360 distinct teamB mons per generation)
+ * while leaving the 8 GB box its headroom. Override with
+ * `POGO_GBL_WORKER_CACHE=N` when a run has memory to spare. */
+const MAX_CACHE_ENTRIES = (() => {
+  const n = Number(process.env.POGO_GBL_WORKER_CACHE);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5000;
+})();
+
 let ctx = null;
 // Split caches for team A and team B: battleTeams requires teamA and teamB
 // to be DISTINCT Pokemon instances even when they're the same species+IVs
 // (a mirror match) -- see teamBattle.js's header comment. Always building
 // teamA from cacheA and teamB from cacheB guarantees that without adding any
 // same-battle "is this mon on both sides" bookkeeping.
-const cacheA = new Map();
-const cacheB = new Map();
+const cacheA = new BoundedCache(MAX_CACHE_ENTRIES);
+const cacheB = new BoundedCache(MAX_CACHE_ENTRIES);
 
 async function init() {
   ctx = await initEngine(workerData?.vendorRoot ? { vendorRoot: workerData.vendorRoot } : {});
