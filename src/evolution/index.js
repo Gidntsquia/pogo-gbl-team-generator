@@ -141,6 +141,20 @@ export function lineageKeyFor(mon) {
 }
 
 /**
+ * pvpoke's default IV spread for a species at ctx.cp, from gamemaster
+ * `defaultIVs.cp<N>` (`[level, atk, def, hp]`); shadow-aware like the
+ * importer's createDefaultIvResolver. Null when gamemaster has none.
+ */
+function defaultIvsFor(ctx, speciesId, shadow) {
+  const { gm } = ctx;
+  const entry = (shadow && gm.getPokemonById(`${speciesId}_shadow`)) || gm.getPokemonById(speciesId);
+  const combo = entry?.defaultIVs?.[`cp${ctx.cp}`];
+  if (!Array.isArray(combo) || combo.length < 4) return null;
+  const [, atk, def, hp] = combo;
+  return { atk, def, hp };
+}
+
+/**
  * Expand a normalized collection with one extra entry per species each mon
  * could evolve into.
  *
@@ -150,6 +164,13 @@ export function lineageKeyFor(mon) {
  * CSV's value would be wrong for the new species) and `moves` (the evolved
  * form has a different movepool, so `--current-moves` falls back to pvpoke's
  * recommended moveset for the variant, with a warning).
+ *
+ * One exception to "IVs carry over": a mon whose CSV row stated no IVs
+ * (`ivsDefaulted`, see src/importer/index.js) has no specimen to preserve, so
+ * each evolved variant gets pvpoke's default spread for ITS OWN species at
+ * ctx.cp (gamemaster `defaultIVs`, the same field the importer used) rather
+ * than inheriting the pre-evolution's. A target species with no spread for
+ * the cap keeps the parent's IVs and is noted in `warnings`.
  *
  * Existing entries are returned unchanged apart from gaining a `lineageKey`.
  *
@@ -192,8 +213,20 @@ export function expandEvolutions(ctx, mons) {
         );
       }
       const { cp, moves, ...rest } = mon;
+      let ivs = mon.ivs;
+      if (mon.ivsDefaulted) {
+        const own = defaultIvsFor(ctx, target.speciesId, !!mon.shadow);
+        if (own) ivs = own;
+        else {
+          warnings.push(
+            `${mon.name} -> ${target.speciesName}: no gamemaster cp${ctx.cp} default IVs for the ` +
+              'evolved form, so it keeps the pre-evolution\'s default spread'
+          );
+        }
+      }
       out.push({
         ...rest,
+        ivs,
         speciesId: target.speciesId,
         name: target.speciesName,
         lineageKey,

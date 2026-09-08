@@ -25,14 +25,18 @@ import {
   initPopulation,
   nextGeneration,
   shadowBlindSignature,
+  trailingFitness,
   DEFAULT_IMMIGRANT_FRACTION,
 } from '../src/teams/evolve.js';
 
 import {
+  buildOpponentArchive,
+  configsMatch,
   expandBanToCandidateSpeciesIds,
   filterBannedCuratedTeams,
   filterBannedMovesetPool,
   mutationRatesAt,
+  opponentMutationRatesAt,
   renderEvolveReportHtml,
 } from '../scripts/evolve.mjs';
 
@@ -758,4 +762,109 @@ test('mutationRatesAt anneals linearly from the hot-start rates to the standard 
   for (const g of [0, 5, 10]) {
     assert.deepEqual(mutationRatesAt(g, { generations: 11 }), { mutationFloor: 0.05, mutationCeil: 0.4 });
   }
+});
+
+test('opponentMutationRatesAt anneals the opponent-side rates the same way, falling back to opponentPool defaults', () => {
+  const config = { generations: 11, opponentMutationFloorStart: 0.15, opponentMutationCeilStart: 0.6 };
+  assert.deepEqual(opponentMutationRatesAt(0, config), { mutationFloor: 0.15, mutationCeil: 0.6 });
+  const end = opponentMutationRatesAt(10, config);
+  assert.ok(Math.abs(end.mutationFloor - 0.02) < 1e-12 && Math.abs(end.mutationCeil - 0.2) < 1e-12, JSON.stringify(end));
+  const withEnds = { ...config, opponentMutationFloor: 0.05, opponentMutationCeil: 0.4 };
+  assert.deepEqual(opponentMutationRatesAt(10, withEnds), { mutationFloor: 0.05, mutationCeil: 0.4 });
+  assert.deepEqual(opponentMutationRatesAt(5, withEnds), { mutationFloor: 0.1, mutationCeil: 0.5 });
+  assert.deepEqual(opponentMutationRatesAt(3, { generations: 11 }), { mutationFloor: 0.02, mutationCeil: 0.2 });
+});
+
+test('trailingFitness: recency-weighted mean over the trailing window by lead-aware identity; newcomers score on their one sample; trailing 1 is the raw draw regardless of decay', () => {
+  const A = ['a', 'b', 'c'];
+  const Aperm = ['a', 'c', 'b']; // same lead, same backs -> same individual
+  const B = ['b', 'a', 'c']; // different lead -> a different individual
+  const C = ['x', 'y', 'z'];
+  const D = ['p', 'q', 'r'];
+  const history = [
+    { population: [A, B], fitness: [0.1, 0.9] },
+    { population: [A, C], fitness: [0.6, 0.5] },
+    { population: [Aperm, C, D], fitness: [0.2, 0.7, 0.9] },
+  ];
+  const close = (got, want) => got.forEach((v, i) => assert.ok(Math.abs(v - want[i]) < 1e-12, `[${i}] ${v} != ${want[i]}`));
+  // decay: 1 (equal weight) isolates window behavior from recency weighting.
+  // Window covers the whole run: A = mean(0.1, 0.6, 0.2), C = mean(0.5, 0.7), D on its single sample.
+  close(trailingFitness(history, 10, 1), [0.3, 0.6, 0.9]);
+  // Window of 2 drops generation 0 (and B, which is dead, never appears).
+  close(trailingFitness(history, 2, 1), [0.4, 0.6, 0.9]);
+  // Window of 1 is the newest generation's own numbers, untouched -- even at
+  // the sub-1 default decay, since there is only one generation to weight.
+  assert.deepEqual(trailingFitness(history, 1), [0.2, 0.7, 0.9]);
+  assert.deepEqual(trailingFitness(history, 1, 0.6), [0.2, 0.7, 0.9]);
+  assert.deepEqual(trailingFitness([], 10), []);
+
+  // decay < 1 pulls the score toward the newest generation: A's weighted mean
+  // (weights 1, 0.6, 0.36 newest-to-oldest) sits above its plain mean (0.3)
+  // because its newest draw (0.2) is above that mean... use a case where the
+  // newest draw is clearly the outlier in the OTHER direction instead.
+  const decayHistory = [
+    { population: [A], fitness: [0.2] },
+    { population: [A], fitness: [0.2] },
+    { population: [A], fitness: [0.8] }, // newest generation spikes up
+  ];
+  const equalWeighted = trailingFitness(decayHistory, 3, 1)[0]; // mean(0.2, 0.2, 0.8) = 0.4
+  const recencyWeighted = trailingFitness(decayHistory, 3, 0.6)[0];
+  assert.ok(Math.abs(equalWeighted - 0.4) < 1e-12);
+  assert.ok(recencyWeighted > equalWeighted, `recency weighting should favor the spiked newest generation: ${recencyWeighted} vs ${equalWeighted}`);
+});
+
+test('buildOpponentArchive: ranks evolved opponents by mean fitness, holds out anything fielded in the last N generations, skips curated, caps at limit', () => {
+  const ev = (id) => ({ id, origin: 'evolved', label: 'evolved', members: [] });
+  const cur = (id) => ({ id, origin: 'curated', label: 'curated', members: [] });
+  const records = [
+    { opponentPool: [cur('K'), ev('X'), ev('Y')], opponentFitness: [0.5, 0.5, 0.8] },
+    { opponentPool: [cur('K'), ev('X'), ev('Y')], opponentFitness: [0.5, 0.6, 0.8] },
+    { opponentPool: [cur('K'), ev('X'), ev('Z')], opponentFitness: [0.5, 0.7, 0.4] },
+    { opponentPool: [cur('K'), ev('Z')], opponentFitness: [0.5, 0.3] },
+    { opponentPool: [cur('K'), ev('W')], opponentFitness: [0.5, 0.9] },
+  ];
+  // Hold out the last 2 generations: Z (fielded in gen 3) and W (gen 4) are
+  // out even though Z also has measurements from gen 2; the curated K never
+  // enters; Y (0.8) outranks X (mean 0.6 over 3 generations).
+  const held = buildOpponentArchive(records, { holdoutGenerations: 2, limit: 10 });
+  assert.deepEqual(held.archive.map((o) => o.id), ['Y', 'X']);
+  assert.deepEqual(held.archive.map((o) => o.generations), [2, 3]);
+  assert.ok(Math.abs(held.archive[1].meanFitness - 0.6) < 1e-12);
+  assert.equal(held.archive[0].label, 'evolved'); // rehydrate relabels; the builder leaves entries as stored
+  assert.deepEqual({ eligible: held.eligible, seen: held.seen, heldOut: held.heldOut }, { eligible: 2, seen: 4, heldOut: 2 });
+  // The cap keeps the strongest.
+  assert.deepEqual(buildOpponentArchive(records, { holdoutGenerations: 2, limit: 1 }).archive.map((o) => o.id), ['Y']);
+  // No holdout: every evolved opponent is eligible, strongest first (W 0.9, Y 0.8, X 0.6, Z 0.35).
+  const all = buildOpponentArchive(records, { holdoutGenerations: 0, limit: 10 });
+  assert.deepEqual(all.archive.map((o) => o.id), ['W', 'Y', 'X', 'Z']);
+  assert.equal(all.heldOut, 0);
+  // Holding out more generations than exist empties the archive rather than throwing.
+  assert.deepEqual(buildOpponentArchive(records, { holdoutGenerations: 99, limit: 10 }).archive, []);
+});
+
+test('configsMatch ignores eliteCount (a finished run re-renders with --elites N) and nothing else', () => {
+  const base = { seed: 's', population: 400, curatedRatio: 0, eliteCount: 15 };
+  assert.ok(configsMatch(base, { ...base, eliteCount: 30 }));
+  assert.ok(configsMatch(base, { seed: 's', population: 400, curatedRatio: 0 })); // older checkpoint without the key
+  assert.ok(!configsMatch(base, { ...base, population: 300 }));
+  assert.ok(!configsMatch(base, { ...base, selectionTrailing: 5 })); // a selection change IS a different run
+});
+
+test('renderEvolveReportHtml: held-out final-pass shape (archive + fresh strata, selectionFitness) renders the strata line with no undefined/NaN', () => {
+  const fake = fakeResult();
+  const strata = {
+    curated: { winRate: 0.52, battles: 147 },
+    archive: { winRate: 0.48, battles: 400 },
+    fresh: { winRate: 0.55, battles: 400 },
+  };
+  const html = renderEvolveReportHtml({
+    ...fake,
+    eliteOpponents: { total: 947, curated: 147, evolved: 800, archive: 400, fresh: 400, holdoutGenerations: 10, archiveEligible: 1500, archiveSeen: 2400 },
+    ranking: { ...fake.ranking, selectionTrailing: 10 },
+    elites: fake.elites.map((e) => ({ ...e, selectionFitness: 0.51, winRateByStratum: strata })),
+  });
+  assert.match(html, /147 curated \+ 400 held-out archive \+ 400 fresh/);
+  assert.match(html, /By opponent stratum \(unweighted\): curated 52% \(147\)/);
+  assert.match(html, /last 10 generation\(s\) \(1500 eligible of 2400 seen\)/);
+  assert.ok(!/undefined|NaN/.test(html), 'no undefined/NaN in the held-out shape');
 });

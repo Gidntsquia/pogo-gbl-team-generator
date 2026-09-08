@@ -91,6 +91,19 @@ test('expandEvolutions carries IVs, level and flags onto the evolved form', () =
   assert.equal(evolved.sourceRow, 9);
 });
 
+test('expandEvolutions gives a blank-IV (defaulted) mon each evolved form its own default spread', () => {
+  const phantumpDefault = ctx.gm.getPokemonById('phantump').defaultIVs.cp1500.slice(1);
+  const trevenantDefault = ctx.gm.getPokemonById('trevenant').defaultIVs.cp1500.slice(1);
+  const asIvs = ([atk, def, hp]) => ({ atk, def, hp });
+  const { mons, warnings } = expandEvolutions(ctx, [mon({ ivs: asIvs(phantumpDefault), ivsDefaulted: true })]);
+  assert.equal(warnings.length, 0);
+  const [original, evolved] = mons;
+  assert.deepEqual(original.ivs, asIvs(phantumpDefault));
+  assert.deepEqual(evolved.ivs, asIvs(trevenantDefault), "evolved form gets its own species' default, not the parent's");
+  assert.notDeepEqual(evolved.ivs, original.ivs, 'the two defaults differ, so the test is meaningful');
+  assert.equal(evolved.ivsDefaulted, true);
+});
+
 test('expandEvolutions drops the CP and moveset the evolved form invalidates', () => {
   const { mons, warnings } = expandEvolutions(ctx, [
     mon({ moves: { fastMove: 'SHADOW_CLAW', chargedMoves: ['SEED_BOMB'] } }),

@@ -117,9 +117,41 @@
 // top-400 run wanted hotter selection and a top-5 convergence test). Each
 // enters the checkpoint config fingerprint ONLY when explicitly passed, so
 // pre-existing checkpoint dirs (which never set them) still resume. The
-// rest (leadRotationRate, alpha, convergence trailing/maxChurn/minLiftGain,
+// rest (leadRotationRate, shadowFlipRate, alpha, convergence trailing/maxChurn/minLiftGain,
 // and the whole opponent side in src/meta/opponentPool.js) remain exported
 // DEFAULT_* constants only.
+//
+// SELECTION SMOOTHING + HELD-OUT FINAL PASS (Jaxon 2026-09-05, from the
+// shared-s2-gen-1 post-mortem). Two things made that run's ranking a single
+// lucky draw:
+//   1. The cull, the mutation odds and the finalist pick all ranked on ONE
+//      generation's fitness, while the opponent pool turned over 35% per
+//      generation -- a team's win rate moved 3.9 points generation to
+//      generation against a 2.2-point true spread between long-lived teams.
+//      Durable ~51% teams died to one bad draw; 1-4-observation teams made
+//      the final 15. Selection and the finalist pick now act on each team's
+//      recency-weighted mean over its last `--selection-trailing` generations
+//      (default DEFAULT_SELECTION_TRAILING, weighted by DEFAULT_SELECTION_
+//      RECENCY_DECAY -- its own window, separate from hasConverged's; see
+//      src/teams/evolve.js trailingFitness). An initial equal-weighted
+//      10-generation window reacted too slowly to real drift; 5, weighted
+//      toward the newest generations, still smooths the noise without lagging
+//      as much. `--selection-trailing 1` is the pre-2026-09-05 behavior. The
+//      per-generation checkpoint keeps the raw `fitness` (history/analytics/
+//      race chart are unchanged) and adds the `selectionFitness` actually used.
+//   2. With --curated-ratio 0 the final pass graded the finalists against the
+//      last generation's own opponent pool -- 0 new battles, every "elites
+//      pass win%" byte-identical to the gen-73 number that had just chosen
+//      them (the winner's curse, measured: the #1 team's 57% was 7 points
+//      above its own lifetime mean). The pass now fights a HELD-OUT set: an
+//      archive of the strongest opponents the opponent GA bred over the whole
+//      run, excluding anything that sat in the pools of the generations the
+//      finalists were selected on (buildOpponentArchive), plus fresh
+//      meta-composed teams never fought before (`--final-archive` /
+//      `--final-fresh`, neither in the checkpoint fingerprint), plus every
+//      curated team as before. `--elites` is no longer in the fingerprint
+//      either (configsMatch), so a finished run can be re-rendered with more
+//      finalists without re-simulating a generation.
 //
 // ROBUSTNESS: each generation writes out/evolve-gen<N>.json (config + that
 // generation's population/fitness/lineage-to-next-gen + timing/analytics) as
@@ -158,8 +190,9 @@ import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
-import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf } from '../src/meta/sampleTeams.js';
+import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf, composeSampledOpponent } from '../src/meta/sampleTeams.js';
 import { loadMetaTeams, curatedTierWeight } from '../src/meta/teams.js';
+import { rngFromSeed } from '../src/util/rng.js';
 import {
   initOpponentPool,
   nextOpponentPool,
@@ -167,14 +200,21 @@ import {
   serializeOpponentPool,
   rehydrateOpponentPool,
   curatedHeadcount,
+  DEFAULT_OPPONENT_MUTATION_FLOOR,
+  DEFAULT_OPPONENT_MUTATION_CEIL,
 } from '../src/meta/opponentPool.js';
 import { dedupeBestPerSpecies } from '../src/teams/index.js';
 import {
   initPopulation,
   nextGeneration,
   hasConverged,
+  shadowBlindSignature,
+  trailingFitness,
   DEFAULT_MUTATION_FLOOR,
   DEFAULT_MUTATION_CEIL,
+  DEFAULT_SELECTION_TRAILING,
+  DEFAULT_CONVERGENCE_TRAILING,
+  DEFAULT_CONVERGENCE_WINDOW,
 } from '../src/teams/evolve.js';
 import { leagueForCp } from '../src/util/leagues.js';
 import { loadRoleScores } from '../src/meta/roles.js';
@@ -209,6 +249,20 @@ const DEFAULTS = Object.freeze({
   // top N of pvpoke's own overall ranking for the run's CP cap. See
   // src/meta/sampleTeams.js's META-CAPPED POOL note.
   opponentMetaPool: DEFAULT_META_POOL_SIZE,
+  // Final-pass held-out strata (see the header note): the archive is capped
+  // at this many of the strongest never-recently-fought evolved opponents the
+  // opponent GA actually bred -- real, selected-for-fitness teams, so 400
+  // puts the binomial standard error of a finalist's win% near 1.8 points
+  // (the s2 run's single-generation number carried ~3.6) for real weight.
+  // `finalFresh` defaults to 0 (see finalFreshDefault): a freshly meta
+  // -composed team is drawn from the same weighted-random sampler that seeds
+  // immigrants, with none of the opponent GA's generations of selection
+  // behind it, so in bulk it is closer to a random legal team than a strong
+  // one -- padding the pass with hundreds of them would mostly measure a
+  // finalist's win rate against mediocrity. Neither is in the checkpoint
+  // fingerprint: they change only the final pass.
+  finalArchive: 400,
+  finalFresh: 0,
   outDir: 'out',
   html: 'my-teams-evolve.html', // resolved against outDir unless --html/opts.html is absolute or explicit
   // Flipped to 'battle-reality' as the DEFAULT -- backed by a real A/B
@@ -239,14 +293,133 @@ const FITNESS_MODES = ['classic', 'battle-reality'];
 const RANKING_WEIGHTS = Object.freeze({ elitePass: 0.7, recent: 0.3 });
 
 
-// Elites-pass opponent weighting (Jaxon 2026-08-27: "weight ladder teams more
-// than the curated/off meta teams, which should be weighted more than the
-// sample teams"). Curated opponents weigh in at their tier's
-// CURATED_TIER_WEIGHTS value (src/meta/teams.js: meta/ladder 1, recommended
-// 0.5, off-meta 0.25); the GA's own evolved opponents continue that halving
-// gradient one step further down. Only the elites-pass win rate is weighted --
-// per-generation fitness and the `recent` ranking term stay unweighted.
-const ELITES_PASS_SAMPLED_WEIGHT = 0.125;
+/**
+ * Final-pass opponent weights (Jaxon 2026-08-27: "weight ladder teams more
+ * than the curated/off meta teams, which should be weighted more than the
+ * sample teams"). Curated opponents weigh in at their tier's
+ * CURATED_TIER_WEIGHTS value (src/meta/teams.js: meta/ladder 1, recommended
+ * 0.5, off-meta 0.25). The bred/composed strata (archive + fresh) together
+ * carry the run's own evolved share -- a total of curatedTotal x (1 - r) / r
+ * at --curated-ratio r, split evenly -- so the headline mixes real teams and
+ * bred teams the way the generations that produced the finalists did (the
+ * stated intent of the pre-2026-09-05 pass, which in practice fell far short
+ * of it because the live pool held only a couple dozen evolvable entries).
+ * With no curated teams (r = 0) every opponent weighs 1. Only the final-pass
+ * win rate is weighted -- per-generation fitness and the `recent` ranking
+ * term stay unweighted.
+ *
+ * @param {{curated: Array<object>, evolvedCount: number, curatedRatio: number}} params
+ * @returns {number[]} weights, curated first then `evolvedCount` evolved.
+ */
+function finalPassWeights({ curated, evolvedCount, curatedRatio }) {
+  const curatedWeights = curated.map((t) => curatedTierWeight(t));
+  if (curated.length === 0 || evolvedCount === 0) {
+    return [...curatedWeights, ...new Array(evolvedCount).fill(1)];
+  }
+  const curatedTotal = curatedWeights.reduce((s, w) => s + w, 0);
+  const r = Math.min(Math.max(curatedRatio, 1e-9), 1);
+  const each = (curatedTotal * (1 - r)) / r / evolvedCount;
+  return [...curatedWeights, ...new Array(evolvedCount).fill(each)];
+}
+
+/** Trailing window selection and the finalist pick average over (see the header note; `--selection-trailing`). */
+function selectionTrailingOf(config) {
+  return Math.max(1, config.selectionTrailing ?? DEFAULT_SELECTION_TRAILING);
+}
+
+// `finalFresh` fallback when the flag is not set explicitly: 0 in the normal
+// case (a curated set is in play, so the archive stratum is the only
+// held-out one needed), but at --curated-ratio 0 there is no reality-check
+// stratum at all, so a SMALL number of fresh teams is let in anyway -- kept
+// low because a freshly composed team is essentially a random legal team,
+// not one the opponent GA selected for strength (see DEFAULTS.finalFresh).
+const FINAL_FRESH_WHEN_NO_CURATED = 20;
+function finalFreshDefault(config) {
+  return config.curatedRatio > 0 ? DEFAULTS.finalFresh : FINAL_FRESH_WHEN_NO_CURATED;
+}
+
+/**
+ * Hall-of-fame archive for the final pass: every distinct evolved opponent
+ * that ever sat in a generation's pool, ranked by its mean fitness (1 - the
+ * candidate win rate against it) over the generations it was measured in,
+ * EXCLUDING every opponent present in the pools of the last
+ * `holdoutGenerations` generations -- those are the pools the finalists'
+ * selection statistic was measured on, so re-fighting them would re-measure
+ * the number that chose the finalists (see the header note). Curated entries
+ * are skipped here because the pass takes every curated team separately.
+ * Pure: reads only what the checkpoints already store, so a finished run can
+ * be re-rendered against it. Deterministic (ties on id).
+ *
+ * @param {Array<{opponentPool?: Array<object>, opponentFitness?: number[]}>} records
+ *   oldest-first per-generation records (checkpoint shape).
+ * @param {{holdoutGenerations: number, limit: number}} opts
+ * @returns {{archive: Array<object>, eligible: number, seen: number, heldOut: number}}
+ *   `archive` holds serialized opponent entries (rehydrate before battling)
+ *   with `meanFitness` and `generations` attached, strongest first.
+ */
+export function buildOpponentArchive(records, { holdoutGenerations, limit }) {
+  const stats = new Map();
+  const heldOut = new Set();
+  const cutoff = records.length - Math.max(0, holdoutGenerations);
+  records.forEach((r, g) => {
+    const pool = r.opponentPool ?? [];
+    const fit = r.opponentFitness ?? [];
+    pool.forEach((o, i) => {
+      if (o.origin === 'curated') return;
+      if (g >= cutoff) {
+        heldOut.add(o.id);
+        return;
+      }
+      const s = stats.get(o.id) ?? { entry: o, sum: 0, n: 0 };
+      s.sum += fit[i] ?? 0;
+      s.n += 1;
+      stats.set(o.id, s);
+    });
+  });
+  const ranked = [...stats.values()]
+    .filter((s) => !heldOut.has(s.entry.id))
+    .map((s) => ({ ...s.entry, meanFitness: s.sum / s.n, generations: s.n }))
+    .sort((a, b) => b.meanFitness - a.meanFitness || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return {
+    archive: ranked.slice(0, Math.max(0, limit)),
+    eligible: ranked.length,
+    seen: stats.size + [...heldOut].filter((id) => !stats.has(id)).length,
+    heldOut: heldOut.size,
+  };
+}
+
+/**
+ * `count` fresh meta-composed opponents for the final pass, none of which
+ * carries an id in `usedIds` (every opponent the run ever fielded), so the
+ * stratum is genuinely never-fought. Same composer the opponent GA's
+ * immigrants use; seeded, so a re-render draws the same teams.
+ */
+function composeFreshOpponents(ctx, { count, seed, movesetPool, weights, roleScores, usedIds }) {
+  const rng = rngFromSeed(`${seed}-final-fresh`);
+  const used = new Set(usedIds);
+  const out = [];
+  const maxAttempts = count * 20 + 50;
+  for (let attempts = 0; out.length < count && attempts < maxAttempts; attempts++) {
+    const team = composeSampledOpponent(ctx, rng, movesetPool, weights, roleScores);
+    if (used.has(team.id)) continue;
+    used.add(team.id);
+    out.push({ ...team, origin: 'fresh', label: 'fresh' });
+  }
+  return out;
+}
+
+/** Unweighted win rate per final-pass stratum (`perMeta[].label`: curated / archive / fresh). */
+function winRateByStratum(perMeta) {
+  const acc = new Map();
+  for (const m of perMeta ?? []) {
+    const key = m.label ?? 'other';
+    const cur = acc.get(key) ?? { sum: 0, n: 0 };
+    cur.sum += m.winRate;
+    cur.n += 1;
+    acc.set(key, cur);
+  }
+  return Object.fromEntries([...acc.entries()].map(([k, v]) => [k, { winRate: v.sum / v.n, battles: v.n }]));
+}
 
 /**
  * How many trailing generations the `recent` term above averages over: the
@@ -747,6 +920,30 @@ export function mutationRatesAt(g, config) {
 }
 
 /**
+ * Opponent-side mutation floor/ceil for the generation being evolved FROM
+ * `g` -- the same linear anneal as {@link mutationRatesAt}, driven by the
+ * `--opponent-mutation-*` flags and falling back to
+ * src/meta/opponentPool.js's defaults. With nothing set the opponent GA runs
+ * at its constant defaults, exactly as before these flags existed.
+ *
+ * @param {number} g - generation index.
+ * @param {object} config - resolved run config (buildRunConfig shape).
+ * @returns {{mutationFloor: number, mutationCeil: number}}
+ */
+export function opponentMutationRatesAt(g, config) {
+  const endFloor = config.opponentMutationFloor ?? DEFAULT_OPPONENT_MUTATION_FLOOR;
+  const endCeil = config.opponentMutationCeil ?? DEFAULT_OPPONENT_MUTATION_CEIL;
+  const startFloor = config.opponentMutationFloorStart ?? endFloor;
+  const startCeil = config.opponentMutationCeilStart ?? endCeil;
+  const G = Math.max(1, config.generations);
+  const t = G > 1 ? Math.min(1, g / (G - 1)) : 1;
+  return {
+    mutationFloor: startFloor + t * (endFloor - startFloor),
+    mutationCeil: startCeil + t * (endCeil - startCeil),
+  };
+}
+
+/**
  * Opponent-pool size for generation `g`: DERIVED from the population so the
  * per-generation battle grid (population x opponents) stays at its gen-0
  * value. That is what makes the trade cost-neutral -- the run does not get
@@ -1016,7 +1213,16 @@ function buildRunConfig(csvPath, opts) {
     ...(opts.mutationCeil !== undefined ? { mutationCeil: opts.mutationCeil } : {}),
     ...(opts.mutationFloorStart !== undefined ? { mutationFloorStart: opts.mutationFloorStart } : {}),
     ...(opts.mutationCeilStart !== undefined ? { mutationCeilStart: opts.mutationCeilStart } : {}),
+    ...(opts.opponentDeathRate !== undefined ? { opponentDeathRate: opts.opponentDeathRate } : {}),
+    ...(opts.opponentMutationFloor !== undefined ? { opponentMutationFloor: opts.opponentMutationFloor } : {}),
+    ...(opts.opponentMutationCeil !== undefined ? { opponentMutationCeil: opts.opponentMutationCeil } : {}),
+    ...(opts.opponentMutationFloorStart !== undefined ? { opponentMutationFloorStart: opts.opponentMutationFloorStart } : {}),
+    ...(opts.opponentMutationCeilStart !== undefined ? { opponentMutationCeilStart: opts.opponentMutationCeilStart } : {}),
     ...(opts.immigrantFraction !== undefined ? { immigrantFraction: opts.immigrantFraction } : {}),
+    // Selection smoothing window (see the header note). Only-when-set, like
+    // the rates above, so every pre-2026-09-05 checkpoint dir still resumes --
+    // it then continues under the smoothed default from the resume point.
+    ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined
       ? {
           convergence: {
@@ -1034,8 +1240,18 @@ function buildRunConfig(csvPath, opts) {
   };
 }
 
-function configsMatch(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+/**
+ * Does a checkpoint's stored config describe the same run as this one?
+ * `eliteCount` is still WRITTEN into every config (the report prints it) but
+ * ignored here: it decides only how many last-generation teams enter the final
+ * pass, never what a generation computes, so `--elites 30` must be able to
+ * re-render a finished run's final pass without invalidating its checkpoints.
+ * Stripping it on both sides keeps every older checkpoint (which stored it)
+ * matching too.
+ */
+export function configsMatch(a, b) {
+  const strip = ({ eliteCount, ...rest }) => rest;
+  return JSON.stringify(strip(a ?? {})) === JSON.stringify(strip(b ?? {}));
 }
 
 function checkpointPath(outDir, generation) {
@@ -1076,14 +1292,24 @@ function writeGenerationsAnalytics(outDir, generationRecords) {
 // buildSamplingPool -- pure list-ranking, no battle math, no engine calls).
 // ---------------------------------------------------------------------------
 
+// `poolSize` counts SPECIES, not keys: `deduped` may hold both a shadow and a
+// non-shadow key of one species (dedupeBestPerSpecies with keepShadowVariants),
+// and both ride along once the species makes the cut on its better key, so a
+// shadow twin never crowds a different species out of the pool. The sampler
+// (src/teams/sample.js buildScoredPool) still draws one key per species; the
+// twin is reachable only through the GA's shadow-flip mutation.
 function buildSamplingPool(deduped, poolSize, excludeSpecies) {
   const exclude = new Set(excludeSpecies);
-  return Object.keys(deduped.ratings)
+  const scored = Object.keys(deduped.ratings)
     .filter((key) => !exclude.has(deduped.builtMons[key].speciesId))
-    .map((key) => ({ key, score: computeWeightedScore(deduped.ratings[key]) }))
-    .sort((a, b) => b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-    .slice(0, poolSize)
-    .map((m) => m.key);
+    .map((key) => ({ key, speciesId: deduped.builtMons[key].speciesId, score: computeWeightedScore(deduped.ratings[key]) }))
+    .sort((a, b) => b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const keptSpecies = new Set();
+  for (const m of scored) {
+    if (keptSpecies.size >= poolSize && !keptSpecies.has(m.speciesId)) break;
+    keptSpecies.add(m.speciesId);
+  }
+  return scored.filter((m) => keptSpecies.has(m.speciesId)).map((m) => m.key);
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,6 +1414,9 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
   if (lineage) {
     originCounts = { survived: 0, mutant: 0, immigrant: 0 };
     for (const e of lineage.entries) originCounts[e.origin] = (originCounts[e.origin] ?? 0) + 1;
+    // Deaths from losing a shadow rivalry (a team vs. its shadow-twin) rather
+    // than from ranking in the bottom deathRate; see src/teams/evolve.js.
+    originCounts.shadowRivalryDied = lineage.shadowRivalryDied?.length ?? 0;
 
     const oldCounts = new Map();
     const survivedCounts = new Map();
@@ -1619,14 +1848,7 @@ function renderEvolveReport(result) {
 
   out.push(`## Top ${elites.length} teams`);
   out.push('');
-  out.push(
-    `Win% is a weighted mean over one battle against each of the ${eo.total} elites-pass opponents ` +
-      `(${eo.curated} curated + ${eo.evolved} evolved), both sides at their designated leads: ladder-observed meta ` +
-      'teams count in full, "recommended" curated teams at half weight, off-meta curated at a quarter, evolved ' +
-      `opponents at an eighth. **Score** (the sort key) = ${rk.weights.elitePass} x that win% + ${rk.weights.recent} x ` +
-      `the team's mean win% over the last ${rk.recentWindow} generation(s). Absolute win% carries pvpoke emulate ` +
-      "mode's small constant team-A offset; the ranking is relative, so it cancels."
-  );
+  out.push(finalPassDescription(eo, rk));
   out.push('');
   if (elites.length === 0) {
     out.push('_No elite teams were produced._');
@@ -1656,6 +1878,11 @@ function renderEvolveReport(result) {
         `${t.recentGenerations || 0} generation(s) it lived through the trailing window` +
         (t.recentGenerations ? '' : ' (newer than the window; ranks on the elites pass alone)')
     );
+    const strata = stratumLine(t.winRateByStratum);
+    if (strata) out.push(`- **By opponent stratum (unweighted):** ${strata}`);
+    if (typeof t.selectionFitness === 'number') {
+      out.push(`- **Finalist on:** ${pct(t.selectionFitness)} mean fitness over its last ${rk.selectionTrailing ?? '?'} generation(s)`);
+    }
     out.push(
       `- **Lead:** ${t.bestLead.name}` +
         (t.safeSwap ? ` -- **safest first switch:** ${t.safeSwap.name} (avg ${pct(t.safeSwap.avgHpPct)} HP remaining when switched in)` : '')
@@ -1700,6 +1927,11 @@ function renderEvolveReport(result) {
     if (config.mutationFloorStart !== undefined) ga.push(`mutation-floor-start=${config.mutationFloorStart} (annealed to ${config.mutationFloor ?? DEFAULT_MUTATION_FLOOR})`);
     if (config.mutationCeilStart !== undefined) ga.push(`mutation-ceil-start=${config.mutationCeilStart} (annealed to ${config.mutationCeil ?? DEFAULT_MUTATION_CEIL})`);
     if (config.immigrantFraction !== undefined) ga.push(`immigrant-fraction=${config.immigrantFraction}`);
+    if (config.opponentDeathRate !== undefined) ga.push(`opponent-death-rate=${config.opponentDeathRate}`);
+    if (config.opponentMutationFloor !== undefined) ga.push(`opponent-mutation-floor=${config.opponentMutationFloor}`);
+    if (config.opponentMutationCeil !== undefined) ga.push(`opponent-mutation-ceil=${config.opponentMutationCeil}`);
+    if (config.opponentMutationFloorStart !== undefined) ga.push(`opponent-mutation-floor-start=${config.opponentMutationFloorStart} (annealed to ${config.opponentMutationFloor ?? DEFAULT_OPPONENT_MUTATION_FLOOR})`);
+    if (config.opponentMutationCeilStart !== undefined) ga.push(`opponent-mutation-ceil-start=${config.opponentMutationCeilStart} (annealed to ${config.opponentMutationCeil ?? DEFAULT_OPPONENT_MUTATION_CEIL})`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
     out.push(`- GA overrides: ${ga.join(', ')}`);
   }
@@ -1709,6 +1941,50 @@ function renderEvolveReport(result) {
   out.push('');
 
   return out.join('\n');
+}
+
+/**
+ * The one paragraph both reports open with: what the final pass fought, how
+ * it is weighted, and how the finalists were picked. `eo` is
+ * `result.eliteOpponents`; an older shape (no `archive`/`fresh`) is described
+ * as plain "evolved" opponents.
+ */
+function finalPassDescription(eo, rk) {
+  const hasStrata = typeof eo.archive === 'number' || typeof eo.fresh === 'number';
+  const mix = hasStrata
+    ? `${eo.curated} curated + ${eo.archive ?? 0} held-out archive + ${eo.fresh ?? 0} fresh`
+    : `${eo.curated} curated + ${eo.evolved} evolved`;
+  const weighting =
+    eo.curated > 0
+      ? 'Curated teams are weighted by tier (ladder-observed 1, "recommended" 0.5, off-meta 0.25); the bred and ' +
+        'composed opponents together carry the run\'s own curated-ratio share of the total weight.'
+      : 'Every opponent carries the same weight.';
+  const holdout = hasStrata
+    ? ` The archive holds the strongest opponents the opponent GA bred over the whole run, excluding any that sat in ` +
+      `the pools of the last ${eo.holdoutGenerations ?? '?'} generation(s)` +
+      (typeof eo.archiveEligible === 'number' ? ` (${eo.archiveEligible} eligible of ${eo.archiveSeen} seen)` : '') +
+      '; the fresh teams are meta-composed and were never fought during the run -- so the pass is out-of-sample for ' +
+      'the number that chose the finalists.'
+    : '';
+  const finalists =
+    typeof rk.selectionTrailing === 'number'
+      ? ` Finalists are the last generation's top teams by their mean fitness over their last ${rk.selectionTrailing} generation(s).`
+      : '';
+  return (
+    `Win% is a weighted mean over one battle against each of the ${eo.total} elites-pass opponents (${mix}), both ` +
+    `sides at their designated leads. ${weighting}${holdout}${finalists} **Score** (the sort key) = ` +
+    `${rk.weights.elitePass} x that win% + ${rk.weights.recent} x the team's mean win% over the last ` +
+    `${rk.recentWindow} generation(s). Absolute win% carries pvpoke emulate mode's small constant team-A offset; ` +
+    'the ranking is relative, so it cancels.'
+  );
+}
+
+/** "curated 52% (147) · archive 48% (400) · fresh 55% (400)" from an elite's `winRateByStratum`, or '' when absent. */
+function stratumLine(byStratum) {
+  if (!byStratum) return '';
+  const order = ['curated', 'archive', 'fresh'];
+  const keys = [...order.filter((k) => k in byStratum), ...Object.keys(byStratum).filter((k) => !order.includes(k))];
+  return keys.map((k) => `${k} ${pct(byStratum[k].winRate)} (${byStratum[k].battles})`).join(' · ');
 }
 
 /** Thousands-separate an integer without depending on the host locale. Mirrors src/report/index.js's own `num`. */
@@ -1805,6 +2081,8 @@ function renderTeamCardHtml(t, rank) {
       `(${t.battles} battles${t.errors ? `, ${t.errors} errors` : ''}) &middot; ${pct(t.recentWinRate)} over its last ` +
       `${t.recentGenerations || 0} generation(s)${t.recentGenerations ? '' : ' (newer than the trailing window; ranks on the elites pass alone)'}</p>`
   );
+  const strata = stratumLine(t.winRateByStratum);
+  if (strata) out.push(`<p class="factline">By opponent stratum (unweighted): ${escapeHtml(strata)}</p>`);
   out.push('<div class="roster-wrap">');
   out.push('<table><tr><th>Pokémon</th><th>Moves (as simulated)</th><th>Build from your collection</th></tr>');
   t.members.forEach((m, i) => {
@@ -1908,7 +2186,8 @@ export function renderEvolveReportHtml(result) {
     `<p class="sub">${generationRecords.length} generation${generationRecords.length === 1 ? '' : 's'} of full 3v3 ` +
     `battle simulation${result.collectionMonCount ? ` over your ${result.collectionMonCount}-mon collection` : ''} ` +
     `— <strong>${num(totalBattles)} battles fought</strong> against ${eo.total} elites-pass opponents ` +
-    `(${eo.curated} curated + ${eo.evolved} evolved), plus everything the earlier generations battled through. ` +
+    `(${typeof eo.archive === 'number' ? `${eo.curated} curated + ${eo.archive} held-out archive + ${eo.fresh ?? 0} fresh` : `${eo.curated} curated + ${eo.evolved} evolved`}), ` +
+    'plus everything the earlier generations battled through. ' +
     `${podiumCount === 1 ? 'This team' : `These ${podiumCount} teams`} survived everything the run threw at ` +
     `${podiumCount === 1 ? 'it' : 'them'}.</p>`;
 
@@ -2000,11 +2279,7 @@ export function renderEvolveReportHtml(result) {
       `→ ${Math.round(config.population * config.populationFinalRatio)} while the opponent pool grew ${config.opponentsPerGen} ` +
       `→ ${opponentsAt(config.generations - 1, config)}.</li>`
   );
-  out.push(
-    `<li><b>Opponent quality is weighted, not flat.</b> The final elites pass ran each finalist against all ${eo.total} ` +
-      'opponents: real ladder-observed teams count in full, "recommended" curated teams at half weight, off-meta curated ' +
-      'at a quarter, and the GA\'s own evolved opponents at an eighth.</li>'
-  );
+  out.push(`<li><b>How the final pass was scored.</b> ${escapeHtml(finalPassDescription(eo, result.ranking ?? { weights: RANKING_WEIGHTS, recentWindow: 0 })).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</li>`);
   out.push(
     `<li><b>Setup:</b> seed <code>${escapeHtml(config.seed)}</code>, cp=${config.cp}, pool=${config.pool}, ` +
       `curated-ratio=${config.curatedRatio}, fitness=${escapeHtml(config.fitness)}` +
@@ -2020,6 +2295,11 @@ export function renderEvolveReportHtml(result) {
     if (config.mutationFloorStart !== undefined) ga.push(`mutation-floor-start=${config.mutationFloorStart} (annealed to ${config.mutationFloor ?? DEFAULT_MUTATION_FLOOR})`);
     if (config.mutationCeilStart !== undefined) ga.push(`mutation-ceil-start=${config.mutationCeilStart} (annealed to ${config.mutationCeil ?? DEFAULT_MUTATION_CEIL})`);
     if (config.immigrantFraction !== undefined) ga.push(`immigrant-fraction=${config.immigrantFraction}`);
+    if (config.opponentDeathRate !== undefined) ga.push(`opponent-death-rate=${config.opponentDeathRate}`);
+    if (config.opponentMutationFloor !== undefined) ga.push(`opponent-mutation-floor=${config.opponentMutationFloor}`);
+    if (config.opponentMutationCeil !== undefined) ga.push(`opponent-mutation-ceil=${config.opponentMutationCeil}`);
+    if (config.opponentMutationFloorStart !== undefined) ga.push(`opponent-mutation-floor-start=${config.opponentMutationFloorStart} (annealed to ${config.opponentMutationFloor ?? DEFAULT_OPPONENT_MUTATION_FLOOR})`);
+    if (config.opponentMutationCeilStart !== undefined) ga.push(`opponent-mutation-ceil-start=${config.opponentMutationCeilStart} (annealed to ${config.opponentMutationCeil ?? DEFAULT_OPPONENT_MUTATION_CEIL})`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
     out.push(`<li><b>GA overrides:</b> ${escapeHtml(ga.join(', '))}.</li>`);
   }
@@ -2087,7 +2367,20 @@ function renderDoneMarker(result) {
  *     moveset-pool entries containing a banned species on the opponent side.
  *     Always in the checkpoint fingerprint.
  *   population?:number, opponentsPerGen?:number, generations?:number,
- *   fixedOpponents?:boolean, eliteCount?:number,
+ *   fixedOpponents?:boolean,
+ *   eliteCount?:number, - last-generation teams sent to the final pass (by
+ *     trailing-mean fitness); written into the config but ignored by
+ *     configsMatch, so it may change on a re-render.
+ *   selectionTrailing?:number, - generations each team's fitness is averaged
+ *     over (recency-weighted, see trailingFitness) before the cull/mutation
+ *     ranking and the finalist pick (default DEFAULT_SELECTION_TRAILING; 1 =
+ *     rank on the single generation, the pre-2026-09-05 behavior).
+ *     Only-when-set fingerprint rule.
+ *   finalArchive?:number, finalFresh?:number, - final-pass held-out strata
+ *     sizes (see buildOpponentArchive / composeFreshOpponents; finalArchive
+ *     defaults from DEFAULTS, finalFresh from finalFreshDefault -- 0 normally,
+ *     a small nonzero fallback only at --curated-ratio 0). NOT in the
+ *     fingerprint: they change only the final pass.
  *   deathRate?:number, mutationFloor?:number, mutationCeil?:number,
  *   immigrantFraction?:number, - candidate-side GA rate overrides, forwarded
  *     to nextGeneration; in the checkpoint fingerprint ONLY when set.
@@ -2095,6 +2388,13 @@ function renderDoneMarker(result) {
  *     mutation rates at generation 0, annealed linearly to the standard
  *     floor/ceil by the last allowed generation (see mutationRatesAt); same
  *     only-when-set fingerprint rule.
+ *   opponentDeathRate?:number, - opponent-side cull fraction (evolvable
+ *     entries only), forwarded to nextOpponentPool; only-when-set fingerprint.
+ *   opponentMutationFloor?:number, opponentMutationCeil?:number,
+ *   opponentMutationFloorStart?:number, opponentMutationCeilStart?:number,
+ *     - opponent-side mutation rates and hot-start anneal, forwarded to
+ *     nextOpponentPool (see opponentMutationRatesAt); same only-when-set
+ *     fingerprint rule.
  *   convWindow?:number, convTopN?:number, - convergence window / top-set-size
  *     overrides for hasConverged; same only-when-set fingerprint rule.
  *   populationFinalRatio?:number, - candidate population at the last
@@ -2137,7 +2437,7 @@ export async function runEvolution(csvPath, opts = {}) {
 
   log(`evolve: starting (collection=${config.csvPath}, out-dir=${outDir}, report=${reportPath})`);
 
-  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
+  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath, { cp: config.cp });
   const ctx = await initEngine({ cp: config.cp });
   const league = leagueForCp(config.cp);
   // Same expansion src/cli.js does: each mon also competes as anything it can
@@ -2149,7 +2449,10 @@ export async function runEvolution(csvPath, opts = {}) {
     : { mons: importedMons, warnings: [] };
   const mons = expanded.mons;
   const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta });
-  const deduped = dedupeBestPerSpecies(matrix);
+  // keepShadowVariants: the GA's shadow-flip mutation needs both the shadow and
+  // the non-shadow specimen of a species on hand to swap between; the sampler
+  // itself still sees one key per species (see buildSamplingPool).
+  const deduped = dedupeBestPerSpecies(matrix, { keepShadowVariants: true });
   const weights = loadUsageWeights(ctx);
   const banBaseIds = new Set(config.banSpecies);
   // --ban is format-wide: on the candidate side it is folded into
@@ -2251,12 +2554,6 @@ export async function runEvolution(csvPath, opts = {}) {
 
     let stopReason = null;
     let lastEvaluated = generationRecords.length ? generationRecords[generationRecords.length - 1] : null;
-    // Live opponent pool + fitness for the generation `lastEvaluated` describes
-    // -- the final elites pass needs the strongest EVOLVED opponents, and
-    // rebuilding them from the checkpoint is only necessary on a run that
-    // resumed straight past its last generation.
-    let lastOpponentPool = null;
-    let lastOpponentFitness = null;
 
     while (generation < config.generations) {
       if (deadlineMs !== null && Date.now() - runStartedAtMs >= deadlineMs) {
@@ -2300,6 +2597,27 @@ export async function runEvolution(csvPath, opts = {}) {
       const opponentFitness = run.opponentTally.map((t) => (t.battles > 0 ? 1 - t.winPoints / t.battles : 0.5));
 
       history.push({ population, fitness });
+      // MEMORY: trailingFitness/hasConverged only ever look back a bounded
+      // number of generations from the current newest entry (selection's own
+      // trailing window, or convergence's trailing+window) -- once an entry
+      // falls further behind the newest than the widest of those lookbacks
+      // will ever reach, it can never be dereferenced again by any later
+      // iteration either (the lookback windows are fixed, the newest index
+      // only moves forward). +5 is slack for any smaller custom windows a
+      // flag might set. Past that, `.population` is dead weight -- same
+      // unbounded-growth shape as generationRecords above.
+      const historyLookback =
+        Math.max(
+          selectionTrailingOf(config),
+          (config.convergence?.trailing ?? DEFAULT_CONVERGENCE_TRAILING) +
+            (config.convergence?.window ?? DEFAULT_CONVERGENCE_WINDOW)
+        ) + 5;
+      const staleHistoryIdx = history.length - 1 - historyLookback;
+      if (staleHistoryIdx >= 0 && history[staleHistoryIdx].population) history[staleHistoryIdx].population = null;
+      // Selection ranks on each team's trailing mean, not this generation's
+      // draw (see the header note) -- a pure function of `history`, so a
+      // resumed run computes exactly the same values.
+      const selectionFitness = trailingFitness(history, selectionTrailingOf(config));
       const isLastAllowedGeneration = generation === config.generations - 1;
 
       let lineage = null;
@@ -2309,7 +2627,7 @@ export async function runEvolution(csvPath, opts = {}) {
       if (!isLastAllowedGeneration) {
         const advanced = nextGeneration({
           population,
-          fitness,
+          fitness: selectionFitness,
           pool,
           matrix: deduped,
           weights,
@@ -2342,6 +2660,10 @@ export async function runEvolution(csvPath, opts = {}) {
             roleScores,
             movesetPool,
             seed: `${config.seed}-opponents-next${generation}`,
+            opts: {
+              ...(config.opponentDeathRate !== undefined ? { deathRate: config.opponentDeathRate } : {}),
+              ...opponentMutationRatesAt(generation, config),
+            },
           });
           nextOpponents = advancedOpponents.pool;
           opponentLineage = advancedOpponents.lineage;
@@ -2356,6 +2678,10 @@ export async function runEvolution(csvPath, opts = {}) {
         threadsUsed: threaded ? threads : null,
         population,
         fitness,
+        // The trailing-mean fitness selection actually ranked on this
+        // generation (see selectionTrailingOf); `fitness` above stays the raw
+        // single-generation number the history/analytics/race chart read.
+        selectionFitness,
         // Per-team win rate keyed by the SAME lead-aware signature
         // src/teams/evolve.js uses for identity, so the final ranking can
         // average a team's win rate across the generations it survived even
@@ -2387,10 +2713,27 @@ export async function runEvolution(csvPath, opts = {}) {
       };
       writeCheckpoint(outDir, generation, record);
       generationRecords.push(record);
+      // MEMORY: only the newest record's population is ever read back out of
+      // generationRecords (as lastEvaluated, for the final elites pass below);
+      // everything else a later step reads is opponentPool/opponentFitness
+      // (buildOpponentArchive, over the FULL run), winRateBySignature (the
+      // trailing-window final ranking), or timing/analytics (both report
+      // paths and buildTopTeamSeries) -- see the grep audit that motivated
+      // this trim. population/nextPopulation/lineage/opponentLineage/
+      // nextOpponentPool are already durably on disk via writeCheckpoint
+      // above, so once a generation is no longer the newest they are dead
+      // weight -- on a long run they otherwise pin tens of thousands of team
+      // objects in the main process's heap for the run's entire duration.
+      const superseded = generationRecords[generationRecords.length - 2];
+      if (superseded) {
+        superseded.population = null;
+        superseded.nextPopulation = null;
+        superseded.lineage = null;
+        superseded.opponentLineage = null;
+        superseded.nextOpponentPool = null;
+      }
       writeGenerationsAnalytics(outDir, generationRecords);
       lastEvaluated = record;
-      lastOpponentPool = opponents;
-      lastOpponentFitness = opponentFitness;
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
           `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
@@ -2417,49 +2760,86 @@ export async function runEvolution(csvPath, opts = {}) {
     }
 
     // ---- Final elites pass ------------------------------------------------
-    // Opponent set (Jaxon 2026-08-26): EVERY curated team, untouched and at
-    // its own declared lead, plus the strongest teams the opponent GA evolved
-    // over the run. The curated half is the reality check (these are the teams
-    // actually being played); the evolved half is the hardest opposition the
-    // run was able to construct, which is what stops the headline number being
-    // a score against a fixed list the population has had every generation to
-    // memorize. One battle per (elite, opponent) -- the elite at its locked
-    // lead, the opponent at ITS designated lead -- rather than the old spread
-    // across the opponent's 3 possible leads: now that every opponent carries
-    // a real designated lead, fighting it at the other two is measuring a team
-    // that nobody plays.
+    // FINALISTS: the last generation's top `eliteCount` by the SAME trailing
+    // mean selection ranks on (see the header note), not by the last
+    // generation's single draw -- the s2 run's last-draw pick sent teams with
+    // 1-4 observations to the pass and left out a team that had sat in the
+    // top 7 for 8 of the last 13 generations.
+    const trailing = selectionTrailingOf(config);
+    const selectionAtEnd = trailingFitness(history, trailing);
     const rankedIdx = lastEvaluated.population
       .map((_, i) => i)
-      .sort((a, b) => lastEvaluated.fitness[b] - lastEvaluated.fitness[a] || a - b);
-    const eliteTeams = rankedIdx.slice(0, config.eliteCount).map((i) => lastEvaluated.population[i]);
+      .sort((a, b) => selectionAtEnd[b] - selectionAtEnd[a] || a - b);
+    // Shadow twins (same species and lead, differing only in who is shadow)
+    // normally settle inside nextGeneration -- only the fitter survives -- but
+    // a twin bred in the final generation has never faced its rival, so the
+    // ranking keeps the fitter of each pair here too. One line per trio.
+    const seenShadowBlind = new Set();
+    const eliteIdx = [];
+    for (const i of rankedIdx) {
+      if (eliteIdx.length >= config.eliteCount) break;
+      const signature = shadowBlindSignature(lastEvaluated.population[i], deduped);
+      if (seenShadowBlind.has(signature)) continue;
+      seenShadowBlind.add(signature);
+      eliteIdx.push(i);
+    }
+    const eliteTeams = eliteIdx.map((i) => lastEvaluated.population[i]);
+    log(
+      `evolve: finalists -- top ${eliteTeams.length} of ${lastEvaluated.population.length} last-generation teams ` +
+        `by ${trailing}-generation mean fitness`
+    );
 
-    const finalOpponentPool =
-      lastOpponentPool ?? rehydrateOpponentPool(ctx, lastEvaluated.opponentPool ?? [], curatedPool, log);
-    const finalOpponentFitness = lastOpponentFitness ?? lastEvaluated.opponentFitness ?? [];
-    const evolvedRanked = finalOpponentPool
-      .map((entry, i) => ({ entry, fitness: finalOpponentFitness[i] ?? 0 }))
-      .filter(({ entry }) => !isProtectedOpponent(entry))
-      .sort((a, b) => b.fitness - a.fitness);
-    // Aim for the run's own curated:evolved ratio, so the headline win% is
-    // weighted the same way the generations that produced these teams were --
-    // but this is a CEILING, not a quota. Every curated team is in the pass by
-    // definition (all ~110 of them), and the live opponent pool only ever
-    // holds a couple dozen evolvable entries, so in practice the pass takes
-    // every evolved opponent there is and lands well short of the ratio. That
-    // is the intended trade: an elites-pass win% that leans curated is the
-    // number worth reporting, because the curated teams are the real ones.
-    const evolvedWanted = Math.round((curatedPool.length * (1 - config.curatedRatio)) / Math.max(config.curatedRatio, 1e-9));
-    const eliteEvolved = evolvedRanked.slice(0, Math.min(evolvedWanted, evolvedRanked.length)).map(({ entry }) => entry);
-    const eliteCurated = curatedPool.map((t) => ({ ...t, label: 'curated', leadIndex: t.leadIndex ?? 0 }));
-    const eliteOpponents = [...eliteCurated, ...eliteEvolved];
-    const eliteOpponentWeights = [
-      ...eliteCurated.map((t) => curatedTierWeight(t)),
-      ...eliteEvolved.map(() => ELITES_PASS_SAMPLED_WEIGHT),
-    ];
+    // OPPONENT SET (Jaxon 2026-08-26, held-out form 2026-09-05): EVERY curated
+    // team, untouched and at its own declared lead -- the reality check, these
+    // are the teams actually being played -- plus two held-out strata the
+    // finalists have never been selected on: the ARCHIVE (the strongest
+    // opponents the opponent GA bred over the whole run, minus anything that
+    // sat in the pools of the generations the finalists' trailing mean was
+    // measured on -- see buildOpponentArchive) and FRESH meta-composed teams
+    // no candidate ever fought. Re-grading the finalists against the pool that
+    // had just chosen them was the winner's curse the s2 run exposed (0 new
+    // battles, every "elites pass" number equal to the selecting draw). One
+    // battle per (elite, opponent) -- the elite at its locked lead, the
+    // opponent at ITS designated lead -- rather than the old spread across the
+    // opponent's 3 possible leads: now that every opponent carries a real
+    // designated lead, fighting it at the other two is measuring a team that
+    // nobody plays.
+    const holdoutGenerations = Math.min(trailing, generationRecords.length);
+    const archiveBuilt = buildOpponentArchive(generationRecords, {
+      holdoutGenerations,
+      limit: opts.finalArchive ?? DEFAULTS.finalArchive,
+    });
+    const archiveOpponents = rehydrateOpponentPool(ctx, archiveBuilt.archive, curatedPool, log).map((e) => ({
+      ...e,
+      label: 'archive',
+    }));
+    const everFielded = new Set();
+    for (const r of generationRecords) for (const o of r.opponentPool ?? []) everFielded.add(o.id);
+    const freshOpponents = composeFreshOpponents(ctx, {
+      count: opts.finalFresh ?? finalFreshDefault(config),
+      seed: config.seed,
+      movesetPool,
+      weights,
+      roleScores,
+      usedIds: everFielded,
+    });
+    // --curated-ratio 0 means "no curated teams in this run, full stop": a run
+    // that deliberately excluded the (possibly stale) curated set is not
+    // graded against it at the end either.
+    const eliteCurated =
+      config.curatedRatio > 0 ? curatedPool.map((t) => ({ ...t, label: 'curated', leadIndex: t.leadIndex ?? 0 })) : [];
+    const eliteOpponents = [...eliteCurated, ...archiveOpponents, ...freshOpponents];
+    const eliteOpponentWeights = finalPassWeights({
+      curated: eliteCurated,
+      evolvedCount: archiveOpponents.length + freshOpponents.length,
+      curatedRatio: config.curatedRatio,
+    });
 
     log(
-      `evolve: final elites pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents ` +
-        `(${eliteCurated.length} curated in full, ${eliteEvolved.length} strongest evolved), each at its own lead`
+      `evolve: final pass -- ${eliteTeams.length} teams x ${eliteOpponents.length} opponents ` +
+        `(${eliteCurated.length} curated in full, ${archiveOpponents.length} archive held out of the last ` +
+        `${holdoutGenerations} generation(s) [${archiveBuilt.eligible} eligible of ${archiveBuilt.seen} distinct evolved ` +
+        `opponents seen], ${freshOpponents.length} fresh never fought before), each at its own lead`
     );
     const eliteRun = await evaluateTeamsInOrder(ctx, {
       teams: eliteTeams,
@@ -2509,8 +2889,14 @@ export async function runEvolution(csvPath, opts = {}) {
           : r.winRate;
         return {
           ...r,
-          sourceIndex: rankedIdx[i],
+          sourceIndex: eliteIdx[i],
           signature: teamSignature(eliteTeams[i]),
+          // The trailing mean that made this team a finalist, and the pass
+          // broken down by stratum (unweighted) so a reader can see "vs real
+          // teams" / "vs the hardest bred counters" / "vs fresh meta teams"
+          // separately from the weighted headline.
+          selectionFitness: selectionAtEnd[eliteIdx[i]],
+          winRateByStratum: winRateByStratum(r.perMeta),
           recentWinRate: recent?.mean ?? null,
           recentGenerations: recent?.generations ?? 0,
           combinedScore,
@@ -2557,14 +2943,21 @@ export async function runEvolution(csvPath, opts = {}) {
       eliteOpponents: {
         total: eliteOpponents.length,
         curated: eliteCurated.length,
-        evolved: eliteEvolved.length,
+        // `evolved` kept as the sum for anything reading the older shape.
+        evolved: archiveOpponents.length + freshOpponents.length,
+        archive: archiveOpponents.length,
+        fresh: freshOpponents.length,
+        holdoutGenerations,
+        archiveEligible: archiveBuilt.eligible,
+        archiveSeen: archiveBuilt.seen,
       },
       ranking: {
         weights: RANKING_WEIGHTS,
         recentWindow,
+        selectionTrailing: trailing,
         generationsRun: generationRecords.length,
       },
-      finalOpponentPool: summarizeOpponentPool(finalOpponentPool, finalOpponentFitness),
+      finalOpponentPool: summarizeOpponentPool(lastEvaluated.opponentPool ?? [], lastEvaluated.opponentFitness ?? []),
       battleCacheStats: cacheStats,
       totalElapsedMs: Date.now() - runStartedAtMs,
     };
@@ -2593,6 +2986,8 @@ export async function runEvolution(csvPath, opts = {}) {
           combinedScore: t.combinedScore,
           winRate: t.winRate,
           recentWinRate: t.recentWinRate,
+          selectionFitness: t.selectionFitness,
+          winRateByStratum: t.winRateByStratum,
         })),
         null,
         2
@@ -2623,16 +3018,32 @@ Options:
   --seed S                PRNG seed                                 (default "${DEFAULTS.seed}")
   --threads N             battle via ONE persistent worker-pool executor
                             shared across every generation; this CLI
-                            defaults to max(1, cpus-1) -- pass --threads 1
-                            for the serial reference mode              (default ${defaultThreadCount()} on this machine)
+                            defaults to max(1, cpus-1) capped at 8 (each
+                            worker boots its own engine context, so more
+                            threads costs memory, not just CPU) -- pass
+                            --threads 1 for the serial reference mode, or
+                            a value above 8 if the machine has memory to
+                            spare                                        (default ${defaultThreadCount()} on this machine)
   --deadline-minutes D    optional wall-clock budget (stop before the next
                             generation once past it; no self-tuning)   (default: none)
   --cp N                  CP cap / league                            (default ${DEFAULTS.cp})
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
-  --elites N               final-generation teams given the final evaluation
-                            pass (all curated teams + the strongest evolved
-                            opponents, each at its own lead)           (default ${DEFAULTS.elites})
+  --elites N               last-generation teams (by trailing-mean fitness)
+                            given the final evaluation pass; not part of the
+                            checkpoint fingerprint, so a finished run can be
+                            re-rendered with more                      (default ${DEFAULTS.elites})
+  --selection-trailing N   generations each team's fitness is averaged over
+                            before the cull/mutation ranking and the finalist
+                            pick; 1 = rank on the single generation
+                                        (default: DEFAULT_SELECTION_TRAILING, ${DEFAULT_SELECTION_TRAILING})
+  --final-archive N        final pass: strongest evolved opponents from the
+                            whole run, held out of the generations the
+                            finalists were selected on                (default ${DEFAULTS.finalArchive})
+  --final-fresh N          final pass: fresh meta-composed opponents never
+                            fought during the run -- kept low/off by default,
+                            these are essentially random legal teams, not
+                            opponent-GA-selected ones (default ${DEFAULTS.finalFresh}, or ${FINAL_FRESH_WHEN_NO_CURATED} at --curated-ratio 0)
   --score-meta S           1v1-pruning meta size                      (default ${DEFAULTS.scoreMeta})
   --pool P                 sampling pool size                         (default ${DEFAULTS.pool})
   --curated-ratio R        curated-vs-evolved opponent mix             (default ${DEFAULTS.curatedRatio})
@@ -2678,6 +3089,17 @@ Options:
   --mutation-ceil-start R   hot-start mutation ceil at generation 0, same
                             linear anneal to --mutation-ceil      (default: no anneal)
   --immigrant-fraction R   fresh-immigrant share of the population (default: DEFAULT_IMMIGRANT_FRACTION)
+  --opponent-death-rate R            opponent-side cull fraction per generation;
+                            mutants can only fill the seats the cull opens,
+                            so raise this alongside the mutation rates
+                                        (default: DEFAULT_OPPONENT_DEATH_RATE, 0.15)
+  --opponent-mutation-floor R        opponent-side mutation floor  (default: DEFAULT_OPPONENT_MUTATION_FLOOR, 0.02)
+  --opponent-mutation-ceil R         opponent-side mutation ceil   (default: DEFAULT_OPPONENT_MUTATION_CEIL, 0.2)
+  --opponent-mutation-floor-start R  hot-start opponent floor at generation 0,
+                            annealed linearly to --opponent-mutation-floor
+                                                                   (default: no anneal)
+  --opponent-mutation-ceil-start R   hot-start opponent ceil, same anneal to
+                            --opponent-mutation-ceil               (default: no anneal)
   --conv-window N          convergence: consecutive zero-churn generations
                             required                              (default: DEFAULT_CONVERGENCE_WINDOW)
   --conv-top-n N           convergence: size of the top set that must not
@@ -2731,6 +3153,9 @@ async function main(argv) {
         cp: { type: 'string' },
         'fixed-opponents': { type: 'boolean' },
         elites: { type: 'string' },
+        'selection-trailing': { type: 'string' },
+        'final-archive': { type: 'string' },
+        'final-fresh': { type: 'string' },
         'score-meta': { type: 'string' },
         pool: { type: 'string' },
         'curated-ratio': { type: 'string' },
@@ -2752,6 +3177,11 @@ async function main(argv) {
         'mutation-floor-start': { type: 'string' },
         'mutation-ceil-start': { type: 'string' },
         'immigrant-fraction': { type: 'string' },
+        'opponent-death-rate': { type: 'string' },
+        'opponent-mutation-floor': { type: 'string' },
+        'opponent-mutation-ceil': { type: 'string' },
+        'opponent-mutation-floor-start': { type: 'string' },
+        'opponent-mutation-ceil-start': { type: 'string' },
         'conv-window': { type: 'string' },
         'conv-top-n': { type: 'string' },
         help: { type: 'boolean' },
@@ -2781,6 +3211,14 @@ async function main(argv) {
     cp: intFlag(values.cp, 'cp', DEFAULTS.cp),
     fixedOpponents: !!values['fixed-opponents'],
     eliteCount: intFlag(values.elites, 'elites', DEFAULTS.elites),
+    selectionTrailing:
+      values['selection-trailing'] !== undefined
+        ? Math.max(1, intFlag(values['selection-trailing'], 'selection-trailing', undefined))
+        : undefined,
+    finalArchive: intFlag(values['final-archive'], 'final-archive', DEFAULTS.finalArchive),
+    // Left undefined when not passed (rather than defaulted here) so
+    // finalFreshDefault's curated-ratio-aware fallback applies.
+    finalFresh: values['final-fresh'] !== undefined ? intFlag(values['final-fresh'], 'final-fresh', undefined) : undefined,
     scoreMeta: intFlag(values['score-meta'], 'score-meta', DEFAULTS.scoreMeta),
     evolutions: !values['no-evolutions'],
     pool: intFlag(values.pool, 'pool', DEFAULTS.pool),
@@ -2802,6 +3240,11 @@ async function main(argv) {
     mutationFloorStart: fractionFlag(values['mutation-floor-start'], 'mutation-floor-start', undefined),
     mutationCeilStart: fractionFlag(values['mutation-ceil-start'], 'mutation-ceil-start', undefined),
     immigrantFraction: fractionFlag(values['immigrant-fraction'], 'immigrant-fraction', undefined),
+    opponentDeathRate: fractionFlag(values['opponent-death-rate'], 'opponent-death-rate', undefined),
+    opponentMutationFloor: fractionFlag(values['opponent-mutation-floor'], 'opponent-mutation-floor', undefined),
+    opponentMutationCeil: fractionFlag(values['opponent-mutation-ceil'], 'opponent-mutation-ceil', undefined),
+    opponentMutationFloorStart: fractionFlag(values['opponent-mutation-floor-start'], 'opponent-mutation-floor-start', undefined),
+    opponentMutationCeilStart: fractionFlag(values['opponent-mutation-ceil-start'], 'opponent-mutation-ceil-start', undefined),
     convWindow: values['conv-window'] !== undefined ? intFlag(values['conv-window'], 'conv-window', undefined) : undefined,
     convTopN: values['conv-top-n'] !== undefined ? intFlag(values['conv-top-n'], 'conv-top-n', undefined) : undefined,
   };

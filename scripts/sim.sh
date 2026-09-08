@@ -4,18 +4,33 @@
 # Wraps the recipe previously reassembled by hand each session: ensure
 # vendor/pvpoke, echo the configuration, launch detached via nohup with the
 # out/evolve-<name>{,.log,.pid} convention, and print how to monitor it.
+# Also launches scripts/mem-watchdog.sh alongside every detached run, which
+# SIGTERMs the run (a clean, checkpoint-safe stop) if system available
+# memory stays low for too long -- added after two WSL crashes on
+# 2026-09-05 where a run outgrew this machine's actual headroom even with
+# --threads capped; see mem-watchdog.sh's own header for the story.
 #
 # Usage:
 #   scripts/sim.sh <collection.csv> [options] [-- extra evolve.mjs flags]
+#   scripts/sim.sh --meta [options]          meta-vs-meta run (no collection)
 #   scripts/sim.sh status
 #
 # Options:
+#   --meta            meta-vs-meta: the collection is every species pvpoke
+#                     ranks for the cap (scripts/build-meta-collection.mjs,
+#                     rebuilt each launch, IVs = pvpoke defaults), evolutions
+#                     off (the rankings already list evolved forms), and BOTH
+#                     species pools widened to --meta-pool so each side can
+#                     field every relevant species
+#   --meta-pool N     with --meta: --pool N --opponent-meta-pool N (default 400:
+#                     pvpoke overall score >= ~78 at cp 1500; 0 = full field)
+#   --cp N            CP cap (default 1500); with --meta also picks the collection
 #   --name NAME       run name -> out/evolve-NAME/ (default: <csv-stem>-<HHMM>)
 #   --ban a,b         species banned format-wide, both sides  (default: none)
 #   --generations G   generation cap                          (default 100)
 #   --population N    GA population                           (default 300)
 #   --hours H         wall-clock budget -> --deadline-minutes (default: none)
-#   --threads N       worker threads (default: evolve.mjs's cpus-1)
+#   --threads N       worker threads (default: evolve.mjs's cpus-1, capped at 8)
 #   --fg              run in the foreground instead of detaching
 #   --dry-run         print the evolve.mjs command and exit
 #   --help            this text
@@ -23,6 +38,7 @@
 # Anything after `--` (or any flag not listed above) goes straight to
 # evolve.mjs. Defaults follow the established run recipe:
 #   --opponents-per-gen 120 --pool 70 --elites 12 --seed <name>
+# (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions)
 #
 # When a run finishes (evolve-DONE marker in its out dir), reports land in
 # out/evolve-<name>/my-teams-evolve.{md,html}; render the race chart with
@@ -32,7 +48,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
-usage() { sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 status() {
   shopt -s nullglob
@@ -59,6 +75,9 @@ status() {
 csv=""
 name=""
 ban=""
+meta=0
+metapool=400
+cp=1500
 generations=100
 population=300
 hours=""
@@ -69,6 +88,9 @@ passthrough=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h) usage; exit 0 ;;
+    --meta) meta=1; shift ;;
+    --meta-pool) metapool="$2"; shift 2 ;;
+    --cp) cp="$2"; shift 2 ;;
     --name) name="$2"; shift 2 ;;
     --ban) ban="$2"; shift 2 ;;
     --generations) generations="$2"; shift 2 ;;
@@ -84,13 +106,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ "$meta" = 1 ]; then
+  if [ -n "$csv" ]; then echo "error: --meta takes no collection (it builds its own)" >&2; exit 2; fi
+  csv="out/meta-collection-${cp}.csv"
+  [ -z "$name" ] && name="meta-vs-meta-${cp}-$(date +%H%M)"
+fi
 if [ -z "$csv" ]; then usage; exit 2; fi
-if [ ! -f "$csv" ]; then echo "error: collection not found: $csv" >&2; exit 2; fi
 
 if [ ! -d vendor/pvpoke ]; then
   echo "[sim] vendor/pvpoke missing -- running scripts/setup.sh"
   bash scripts/setup.sh
 fi
+if [ "$meta" = 1 ]; then
+  node scripts/build-meta-collection.mjs --cp "$cp" --out "$csv"
+fi
+if [ ! -f "$csv" ]; then echo "error: collection not found: $csv" >&2; exit 2; fi
 
 if [ -z "$name" ]; then
   name="$(basename "$csv" .csv | sed 's/-gl-collection//;s/-collection//')-$(date +%H%M)"
@@ -103,9 +133,15 @@ if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
   exit 2
 fi
 
+pool=70
 cmd=(node scripts/evolve.mjs "$csv"
   --population "$population" --opponents-per-gen 120 --generations "$generations"
-  --pool 70 --elites 12 --seed "$name" --out-dir "$outdir")
+  --cp "$cp" --elites 12 --seed "$name" --out-dir "$outdir")
+if [ "$meta" = 1 ]; then
+  pool="$metapool"
+  cmd+=(--opponent-meta-pool "$metapool" --no-evolutions)
+fi
+cmd+=(--pool "$pool")
 [ -n "$ban" ] && cmd+=(--ban "$ban")
 [ -n "$threads" ] && cmd+=(--threads "$threads")
 [ -n "$hours" ] && cmd+=(--deadline-minutes "$(awk "BEGIN{printf \"%d\", $hours*60}")")
@@ -115,6 +151,7 @@ echo "[sim] run:         $name"
 echo "[sim] collection:  $csv"
 echo "[sim] generations: $generations, population: $population"
 echo "[sim] banned:      ${ban:-none}"
+[ "$meta" = 1 ] && echo "[sim] meta-vs-meta: cp $cp, both species pools = ${metapool} (0 = full field)"
 budget="${hours:+${hours}h}"
 echo "[sim] budget:      ${budget:-none}"
 echo "[sim] command:     ${cmd[*]}"
@@ -126,7 +163,9 @@ if [ "$fg" = 1 ]; then
 else
   nohup "${cmd[@]}" > "$log" 2>&1 &
   echo $! > "$pidfile"
+  nohup bash "$repo/scripts/mem-watchdog.sh" "$(cat "$pidfile")" "$name" > /dev/null 2>&1 &
   echo "[sim] launched pid $(cat "$pidfile")"
   echo "[sim] monitor:  tail -f $log   (or: scripts/sim.sh status)"
+  echo "[sim] memory watchdog running: out/evolve-${name}.watchdog.log (SIGTERMs the run on sustained low memory)"
   echo "[sim] finished when $outdir/evolve-DONE exists; reports in $outdir/"
 fi

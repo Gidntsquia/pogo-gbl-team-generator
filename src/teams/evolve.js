@@ -93,6 +93,22 @@ export const DEFAULT_CONVERGENCE_TOP_N = 10;
 export const DEFAULT_CONVERGENCE_TRAILING = 10;
 export const DEFAULT_CONVERGENCE_MAX_CHURN = 0;
 export const DEFAULT_CONVERGENCE_MIN_LIFT_GAIN = 0.005;
+// SELECTION's own trailing window (trailingFitness), independent of
+// convergence's. 10 generations turned out too slow to react: at 35%/gen
+// opponent turnover a team's environment is meaningfully different 10
+// generations back, so averaging that far diluted a team that had genuinely
+// improved with stale early-window noise. 5, weighted toward the most recent
+// generations (DEFAULT_SELECTION_RECENCY_DECAY), still smooths the 3.9-point
+// single-generation swing the s2 post-mortem measured while reacting faster
+// to real drift (Jaxon 2026-09-05).
+export const DEFAULT_SELECTION_TRAILING = 5;
+// Exponential per-generation-back decay applied by trailingFitness: the
+// newest generation in the window weighs 1, the one before it
+// DEFAULT_SELECTION_RECENCY_DECAY, two back its square, etc. 0.6 halves a
+// generation's influence roughly every generation and a half -- old enough to
+// still smooth noise, recent enough that a team's current form dominates its
+// score.
+export const DEFAULT_SELECTION_RECENCY_DECAY = 0.6;
 
 // Sampling without replacement (mutant swap-ins, immigrant draws) can collide
 // with an already-used species-set signature, especially on a small pool;
@@ -581,6 +597,67 @@ function smoothedScores(history, end, trailing) {
   const scores = new Map();
   for (const [signature, sum] of sums) scores.set(signature, sum / counts.get(signature));
   return scores;
+}
+
+/**
+ * Recency-weighted analog of `smoothedScores` for SELECTION (trailingFitness)
+ * rather than convergence: each generation `age` steps back from `end`
+ * contributes `decay ** age` of weight instead of an equal 1, so the newest
+ * generation dominates a team's score and older ones fade out rather than
+ * counting the same as yesterday's draw.
+ */
+function recencyWeightedScores(history, end, trailing, decay) {
+  const start = Math.max(0, end - trailing + 1);
+  const sums = new Map();
+  const weights = new Map();
+  const alive = new Set(history[end].population.map(teamSignature));
+  for (let g = start; g <= end; g++) {
+    const weight = decay ** (end - g);
+    const { population, fitness } = history[g];
+    for (let i = 0; i < population.length; i++) {
+      const signature = teamSignature(population[i]);
+      if (!alive.has(signature)) continue;
+      sums.set(signature, (sums.get(signature) ?? 0) + fitness[i] * weight);
+      weights.set(signature, (weights.get(signature) ?? 0) + weight);
+    }
+  }
+  const scores = new Map();
+  for (const [signature, sum] of sums) scores.set(signature, sum / weights.get(signature));
+  return scores;
+}
+
+/**
+ * Per-individual trailing fitness for the NEWEST generation in `history`: for
+ * each team in `history[last].population`, a recency-weighted mean of its
+ * fitness over the last `trailing` generations it appeared in (matched by
+ * `teamSignature`, so a team keeps its history as its index moves) -- the
+ * generation `age` steps back from the newest contributes `decay ** age` of
+ * the weight, so the newest draw dominates and older ones fade rather than
+ * counting equally. A team seen once is scored on that one sample; `trailing:
+ * 1` returns the newest generation's raw fitness unchanged regardless of
+ * `decay`.
+ *
+ * Selection's own window (DEFAULT_SELECTION_TRAILING/DEFAULT_SELECTION_
+ * RECENCY_DECAY), separate from convergence's `smoothedScores` (Jaxon
+ * 2026-09-05, tuned down from an initial equal-weighted 10-generation window
+ * that reacted too slowly to real drift). Measured on the shared-s2-gen-1
+ * run, a team's win rate moved 3.9 points generation to generation while
+ * long-lived teams' true means were only 2.2 points apart, so a cull on one
+ * generation's number was mostly culling on noise: three teams averaging 51%
+ * over 19-24 generations died to one bad draw while the final top-15 held
+ * teams with 1-4 observations.
+ *
+ * @param {Array<{population: string[][], fitness: number[]}>} history
+ *   Ordered oldest-to-newest; the newest entry is the one scored.
+ * @param {number} [trailing] - generations in the window (default DEFAULT_SELECTION_TRAILING).
+ * @param {number} [decay] - per-generation-back weight decay (default DEFAULT_SELECTION_RECENCY_DECAY).
+ * @returns {number[]} parallel to `history[last].population`.
+ */
+export function trailingFitness(history, trailing = DEFAULT_SELECTION_TRAILING, decay = DEFAULT_SELECTION_RECENCY_DECAY) {
+  if (!Array.isArray(history) || history.length === 0) return [];
+  const end = history.length - 1;
+  const scores = recencyWeightedScores(history, end, Math.max(1, trailing), decay);
+  return history[end].population.map((team, i) => scores.get(teamSignature(team)) ?? history[end].fitness[i]);
 }
 
 /**
