@@ -38,6 +38,9 @@ import {
   mutationRatesAt,
   opponentMutationRatesAt,
   renderEvolveReportHtml,
+  computeBlendFitness,
+  computeConsistencyScore,
+  computeCandidateWeights,
 } from '../scripts/evolve.mjs';
 
 /** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
@@ -848,6 +851,92 @@ test('configsMatch ignores eliteCount (a finished run re-renders with --elites N
   assert.ok(configsMatch(base, { seed: 's', population: 400, curatedRatio: 0 })); // older checkpoint without the key
   assert.ok(!configsMatch(base, { ...base, population: 300 }));
   assert.ok(!configsMatch(base, { ...base, selectionTrailing: 5 })); // a selection change IS a different run
+});
+
+test('computeBlendFitness folds in consistencyScore under the new weight key, falls back to winRate when omitted', () => {
+  const parts = { winRate: 0.6, snowballScore: 0.5, closerScore: 0.4, consistencyScore: 0.2 };
+  const withConsistency = computeBlendFitness(parts);
+  const expected = 0.45 * 0.6 + 0.2 * 0.2 + 0.25 * 0.5 + 0.1 * 0.4;
+  assert.ok(Math.abs(withConsistency - expected) < 1e-9);
+
+  // Omitting consistencyScore falls back to winRate for that term.
+  const { consistencyScore, ...withoutConsistency } = parts;
+  const fallback = computeBlendFitness(withoutConsistency);
+  const expectedFallback = 0.45 * 0.6 + 0.2 * 0.6 + 0.25 * 0.5 + 0.1 * 0.4;
+  assert.ok(Math.abs(fallback - expectedFallback) < 1e-9);
+});
+
+test('computeConsistencyScore: 25th percentile of per-archetype mean win rate, with a <4-archetype fallback to winRate', () => {
+  // 5 archetypes, mean win rates [0.9, 0.8, 0.7, 0.3, 0.2] once sorted asc: [0.2,0.3,0.7,0.8,0.9]
+  const perMeta = [
+    { winRate: 0.9, archetypeGroup: 0 },
+    { winRate: 0.8, archetypeGroup: 1 },
+    { winRate: 0.7, archetypeGroup: 2 },
+    { winRate: 0.3, archetypeGroup: 3 },
+    { winRate: 0.2, archetypeGroup: 4 },
+  ];
+  const { consistencyScore, archetypeWinRates } = computeConsistencyScore(perMeta, 0.5);
+  assert.equal(archetypeWinRates.length, 5);
+  // p25 over 5 sorted values [0.2,0.3,0.7,0.8,0.9]: idx = 0.25*4 = 1 -> exactly the 2nd value.
+  assert.ok(Math.abs(consistencyScore - 0.3) < 1e-9);
+
+  // Fewer than 4 archetypes -> falls back to the passed-in winRate.
+  const tooFew = computeConsistencyScore(perMeta.slice(0, 2), 0.55);
+  assert.equal(tooFew.consistencyScore, 0.55);
+
+  // Deterministic on ties (repeated call, same input).
+  const again = computeConsistencyScore(perMeta, 0.5);
+  assert.equal(again.consistencyScore, consistencyScore);
+});
+
+function candidateWeightsMatrix(pairs) {
+  // pairs: [[key, speciesId], ...]
+  const builtMons = {};
+  for (const [key, speciesId] of pairs) builtMons[key] = { speciesId };
+  return { builtMons };
+}
+
+test('computeCandidateWeights: inverse of a team\'s most-common member\'s population share, clamped and normalised to sum to n', () => {
+  // Population of 4 teams; species 'majority' appears in 3/4 teams (share 0.75), 'rare' in 1/4 (0.25).
+  const matrix = candidateWeightsMatrix([
+    ['a1', 'majority'], ['a2', 'x'], ['a3', 'y'],
+    ['b1', 'majority'], ['b2', 'z'], ['b3', 'w'],
+    ['c1', 'majority'], ['c2', 'p'], ['c3', 'q'],
+    ['d1', 'rare'], ['d2', 'x'], ['d3', 'y'],
+  ]);
+  const population = [
+    ['a1', 'a2', 'a3'],
+    ['b1', 'b2', 'b3'],
+    ['c1', 'c2', 'c3'],
+    ['d1', 'd2', 'd3'],
+  ];
+  const shareBySpecies = new Map([
+    ['majority', 0.75],
+    ['rare', 0.25],
+    ['x', 0.5],
+    ['y', 0.5],
+    ['z', 0.25],
+    ['w', 0.25],
+    ['p', 0.25],
+    ['q', 0.25],
+  ]);
+  const weights = computeCandidateWeights(matrix, population, shareBySpecies);
+  assert.equal(weights.length, 4);
+  // Teams a/b/c share the same max-share member (majority, 0.75) -> equal weight.
+  assert.ok(Math.abs(weights[0] - weights[1]) < 1e-9);
+  assert.ok(Math.abs(weights[1] - weights[2]) < 1e-9);
+  // Team d's most-common-member share (max of rare=0.25, x=0.5, y=0.5) is 0.5, still lower than 0.75 -> higher weight.
+  assert.ok(weights[3] > weights[0]);
+  const total = weights.reduce((s, w) => s + w, 0);
+  assert.ok(Math.abs(total - population.length) < 1e-9);
+
+  // Clamping: an extreme (near-zero) share is capped at weight 5.
+  const extreme = computeCandidateWeights(
+    candidateWeightsMatrix([['e1', 's']]),
+    [['e1']],
+    new Map([['s', 0.0001]])
+  );
+  assert.ok(extreme[0] <= 5 + 1e-9);
 });
 
 test('renderEvolveReportHtml: held-out final-pass shape (archive + fresh strata, selectionFitness) renders the strata line with no undefined/NaN', () => {

@@ -48,7 +48,7 @@ const WEAK_IDS = ['magikarp', 'sunkern', 'feebas'];
 // the sampling noise of real pvpoke outcomes.
 const CONV_CANDIDATES = [
   ['azumarill', 'registeel', 'altaria'], ['medicham', 'bastiodon', 'swampert'],
-  ['skarmory', 'umbreon', 'whiscash'], ['lanturn', 'venusaur', 'galvantula'],
+  ['skarmory', 'umbreon', 'whiscash'], ['lanturn', 'venusaur', 'quagsire'],
   ['toxapex', 'trevenant', 'sableye'], ['carbink', 'azumarill', 'medicham'],
   ['registeel', 'swampert', 'venusaur'], ['altaria', 'whiscash', 'skarmory'],
   ['bastiodon', 'umbreon', 'lanturn'], ['galvantula', 'sableye', 'carbink'],
@@ -422,7 +422,7 @@ describe('runBattles is bit-identical to a serial battleTeams loop', () => {
   // boundary the worker would silently rebuild the mon with pvpoke's
   // RECOMMENDED set and fight a different opponent than the serial path.
   test('a curated member\'s explicit moveset survives the worker rebuild', async () => {
-    const community = loadCommunityTeams(ctx);
+    const community = loadCommunityTeams(ctx, { communityFile: 'data/archive/meta-teams-community-s27.json' });
     const withOverride = community.find((t) => t.members.some((m) => m.spec.fastMove));
     assert.ok(withOverride, 'the pinned community file has a member with an explicit moveset');
     const opponent = community.find((t) => t.id !== withOverride.id);

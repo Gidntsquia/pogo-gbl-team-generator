@@ -1,14 +1,22 @@
 // JavaScript Document
 //
 // Per-species meta usage weights, powering the weighted samplers in
-// src/meta/sampleTeams.js and src/teams/sample.js. Usage weight =
-// normalized (score/100)^gamma, where score is
+// src/meta/sampleTeams.js and src/teams/sample.js. Usage weight is
+// Zipf-style over RANK POSITION (not raw score): a species is ranked by
 // pvpoke's own 0-100 ranking score for ctx.cp (vendored
 // vendor/pvpoke/src/data/rankings/all/overall/rankings-<cp>.json, cp from
-// ctx.cp; Great League/1500 by default), optionally overridden
-// by a committed freshness snapshot (data/meta-usage.json, written by
-// scripts/refresh-usage.mjs). No battle math here -- this is pure arithmetic
-// over pvpoke's own published ranking scores.
+// ctx.cp; Great League/1500 by default), sorted descending (ties broken by
+// speciesId), optionally overridden by a committed freshness snapshot
+// (data/meta-usage.json, written by scripts/refresh-usage.mjs). No battle
+// math here -- this is pure arithmetic over pvpoke's own published ranking
+// scores.
+//
+// Rank-position weighting replaced a raw-score power law (score/100)^gamma
+// in Sep 2026: over a wide field (e.g. top 400) pvpoke scores run a shallow
+// 92->78, so a power law leaves the draw nearly flat -- rank #1 barely
+// outdrew rank #400. Weighting by RANK instead of score reliably produces a
+// "meaningfully likelier" top of the list regardless of how bunched the
+// underlying scores are.
 //
 // The meta GROUP file follows ctx.cp via src/util/leagues.js
 // (groups/great.json at 1500, groups/ultra.json at 2500), same as the
@@ -23,15 +31,17 @@ import { DEFAULT_CP, leagueForCp } from '../util/leagues.js';
 // "out/report.md" convention (both assume the CLI/tests run from repo root).
 const DEFAULT_SNAPSHOT_PATH = 'data/meta-usage.json';
 
-// score/100 raised to this power. >1 spreads top-tier mons further above
-// fringe ones (score ~90 vs ~50 -> weight ratio ~(0.9/0.5)^2.5 =~ 6.2x)
-// without going winner-take-all (a linear score/100 base would still leave a
-// ~50-scored mon at more than half a 90-scored mon's weight, too flat for
-// "meaningfully likelier"; a much higher gamma starts zeroing out everything
-// below the top handful, which defeats the point of sampling from a WIDE
-// pool). 2.5 was picked as a middle ground -- documented here since it's the
-// one tunable a future fire might want to revisit.
-const DEFAULT_GAMMA = 2.5;
+// Zipf-style weight over 1-based rank position r:
+//   weight(r) ∝ 1 / (r + k)^alpha
+// alpha=1, k=5 sanity numbers over a 400-species pool (normaliser is
+// H(400+k) - H(k) ~= 4.30 for k=5): rank 1 ~= 3.9% of draws, rank 10 ~= 1.6%,
+// rank 50 ~= 0.42%, rank 100 ~= 0.22%, rank 400 ~= 0.06%. Top 20 ~= 36% of
+// draws, top 100 ~= 69%. k damps the curve near rank 1 (without it, rank 1
+// would draw a full alpha-th of the total weight budget on its own); alpha
+// controls how fast weight decays with rank. Both are the tunables a future
+// fire might want to revisit.
+const DEFAULT_RANK_ALPHA = 1.0;
+const DEFAULT_RANK_OFFSET = 5;
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));
@@ -159,17 +169,21 @@ function loadScoreBySpecies(ctx, opts) {
  * curated training teams (see collectSpeciesUniverse for why the universe
  * isn't restricted to just those two, narrower, pools).
  *
- * weight(species) ∝ (score/100)^gamma, where score is pvpoke's own 0-100
- * ranking score for ctx's CP cap. Weights are normalized to sum to 1 (a
- * probability distribution the samplers can draw from directly).
- * A species with no resolvable score (absent from both the snapshot/vendored
- * rankings) is left out of the returned map entirely rather than assigned a
- * zero weight, so callers can tell "no data" apart from "legitimately weak".
+ * weight(species at rank r, 1-based, sorted by score descending, ties
+ * broken by speciesId) ∝ 1 / (r + rankOffset)^rankAlpha. Weights are
+ * normalized to sum to 1 (a probability distribution the samplers can draw
+ * from directly). A species with no resolvable score (absent from both the
+ * snapshot/vendored rankings) is left out of the returned map entirely
+ * rather than assigned a zero weight, so callers can tell "no data" apart
+ * from "legitimately weak". A species that has a score but sits outside the
+ * top-N of a truncated rankings source still gets a rank (its position in
+ * the full scored field), so nothing that previously had a weight loses it.
  *
  * @param {object} ctx - from initEngine (src/engine/harness.js); only
  *   ctx.vendorRoot is used (no battles, no gamemaster lookups).
  * @param {{
- *   gamma?: number,
+ *   rankAlpha?: number,
+ *   rankOffset?: number,
  *   groupFile?: string,
  *   groupEntries?: Array<{speciesId: string}>,
  *   trainingFile?: string,
@@ -188,16 +202,20 @@ function loadScoreBySpecies(ctx, opts) {
  * @returns {Map<string, number>} speciesId -> normalized positive weight.
  */
 export function loadUsageWeights(ctx, opts = {}) {
-  const gamma = opts.gamma ?? DEFAULT_GAMMA;
+  const rankAlpha = opts.rankAlpha ?? DEFAULT_RANK_ALPHA;
+  const rankOffset = opts.rankOffset ?? DEFAULT_RANK_OFFSET;
   const scoreBySpecies = loadScoreBySpecies(ctx, opts);
   const speciesUniverse = collectSpeciesUniverse(ctx, opts, scoreBySpecies);
 
+  const scored = [...speciesUniverse]
+    .filter((id) => typeof scoreBySpecies.get(id) === 'number')
+    .sort((a, b) => scoreBySpecies.get(b) - scoreBySpecies.get(a) || (a < b ? -1 : a > b ? 1 : 0));
+
   const raw = new Map();
-  for (const speciesId of speciesUniverse) {
-    const score = scoreBySpecies.get(speciesId);
-    if (typeof score !== 'number') continue;
-    raw.set(speciesId, Math.pow(Math.max(score, 0) / 100, gamma));
-  }
+  scored.forEach((speciesId, i) => {
+    const rank = i + 1;
+    raw.set(speciesId, 1 / Math.pow(rank + rankOffset, rankAlpha));
+  });
 
   const total = [...raw.values()].reduce((sum, w) => sum + w, 0);
   const weights = new Map();

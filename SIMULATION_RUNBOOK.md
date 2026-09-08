@@ -21,7 +21,7 @@ Everything else in this file supports the second row.
 cd /home/jaxon/files/pogo-gbl-team-generator
 test "$(git branch --show-current)" = "codex/twilight-trails-preview"
 bash scripts/setup.sh          # materializes/repairs vendor/pvpoke (gitignored) at the pin
-test "$(git -C vendor/pvpoke rev-parse HEAD)" = "712d3bdbd2061e4c4ab9941c6ab53a58c5cbac92"
+test "$(git -C vendor/pvpoke rev-parse HEAD)" = "cc89274c1589574114cb3ba79c7fb24fb25b0468"
 ```
 
 `setup.sh` is idempotent and fixes an existing checkout to the pin.
@@ -40,9 +40,9 @@ Expected: `BODY_SLAM 65 40 0`, `BUBBLE_BEAM 50 50 0`, `INFESTATION 10 0 12`.
 Requirements: Node 18+, `jq` for the check above. Machine: 8 cores / 16
 threads, 8 GB RAM. Every recent run used `--threads 8`; `--threads 12` measured
 fastest in isolation; the raw `cpus-1` count (15) is slower and OOM'd the VM
-twice on bare `evolve.mjs` invocations of the new-season, all-generated-
-opponents recipe (each worker boots its own pvpoke engine context, so more
-threads costs memory as well as CPU). `defaultThreadCount()` in
+twice on bare `evolve.mjs` invocations of the all-generated-opponents recipe
+(each worker boots its own pvpoke engine context, so more threads costs
+memory as well as CPU). `defaultThreadCount()` in
 `src/engine/parallel.js` now caps the automatic default at 8 for this reason,
 so an omitted `--threads` is safe -- but keep passing `--threads 8` explicitly
 anyway per "Why `--threads 8`" in section 3, since it is also the measured-
@@ -132,11 +132,13 @@ do not add it unless the user asks.) Scale rule for a shorter
 budget: keep the grid `population × opponents` proportional to the hours
 (36k pairings ≈ 8 h at 100 generations, 72k ≈ 24 h at 130).
 
-### All-generated opponents with co-evolution (new-season recipe, 2026-09-04)
+### All-generated opponents with co-evolution (2026-09-04)
 
-When the curated/community teams are from an old season, drop them entirely and
-let the opponent side evolve as hard as the candidate side. `--curated-ratio 0`
-removes curated teams from every generation AND from the final pass. The
+Optional recipe for when there's no curated/community team file to draw on
+(e.g. before `data/meta-teams-community.json` has been repopulated for a new
+season). Drop curated teams entirely and let the opponent side evolve as hard
+as the candidate side. `--curated-ratio 0` removes curated teams from every
+generation AND from the final pass. The
 opponent GA normally culls only 15% and mutates at 2-20%; mutants can only fill
 seats the cull opens, so raise the cull together with the rates. All four
 `--opponent-mutation-*` flags mirror the candidate flags, including the linear
@@ -478,10 +480,12 @@ Resolved settings for `scripts/sim.sh <csv> --name NAME --threads 12`:
 | Opponents per generation | 120 at gen 0, growing to 300 at gen 99 (`round(36000 / population)`) |
 | Battles per generation | ≈36,000 (one per candidate/opponent pair, both at designated leads) |
 | Candidate species pool | top 70 of the collection by 1v1 score (meta size 20) |
-| Candidate draw weight | 50% normalized 1v1 score + 50% normalized pvpoke usage, usage = `(score/100)^2.5` |
+| Candidate draw weight | 50% normalized 1v1 score + 50% normalized pvpoke usage, usage = rank-position Zipf weight `1/(rank+5)^1.0` (as of 2026-09-08; replaced a raw-score power law that went nearly flat over a wide field) |
 | Curated opponent target | 66% of the pool, capped by the curated teams available; curated teams are never culled or mutated |
 | Composed opponents | built from pvpoke's overall top 100 species |
-| Fitness | `battle-reality` = 0.60 win rate + 0.30 decided lead-exchange win rate + 0.10 mean closer prior of the back line |
+| Opponent archetype grouping | opponents sharing ≥2 of 3 base species are grouped (`--archetype-beta`, default 0.5); a group of size s counts for `s^(1-beta)` total votes, both as candidate-side opponent weight and as the divisor of each candidate's consistency score (since 2026-09-08, see `docs/plans/2026-09-08-fitness-restructure.md`) |
+| Opponent fitness | frequency-normalised by default (`--no-opponent-fitness-normalised` to disable): each candidate's contribution to an opponent's win-rate ledger is weighted down by its most-common member's population share (clamped [0.2, 5]), so a crowded counter-bred core no longer collects N× the credit for beating it |
+| Fitness | `battle-reality` = 0.45 win rate + 0.20 consistency (25th-percentile per-archetype win rate) + 0.25 decided lead-exchange win rate + 0.10 mean closer prior of the back line |
 | Selection statistic | each team's recency-weighted mean fitness over its last 5 generations (`--selection-trailing`, its own window separate from convergence's); the cull, the mutation ranking and the finalist pick all use it, never a single generation's draw (since 2026-09-05; the s2 run showed one draw moves 3.9 points while real teams sit 2.2 apart) |
 | Candidate cull | `round(1/3 × next size)` replaced per generation, plus shrink |
 | Mutation chance | 5% (worst survivor) to 40% (best), linear by fitness percentile; 30% lead rotation / 70% one-member swap |

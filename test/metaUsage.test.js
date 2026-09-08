@@ -67,13 +67,21 @@ test('a species absent from the score source is left out of the map entirely', (
   assert.ok(!weights.has('unscored'));
 });
 
-test('gamma spreads high-score mons further above low-score ones (not winner-take-all)', () => {
+test('rank weighting: ratio between adjacent ranks matches ((r2+k)/(r1+k))^alpha', () => {
+  // Source scores: alpha 90 (rank 1) > delta 70 (rank 2) > beta 50 (rank 3) > gamma 10 (rank 4).
+  const weights = loadUsageWeights(ctx, FAKE_UNIVERSE_OPTS);
+  const expectedRatio = Math.pow((2 + 5) / (1 + 5), 1.0); // rank1 vs rank2, default alpha=1, k=5
+  const actualRatio = weights.get('alpha') / weights.get('delta');
+  assert.ok(Math.abs(actualRatio - expectedRatio) < 1e-9, `expected ratio ${expectedRatio}, got ${actualRatio}`);
+});
+
+test('rankAlpha widens the top/bottom weight ratio (higher alpha = more top-heavy)', () => {
   const opts = FAKE_UNIVERSE_OPTS;
-  const lowGamma = loadUsageWeights(ctx, { ...opts, gamma: 1 });
-  const highGamma = loadUsageWeights(ctx, { ...opts, gamma: 5 });
-  const ratioLow = lowGamma.get('alpha') / lowGamma.get('gamma');
-  const ratioHigh = highGamma.get('alpha') / highGamma.get('gamma');
-  assert.ok(ratioHigh > ratioLow, 'a higher gamma should widen the top/bottom weight ratio');
+  const lowAlpha = loadUsageWeights(ctx, { ...opts, rankAlpha: 0.5 });
+  const highAlpha = loadUsageWeights(ctx, { ...opts, rankAlpha: 3 });
+  const ratioLow = lowAlpha.get('alpha') / lowAlpha.get('gamma');
+  const ratioHigh = highAlpha.get('alpha') / highAlpha.get('gamma');
+  assert.ok(ratioHigh > ratioLow, 'a higher rankAlpha should widen the top/bottom weight ratio');
 });
 
 test('Aug 2026 meta anchors resolve via the gamemaster and sit above the median weight', () => {

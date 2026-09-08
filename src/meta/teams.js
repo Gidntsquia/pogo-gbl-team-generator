@@ -30,13 +30,20 @@ function defaultTeamsFile(ctx) {
 // not pvpoke's). Path is relative to the process cwd, mirroring
 // src/meta/usage.js's `data/meta-usage.json` snapshot convention (both assume
 // the CLI/tests run from repo root).
+//
+// The Season 27 pool was archived to data/archive/meta-teams-community-s27.json
+// once the season ended (stale team recommendations, not a live meta) --
+// loadCommunityTeams gracefully returns [] when this path is absent, so the
+// curated pool currently falls back to pvpoke's own vendor presets only.
+// Repopulate this file with the new season's teams to bring the community
+// tier back.
 const DEFAULT_COMMUNITY_FILE = 'data/meta-teams-community.json';
 
 // That file is Great-League-only by construction (every
-// team in it was recommended for GBL Season 27 Great League play), so it is
-// NOT part of the curated pool at any other CP cap -- an Ultra League run
-// would otherwise face GL archetypes re-built at 2500 CP, which is not a
-// meaningful UL meta. A caller can still force it in with
+// team in it was recommended for Great League play in the season it was
+// collected), so it is NOT part of the curated pool at any other CP cap -- an
+// Ultra League run would otherwise face GL archetypes re-built at 2500 CP,
+// which is not a meaningful UL meta. A caller can still force it in with
 // `includeCommunity: true`.
 const COMMUNITY_FILE_CP = 1500;
 

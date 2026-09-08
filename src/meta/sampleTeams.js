@@ -15,8 +15,9 @@
 //
 // META-CAPPED POOL (Jaxon 2026-08-26): the sampled half used to draw from the
 // FULL rankings field (1,144 species at cp 1500). Weighting alone does not
-// make that field "meta": at src/meta/usage.js's gamma of 2.5 the top 50
-// species hold only ~7.3% of the total sampling weight, so the long tail
+// make that field "meta": at src/meta/usage.js's prior raw-score power law
+// (gamma 2.5) the top 50 species held only ~7.3% of the total sampling
+// weight, so the long tail
 // collectively dominates every draw and a typical sampled opponent was three
 // fringe picks around rank ~450 (score ~77). Candidate teams then overfit to
 // the curated half, because the curated half was the only part of the

@@ -62,8 +62,10 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   sampler), `evolve.js` (GA core).
 - `meta/` — the opponent side: `teams.js` (curated pvpoke presets +
   `data/meta-teams-community.json`, tier weights), `sampleTeams.js` (weighted
-  opponent sampler), `usage.js` (per-species usage weights), `roles.js`
-  (lead/closer/switch priors), `opponentPool.js` (opponent-side GA).
+  opponent sampler), `usage.js` (per-species usage weights, rank-position
+  weighted), `roles.js` (lead/closer/switch priors), `opponentPool.js`
+  (opponent-side GA), `archetypes.js` (groups opponents sharing >=2 base
+  species so a crowded bred core doesn't out-vote a lone one in fitness math).
 - `evolution/` — expands a collection so each mon also competes as its
   possible evolutions (default on; `--no-evolutions`).
 - `cost/` — `powerup.js` (Stardust/Candy build cost, pure arithmetic) +
@@ -77,8 +79,10 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 - `vendor/pvpoke` — pinned sparse clone, absent until `scripts/setup.sh`;
   read-only (see rules above).
 - `data/` — our own data: `meta-teams-community.json` (curated GL teams,
-  `members[0]` = lead), optional `meta-usage.json`/`meta-roles.json`
-  freshness snapshots (loaders fall back to vendored rankings when absent).
+  `members[0]` = lead; absent between seasons -- past seasons' pools live in
+  `data/archive/`, loader falls back to vendor presets only until repopulated),
+  optional `meta-usage.json`/`meta-roles.json` freshness snapshots (loaders
+  fall back to vendored rankings when absent).
 - `fixtures/` — sample collections for tests.
 - Repo root may hold the user's real collection CSVs (`jaxon-gbl-collection.csv`,
   `jet_GL_collection.csv`, `jaxon-ultra-league.csv`, `shared-gbl-collection.csv`) — gitignored, personal

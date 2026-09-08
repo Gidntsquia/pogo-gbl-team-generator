@@ -5,7 +5,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash .claude/hooks/full-suite-guard.sh" }
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/full-suite-guard.sh\"" }
         ]
       }
     ]

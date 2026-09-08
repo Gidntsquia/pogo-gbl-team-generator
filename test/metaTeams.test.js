@@ -16,7 +16,7 @@ import { battleTeams } from '../src/engine/teamBattle.js';
 import { loadMetaTeams, loadCommunityTeams, CURATED_TIER_WEIGHTS, curatedTierWeight } from '../src/meta/teams.js';
 
 const ctx = await initEngine();
-const COMMUNITY_FILE = 'data/meta-teams-community.json';
+const COMMUNITY_FILE = 'data/archive/meta-teams-community-s27.json';
 const communityRaw = JSON.parse(readFileSync(COMMUNITY_FILE, 'utf8'));
 
 test('loads the curated Great League meta teams (>=8, all 3v3)', () => {
@@ -104,7 +104,7 @@ test('community file loads and its teams resolve fully battle-ready (>=119 of 12
   // 2026-08-29). 107 + 15 = 122.
   assert.equal(communityRaw.teams.length, 122, 'source file has 122 entries under the pinned data (57, plus 30 Jaxon ladder + 2 PvPoke top-performer + 33 high-ladder teams)');
 
-  const teams = loadCommunityTeams(ctx);
+  const teams = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
   assert.ok(
     teams.length >= 119,
     `expected >=119/122 community teams to resolve (the JP ids that used to fail here, e.g. arctibax, went out with the JP-cup teams), got ${teams.length}`
@@ -124,7 +124,7 @@ test('community file loads and its teams resolve fully battle-ready (>=119 of 12
 });
 
 test('off-meta tier is carried through from the source file', () => {
-  const teams = loadCommunityTeams(ctx);
+  const teams = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
   const offMeta = teams.filter((t) => t.tier === 'off-meta');
   const meta = teams.filter((t) => t.tier === 'meta');
   assert.ok(offMeta.length > 0, 'at least one off-meta community team should resolve');
@@ -132,8 +132,8 @@ test('off-meta tier is carried through from the source file', () => {
 });
 
 test('community team ids are stable across reloads', () => {
-  const a = loadCommunityTeams(ctx);
-  const b = loadCommunityTeams(ctx);
+  const a = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
+  const b = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
   assert.deepEqual(
     a.map((t) => t.id),
     b.map((t) => t.id)
@@ -179,7 +179,7 @@ test('a bogus speciesId in a temp-file copy drops that team with a warning, not 
 });
 
 test('loadMetaTeams merges vendor presets with community teams, lightest tier ordered last', () => {
-  const merged = loadMetaTeams(ctx);
+  const merged = loadMetaTeams(ctx, { communityFile: COMMUNITY_FILE });
   const vendorOnly = loadMetaTeams(ctx, { includeCommunity: false });
   assert.ok(merged.length > vendorOnly.length, 'merged pool is bigger than vendor-only');
 
@@ -219,7 +219,7 @@ test('a small limit on loadMetaTeams stays within the vendor pool (documented of
 // "members[0] is the established lead" doctrine.
 
 test('every community team is stamped leadIndex: 0 (declared-lead doctrine)', () => {
-  const teams = loadCommunityTeams(ctx);
+  const teams = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
   assert.ok(teams.length > 0);
   for (const team of teams) {
     assert.equal(team.leadIndex, 0, `${team.id} should carry leadIndex: 0`);
@@ -237,7 +237,7 @@ const JAXON_BATCHES = [
 ];
 
 test('every Jaxon-supplied batch resolves fully battle-ready at full weight', () => {
-  const teams = loadCommunityTeams(ctx);
+  const teams = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
   for (const [prefix, expected] of JAXON_BATCHES) {
     const batch = teams.filter((t) => t.id.startsWith(`community:${prefix}`));
     assert.equal(batch.length, expected, `expected all ${expected} ${prefix}* teams to resolve, got ${batch.length}`);
@@ -250,7 +250,7 @@ test('every Jaxon-supplied batch resolves fully battle-ready at full weight', ()
 });
 
 test('a jaxon-ladder team and a legacy community team both battle with members[0] as lead', () => {
-  const teams = loadCommunityTeams(ctx);
+  const teams = loadCommunityTeams(ctx, { communityFile: COMMUNITY_FILE });
   const ladderTeam = teams.find((t) => t.id === 'community:jaxon-ladder-1');
   const legacyTeam = teams.find((t) => t.id === 'community:omarchm10');
   assert.ok(ladderTeam, 'jaxon-ladder-1 should resolve');
