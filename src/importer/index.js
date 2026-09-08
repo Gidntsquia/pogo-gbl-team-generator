@@ -6,12 +6,16 @@
  * No level/CP math happens here -- IVs, level, and CP are passed through
  * exactly as the source CSV states them (or omitted if the CSV doesn't
  * state them); the engine packet (src/engine) is responsible for leveling
- * each mon to its best CP-capped configuration.
+ * each mon to its best CP-capped configuration. The one thing filled in: a
+ * generic-format row with all three IV cells blank gets pvpoke's default
+ * spread for the import's CP cap (gamemaster `defaultIVs`: best stat product
+ * at an IV floor of 4 -- the engine levels for the IVs it is given and never
+ * optimizes them, so blank IVs must be resolved here).
  */
 
 import { readFileSync } from 'node:fs';
 import { parseCsv } from './csv.js';
-import { createSpeciesResolver } from './gamemaster.js';
+import { createSpeciesResolver, createDefaultIvResolver } from './gamemaster.js';
 import { createMoveResolver } from './moves.js';
 import { parseNumber, parseBoolFlag, parseShadowPurified } from './util.js';
 
@@ -28,6 +32,10 @@ import { parseNumber, parseBoolFlag, parseShadowPurified } from './util.js';
  * @property {{ atk: number, def: number, hp: number }} ivs - 0-15 IVs.
  *   `hp` is the Stamina IV (pvpoke/gamemaster's naming for the third
  *   stat), NOT a derived HP value.
+ * @property {boolean} [ivsDefaulted] - true when the CSV row (generic format
+ *   only) left all three IV cells blank and `ivs` is pvpoke's default spread
+ *   for the import's CP cap (gamemaster `defaultIVs`) instead of a real
+ *   specimen's.
  * @property {number} [cp] - CP as stated by the source CSV, if present.
  * @property {number} [level] - trainer level as stated by the source CSV,
  *   if it states a single unambiguous value.
@@ -88,8 +96,12 @@ function cell(row, headerIndex, ...names) {
   return undefined;
 }
 
+function isBlank(value) {
+  return String(value ?? '').trim() === '';
+}
+
 function isBlankRow(row) {
-  return row.every((c) => String(c ?? '').trim() === '');
+  return row.every(isBlank);
 }
 
 // ---------------------------------------------------------------- format --
@@ -159,7 +171,7 @@ function resolveRowMoves({ speciesId, shadow, fastMoveName, chargedMoveNames, la
  * @returns {NormalizedMon|null} null if the row was unusable (pushes a
  *   warning explaining why).
  */
-function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves) {
+function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves, _ctx) {
   const name = String(cell(row, headerIndex, 'name') ?? '').trim();
   const form = String(cell(row, headerIndex, 'form') ?? '').trim();
   const gender = String(cell(row, headerIndex, 'gender') ?? '').trim();
@@ -231,7 +243,7 @@ function mapPokeGenieRow(row, headerIndex, rowNumber, resolveSpecies, warnings, 
 /**
  * @returns {NormalizedMon|null}
  */
-function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves) {
+function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves, { resolveDefaultIvs, cp }) {
   const name = String(cell(row, headerIndex, 'name') ?? '').trim();
   if (!name) {
     warnings.push(`Row ${rowNumber}: missing name -- skipped`);
@@ -244,17 +256,37 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, re
     return null;
   }
 
-  const atk = parseNumber(cell(row, headerIndex, 'atk'));
-  const def = parseNumber(cell(row, headerIndex, 'def'));
+  const shadow = parseBoolFlag(cell(row, headerIndex, 'shadow'));
+
+  const rawAtk = cell(row, headerIndex, 'atk');
+  const rawDef = cell(row, headerIndex, 'def');
   // No competing "derived HP" column exists in this format, so a bare
   // "hp"/"stamina" header is an unambiguous alias for the Stamina IV.
-  const hp = parseNumber(cell(row, headerIndex, 'sta', 'stamina', 'hp'));
-  if (atk === undefined || def === undefined || hp === undefined) {
-    warnings.push(`Row ${rowNumber}: missing/invalid IVs for "${name}" -- skipped`);
-    return null;
+  const rawHp = cell(row, headerIndex, 'sta', 'stamina', 'hp');
+  let ivs;
+  let ivsDefaulted = false;
+  if (isBlank(rawAtk) && isBlank(rawDef) && isBlank(rawHp)) {
+    // All three left empty: the row states no specimen, so give it pvpoke's
+    // default spread for this cap -- the same build the opponent side gets
+    // (see createDefaultIvResolver). A partially-filled row is
+    // still an error below: that's a typo, not an omission.
+    ivs = resolveDefaultIvs(resolved.speciesId, { shadow, cp });
+    if (!ivs) {
+      warnings.push(`Row ${rowNumber}: no IVs and no gamemaster cp${cp} default for "${name}" -- skipped`);
+      return null;
+    }
+    ivsDefaulted = true;
+  } else {
+    const atk = parseNumber(rawAtk);
+    const def = parseNumber(rawDef);
+    const hp = parseNumber(rawHp);
+    if (atk === undefined || def === undefined || hp === undefined) {
+      warnings.push(`Row ${rowNumber}: missing/invalid IVs for "${name}" -- skipped`);
+      return null;
+    }
+    ivs = { atk, def, hp };
   }
 
-  const shadow = parseBoolFlag(cell(row, headerIndex, 'shadow'));
   // Not in the documented generic column list either -- recognized
   // opportunistically like purified/bestBuddy below, mirroring the existing
   // precedent for this format.
@@ -277,7 +309,8 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, re
   return {
     speciesId: resolved.speciesId,
     name: resolved.speciesName,
-    ivs: { atk, def, hp },
+    ivs,
+    ...(ivsDefaulted ? { ivsDefaulted: true } : {}),
     cp: parseNumber(cell(row, headerIndex, 'cp')),
     level: parseNumber(cell(row, headerIndex, 'level')),
     shadow,
@@ -307,9 +340,13 @@ function mapGenericRow(row, headerIndex, rowNumber, resolveSpecies, warnings, re
  * format) throws.
  *
  * @param {string} csvPath - path to the CSV file.
+ * @param {{ cp?: number }} [opts] - `cp`: the CP cap (default 1500) whose
+ *   pvpoke default spread (gamemaster `defaultIVs`) fills a generic-format
+ *   row that leaves all three IV cells blank (see NormalizedMon `ivsDefaulted`).
  * @returns {{ mons: NormalizedMon[], warnings: string[] }}
  */
-export function importCollection(csvPath) {
+export function importCollection(csvPath, opts = {}) {
+  const cp = opts.cp ?? 1500;
   const text = readFileSync(csvPath, 'utf8');
   const rows = parseCsv(text);
   const warnings = [];
@@ -330,6 +367,7 @@ export function importCollection(csvPath) {
 
   const resolveSpecies = createSpeciesResolver();
   const resolveMoves = createMoveResolver();
+  const rowCtx = { resolveDefaultIvs: createDefaultIvResolver(), cp };
   const mapRow = format === 'pokegenie' ? mapPokeGenieRow : mapGenericRow;
   const mons = [];
 
@@ -337,7 +375,7 @@ export function importCollection(csvPath) {
     const row = rows[i];
     if (isBlankRow(row)) continue;
     const rowNumber = i + 1; // spreadsheet-style: header occupies row 1
-    const mon = mapRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves);
+    const mon = mapRow(row, headerIndex, rowNumber, resolveSpecies, warnings, resolveMoves, rowCtx);
     if (mon) mons.push(mon);
   }
 

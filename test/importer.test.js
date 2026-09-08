@@ -286,6 +286,24 @@ test('importCollection: a row with missing/non-numeric IVs is skipped with a war
   assert.match(warnings[0], /Umbreon/);
 });
 
+test('importCollection: generic row with all IV cells blank gets pvpoke default IVs for the cap', () => {
+  const file = writeTempCsv('name,atk,def,sta,shadow\nAzumarill,,,,false\nPachirisu,,,,false\nRegisteel,0,15,14,false\n');
+  const gl = importCollection(file);
+  assert.equal(gl.warnings.length, 0);
+  assert.equal(gl.mons.length, 3);
+  const [azu, pachi, regi] = gl.mons;
+  assert.equal(azu.ivsDefaulted, true);
+  assert.equal(pachi.ivsDefaulted, true);
+  assert.equal(regi.ivsDefaulted, undefined, 'a stated spread is passed through untouched');
+  // Azumarill's Great League default spread is bulk-first, not 15 attack.
+  assert.ok(azu.ivs.atk < 15, `expected a low-attack default spread, got ${JSON.stringify(azu.ivs)}`);
+  // Pachirisu can't reach 1500 even at hundo, so its default spread IS hundo.
+  assert.deepEqual(pachi.ivs, { atk: 15, def: 15, hp: 15 });
+  // A different cap resolves a different spread from gamemaster.
+  const ul = importCollection(file, { cp: 2500 });
+  assert.notDeepEqual(ul.mons[0].ivs, azu.ivs, 'cp 2500 spread differs from cp 1500 spread');
+});
+
 test('importCollection: generic format tolerates extra/reordered columns', () => {
   const file = writeTempCsv(
     'nickname,name,atk,def,sta,note\n' + 'Sparky,Umbreon,3,15,15,favorite\n'

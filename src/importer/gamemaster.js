@@ -33,6 +33,7 @@ const SIZE_DEFAULT_FORM = {
 };
 
 let cachedIndex = null;
+let cachedById = null;
 
 function stripDiacritics(s) {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -63,6 +64,9 @@ function registerKey(map, key, entry) {
 function buildIndex(gamemasterPath = DEFAULT_GAMEMASTER_PATH) {
   const gm = JSON.parse(readFileSync(gamemasterPath, 'utf8'));
   const byName = new Map();
+  // Every entry (shadows included) by speciesId, for the default-IV lookup:
+  // a shadow's default spread can differ from its base form's.
+  cachedById = new Map(gm.pokemon.map((p) => [p.speciesId, p]));
 
   // Shadow status is carried on NormalizedMon as its own flag (see
   // resolveSpecies doc comment / importer report), so the species index is
@@ -166,5 +170,36 @@ export function createSpeciesResolver() {
       if (entry) return { speciesId: entry.speciesId, speciesName: entry.speciesName };
     }
     return null;
+  };
+}
+
+/**
+ * Build a resolver for pvpoke's DEFAULT IV spread for a species at a CP cap,
+ * read straight from gamemaster's `defaultIVs.cp<N>` (`[level, atk, def, hp]`).
+ * That is the spread pvpoke itself ranks and battles with: the best overall
+ * stat product at an IV floor of 4 (vendor GameMaster.js
+ * `generateDefaultIVCombo` -- index 1 of the sorted combinations, floor 12
+ * for species that only just reach the cap, pvpoke's legendary/untradeable
+ * and hand-set exceptions included). It is the same field
+ * src/scoring/index.js's `defaultIvsForCp` uses to build meta opponents, so a
+ * candidate imported without IVs gets exactly the build its opponent-side
+ * twin gets. Nothing is computed here; a species/cap gamemaster carries no
+ * spread for resolves to null.
+ *
+ * @returns {(speciesId: string, opts?: { shadow?: boolean, cp?: number }) => ({ atk: number, def: number, hp: number } | null)}
+ *   `speciesId` is the base id (NormalizedMon convention); with `shadow` the
+ *   `<id>_shadow` entry is preferred when gamemaster has one. `cp` defaults
+ *   to 1500.
+ */
+export function createDefaultIvResolver() {
+  if (!cachedIndex) cachedIndex = buildIndex();
+  const byId = cachedById;
+
+  return function resolveDefaultIvs(speciesId, { shadow = false, cp = 1500 } = {}) {
+    const entry = (shadow && byId.get(`${speciesId}_shadow`)) || byId.get(speciesId);
+    const combo = entry?.defaultIVs?.[`cp${cp}`];
+    if (!Array.isArray(combo) || combo.length < 4) return null;
+    const [, atk, def, hp] = combo;
+    return { atk, def, hp };
   };
 }
