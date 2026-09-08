@@ -69,6 +69,9 @@ node src/cli.js --help                                # full flag list
 
 ## Documentation 📚
 
+For running evolutionary simulations, including the complete standard recipe
+and genetic settings, see the local [Simulation Runbook](SIMULATION_RUNBOOK.md).
+
 Detailed documentation is in the
 [wiki](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki):
 

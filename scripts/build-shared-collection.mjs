@@ -258,7 +258,7 @@ export function toGenericCsv(mons) {
  * }}
  */
 function loadCollection(ctx, csvPath) {
-  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
+  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath, { cp: ctx.cp });
   // Keyed by sourceRow so a chosen (possibly-evolved) scored entry can be
   // traced back to the exact owned CSV row it came from.
   const sourceByRow = new Map(importedMons.map((m) => [m.sourceRow, m]));

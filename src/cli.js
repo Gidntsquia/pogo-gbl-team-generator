@@ -240,7 +240,7 @@ export async function runPipeline(csvPath, opts = {}) {
   // Throws on an unsupported cap before any work happens.
   const league = leagueForCp(opts.cp ?? DEFAULTS.cp);
 
-  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath);
+  const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath, { cp: league.cp });
 
   const ctx = await initEngine({ cp: league.cp });
 
