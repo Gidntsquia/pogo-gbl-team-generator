@@ -73,10 +73,10 @@ if (workerData?.profileDir) {
 }
 
 // Diagnostic-only, same --profile gate as the CPU profiler above: tracks the
-// highest RSS this worker has hit, sampled every 5s. This is what actually
-// answers "how much RAM is this run using" per worker -- the cache-size
-// numbers in `stats` below are entry counts, not bytes, and don't capture
-// engine/vm overhead. unref()'d so it never keeps the process alive past a
+// highest RSS this worker has hit, sampled every 5s. Also what backs the
+// live per-generation 'stats' poll (see below) -- gated behind --profile,
+// same as the CPU profiler, so a run with no interest in this diagnostic
+// pays nothing for it. unref()'d so it never keeps the process alive past a
 // normal exit.
 let peakRssBytes = 0;
 let rssTimer = null;
@@ -130,12 +130,17 @@ function buildTeam(ctx, cache, monSpecs) {
  * meant to span MANY generations, not one: a mon that keeps reappearing
  * (elites, survivors, recurring opponents) is refreshed on every hit and so
  * never ages out, and the cap only decides how many generations' worth of
- * churned-out mutants stay around before being evicted. A built Pokemon
- * measures ~12 KB, so 5000/side is ~60 MB/side, ~120 MB per worker, ~1 GB at
- * `--threads 8` -- several generations of turnover (the standard recipe sees
- * at most ~900 distinct teamA and ~360 distinct teamB mons per generation)
- * while leaving the 8 GB box its headroom. Override with
- * `POGO_GBL_WORKER_CACHE=N` when a run has memory to spare. */
+ * churned-out mutants stay around before being evicted. Live telemetry from a
+ * `--threads 8` run (out/evolve-meta-vs-meta-newseason-v4.log, correlating
+ * total worker RSS growth to total mon-cache-entry growth gen16->gen28) puts a
+ * built Pokemon at ~1.5 MB, not the ~12 KB this comment previously claimed --
+ * so 5000/side at cap is ~7.5 GB/side, ~15 GB/worker, well past an 8 GB box
+ * per worker on its own if a long, high-diversity run ever fills the cache
+ * that far (the standard recipe sees at most ~900 distinct teamA and ~360
+ * distinct teamB mons per generation, so a run stays well under cap for many
+ * generations before this matters). Override with `POGO_GBL_WORKER_CACHE=N`
+ * to lower the cap on memory-constrained boxes; there is currently no
+ * automatic sizing against available RAM. */
 const MAX_CACHE_ENTRIES = (() => {
   const n = Number(process.env.POGO_GBL_WORKER_CACHE);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5000;
@@ -155,15 +160,13 @@ async function init() {
   parentPort.postMessage({ type: 'ready' });
 }
 
-/** Stop this worker's CPU profiler (if running), flush its .cpuprofile, and
- * report scenario-memo hit/miss counts -- the graceful counterpart to
- * terminate(), which src/engine/parallel.js's close() sends before tearing
- * down the pool so profiling/stats data isn't silently lost. */
-function shutdown() {
-  if (rssTimer) clearInterval(rssTimer);
+/** Snapshot of this worker's current memo/cache/RSS numbers -- the shared
+ * shape both the live 'stats' poll (non-destructive, mid-run) and shutdown()
+ * (destructive, end-of-run) report. */
+function snapshotStats() {
   const memo = ctx?.__teamBattle?.scenarioMemo;
   const rss = process.memoryUsage().rss;
-  const stats = {
+  return {
     memoHits: memo?.hits ?? 0,
     memoMisses: memo?.misses ?? 0,
     memoSize: memo?.map.size ?? 0,
@@ -172,6 +175,15 @@ function shutdown() {
     rssMb: Math.round(rss / 1048576),
     peakRssMb: Math.round(Math.max(peakRssBytes, rss) / 1048576),
   };
+}
+
+/** Stop this worker's CPU profiler (if running), flush its .cpuprofile, and
+ * report scenario-memo hit/miss counts -- the graceful counterpart to
+ * terminate(), which src/engine/parallel.js's close() sends before tearing
+ * down the pool so profiling/stats data isn't silently lost. */
+function shutdown() {
+  if (rssTimer) clearInterval(rssTimer);
+  const stats = snapshotStats();
   if (!profileSession) {
     parentPort.postMessage({ type: 'shutdownDone', stats });
     process.exit(0);
@@ -197,6 +209,13 @@ function shutdown() {
 parentPort.on('message', (msg) => {
   if (msg.type === 'shutdown') {
     shutdown();
+    return;
+  }
+  if (msg.type === 'stats') {
+    // Non-destructive: unlike shutdown() this leaves the CPU profiler (if
+    // running) and this worker's caches untouched -- safe to call between
+    // battles mid-run for live per-generation memory/speed visibility.
+    parentPort.postMessage({ type: 'statsResult', requestId: msg.requestId, stats: snapshotStats() });
     return;
   }
   if (msg.type !== 'battle') return;

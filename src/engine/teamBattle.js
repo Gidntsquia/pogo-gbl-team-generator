@@ -248,7 +248,9 @@ const DEFAULT_SCENARIO_MEMO_MAX = 200000;
  *
  * The memo lives for the engine context's lifetime and is shared across
  * battles, which is where the win comes from. Entries are small (a short key
- * string plus a handful of numbers); at `max` entries it is cleared outright.
+ * string plus a handful of numbers); at `max` entries the least-recently-used
+ * one is evicted (hits re-insert their key to mark it recent), so hot
+ * entries survive overflow instead of the whole memo being wiped at once.
  *
  * Created once per context by initTeamBattle (ctx.__teamBattle.scenarioMemo);
  * setting `ctx.scenarioMemo = false` before the first battle, `battleTeams(ctx,
@@ -363,6 +365,11 @@ function memoizedScenario(memo, ai, original, type, pokemon, opponent) {
       const hit = memo.map.get(key);
       if (hit && !memo.verify) {
         memo.hits += 1;
+        // Promote to most-recently-used (re-insert at the end) so LRU
+        // eviction below doesn't evict hot entries just because they were
+        // written a while ago.
+        memo.map.delete(key);
+        memo.map.set(key, hit);
         for (let i = 0; i < hit.draws; i++) vmMath.random();
         applyCarried(p0, hit.carried[0]);
         applyCarried(p1, hit.carried[1]);
@@ -389,7 +396,11 @@ function memoizedScenario(memo, ai, original, type, pokemon, opponent) {
         return [];
       }
       memo.misses += 1;
-      if (memo.map.size >= memo.max) memo.map.clear();
+      // LRU eviction (Map iterates insertion order, and hits are re-inserted
+      // above to stay "recent") -- evict one at a time rather than clearing
+      // the whole memo, so hot entries (elites, recurring opponents) survive
+      // overflow instead of every lookahead missing until the memo refills.
+      if (memo.map.size >= memo.max) memo.map.delete(memo.map.keys().next().value);
       memo.map.set(key, rec);
       return [];
     };

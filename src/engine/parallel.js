@@ -433,6 +433,42 @@ export function createExecutor(opts = {}) {
     ).then((results) => results.filter(Boolean));
   }
 
+  /** Non-destructive counterpart to collectShutdownStats: ask every currently
+   * booted worker for its live memo/cache/RSS snapshot without stopping its
+   * CPU profiler or touching its caches. Returns [] if no pool is up yet
+   * (e.g. called before the first run()). Best-effort per worker, same
+   * timeout pattern as shutdown stats, so a stuck worker can't hang a
+   * mid-run poll. */
+  function collectLiveStats(p) {
+    if (!p) return Promise.resolve([]);
+    let nextRequestId = 0;
+    return Promise.all(
+      p.workers.map(
+        (w, i) =>
+          new Promise((resolve) => {
+            const requestId = nextRequestId++;
+            const done = (stats) => {
+              w.off('message', onMessage);
+              clearTimeout(timer);
+              resolve(stats ? { worker: i, ...stats } : null);
+            };
+            const onMessage = (msg) => {
+              if (msg.type === 'statsResult' && msg.requestId === requestId) done(msg.stats);
+            };
+            const timer = setTimeout(() => done(null), 5000);
+            w.on('message', onMessage);
+            try {
+              w.postMessage({ type: 'stats', requestId });
+            } catch {
+              // Worker died between run() resolving and this poll -- best-effort,
+              // so skip it instead of rejecting the whole Promise.all.
+              done(null);
+            }
+          })
+      )
+    ).then((results) => results.filter(Boolean));
+  }
+
   /** A worker died (crash or unexpected exit) -- see module header's worker-
    * crash policy: always fatal to the in-flight run, never per-spec, and
    * always tears down the whole pool so the next run() boots fresh. */
@@ -581,6 +617,18 @@ export function createExecutor(opts = {}) {
       if (closed) throw new Error('createExecutor: run() called after close()');
       if (!Array.isArray(specs)) throw new Error('createExecutor.run: specs must be an array');
       return enqueue(() => runInternal(specs));
+    },
+
+    /** @returns {Promise<Array<object>>} per-worker {worker, memoHits,
+     *   memoMisses, memoSize, cacheASize, cacheBSize, rssMb, peakRssMb} --
+     *   safe to call between run() calls (e.g. once per evolve.mjs
+     *   generation) for live memory/speed visibility. Non-destructive: does
+     *   NOT stop the CPU profiler or clear caches, unlike close(). rssMb/
+     *   peakRssMb are 0 unless this executor was booted with `profileDir`
+     *   (RSS sampling is gated the same as the CPU profiler -- see
+     *   parallelWorker.js). Returns [] before the pool has booted. */
+    async stats() {
+      return collectLiveStats(pool);
     },
 
     /** @returns {Promise<Array<object>>} per-worker profile/memo stats
