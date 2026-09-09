@@ -5,8 +5,11 @@
 # vendor/pvpoke, echo the configuration, launch detached via nohup with the
 # out/evolve-<name>{,.log,.pid} convention, and print how to monitor it.
 # Also launches scripts/mem-watchdog.sh alongside every detached run, which
-# SIGTERMs the run (a clean, checkpoint-safe stop) if system available
-# memory stays low for too long -- added after two WSL crashes on
+# SIGTERMs (kills) the run if system available memory stays low for too
+# long -- whatever generation was in flight is lost, but checkpoints
+# already durably on disk survive (writeCheckpoint writes atomically), so
+# the run can be resumed from its last completed generation instead of
+# taking the whole VM down. Added after two WSL crashes on
 # 2026-09-05 where a run outgrew this machine's actual headroom even with
 # --threads capped; see mem-watchdog.sh's own header for the story.
 #
@@ -17,11 +20,12 @@
 #
 # Options:
 #   --meta            meta-vs-meta: the collection is every species pvpoke
-#                     ranks for the cap (scripts/build-meta-collection.mjs,
-#                     rebuilt each launch, IVs = pvpoke defaults), evolutions
-#                     off (the rankings already list evolved forms), and BOTH
-#                     species pools widened to --meta-pool so each side can
-#                     field every relevant species
+#                     ranks for the cap (scripts/build-meta-collection.mjs ->
+#                     out/evolve-NAME/meta-collection-CP.csv, built once per
+#                     run and reused on resume, IVs = pvpoke defaults),
+#                     evolutions off (the rankings already list evolved
+#                     forms), and BOTH species pools widened to --meta-pool so
+#                     each side can field every relevant species
 #   --meta-pool N     with --meta: --pool N --opponent-meta-pool N (default 400:
 #                     pvpoke overall score >= ~78 at cp 1500; 0 = full field)
 #   --cp N            CP cap (default 1500); with --meta also picks the collection
@@ -38,6 +42,15 @@
 #   --fg              run in the foreground instead of detaching
 #   --dry-run         print the evolve.mjs command and exit
 #   --help            this text
+#
+# Pre-baked start / "resume with different flags": --seed-from PATH is not a
+# recognized flag here either -- it falls through to evolve.mjs, which loads
+# generation 0's population + opponent pool from that checkpoint (another
+# run's evolve-gen<N>.json) instead of sampling fresh. Give the new run its
+# own --name (a fresh out dir) so it gets its own checkpoint chain rather than
+# colliding with the source run's:
+#   scripts/sim.sh --name my-run-v2 --population 400 -- --seed-from \
+#     out/evolve-my-run/evolve-gen42.json my-collection.csv
 #
 # Anything after `--` (or any flag not listed above) goes straight to
 # evolve.mjs. Defaults follow the established run recipe:
@@ -112,8 +125,19 @@ done
 
 if [ "$meta" = 1 ]; then
   if [ -n "$csv" ]; then echo "error: --meta takes no collection (it builds its own)" >&2; exit 2; fi
-  csv="out/meta-collection-${cp}.csv"
   [ -z "$name" ] && name="meta-vs-meta-${cp}-$(date +%H%M)"
+  # The collection is per run, never shared: candidate keys are speciesId#row,
+  # so a run can only resume against the byte-identical CSV it started from,
+  # and the rankings order (hence the rows) moves with every vendor pin bump.
+  # Resuming (checkpoints already in the out dir) reuses the CSV the run
+  # recorded instead of rebuilding -- the 2026-09-09 newseason-v3 resume
+  # crashed because a rebuild after a pin bump re-numbered every row.
+  if [ -f "out/evolve-${name}/evolve-gen0.json" ]; then
+    csv="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).config.csvPath)' "out/evolve-${name}/evolve-gen0.json")"
+    echo "[sim] resuming '$name': reusing its collection ($csv) instead of rebuilding"
+  else
+    csv="out/evolve-${name}/meta-collection-${cp}.csv"
+  fi
 fi
 if [ -z "$csv" ]; then usage; exit 2; fi
 
@@ -121,7 +145,8 @@ if [ ! -d vendor/pvpoke ]; then
   echo "[sim] vendor/pvpoke missing -- running scripts/setup.sh"
   bash scripts/setup.sh
 fi
-if [ "$meta" = 1 ]; then
+if [ "$meta" = 1 ] && [ ! -f "$csv" ]; then
+  mkdir -p "$(dirname "$csv")"
   node scripts/build-meta-collection.mjs --cp "$cp" --out "$csv"
 fi
 if [ ! -f "$csv" ]; then echo "error: collection not found: $csv" >&2; exit 2; fi

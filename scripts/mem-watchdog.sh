@@ -12,10 +12,14 @@
 # This script watches system available memory (not just the target
 # process's RSS, since swap/cache pressure hits everything on the box) and
 # sends SIGTERM to the run once it drops below --floor-mb for
-# --consecutive checks in a row. evolve.mjs treats SIGTERM as a clean stop
-# at the next generation boundary -- checkpoints already on disk survive,
-# so the run can be resumed later at a smaller grid or lower thread count
-# instead of taking the whole VM down.
+# --consecutive checks in a row. evolve.mjs has no SIGTERM handler of its
+# own, so this just kills the process (default signal disposition) --
+# whatever generation was in flight is lost, but checkpoints already
+# durably on disk survive (writeCheckpoint writes to a temp file and
+# renames it into place, so a kill mid-write can never leave a truncated,
+# silently-discarded checkpoint). The run can be resumed later at a
+# smaller grid or lower thread count, restarting from its last completed
+# generation, instead of taking the whole VM down.
 #
 # Usage:
 #   scripts/mem-watchdog.sh <pid> <label> [--floor-mb N] [--interval S] [--consecutive N]
