@@ -33,15 +33,17 @@ const DEFAULT_SNAPSHOT_PATH = 'data/meta-usage.json';
 
 // Zipf-style weight over 1-based rank position r:
 //   weight(r) ∝ 1 / (r + k)^alpha
-// alpha=1, k=5 sanity numbers over a 400-species pool (normaliser is
-// H(400+k) - H(k) ~= 4.30 for k=5): rank 1 ~= 3.9% of draws, rank 10 ~= 1.6%,
-// rank 50 ~= 0.42%, rank 100 ~= 0.22%, rank 400 ~= 0.06%. Top 20 ~= 36% of
-// draws, top 100 ~= 69%. k damps the curve near rank 1 (without it, rank 1
+// alpha=1, k=20 sanity numbers over a 400-species pool (normaliser is
+// H(400+k) - H(k) ~= 3.05 for k=20): rank 1 ~= 1.6% of draws, rank 10 ~= 1.1%,
+// rank 50 ~= 0.47%, rank 100 ~= 0.27%, rank 400 ~= 0.08%. Top 20 ~= 23% of
+// draws, top 100 ~= 59%. k damps the curve near rank 1 (without it, rank 1
 // would draw a full alpha-th of the total weight budget on its own); alpha
-// controls how fast weight decays with rank. Both are the tunables a future
-// fire might want to revisit.
+// controls how fast weight decays with rank. k was 5 (rank 1 ~= 3.9%, top 20
+// ~= 36%) until 2026-09-09: on the v2 meta-vs-meta run the opponent GA
+// amplified that into Tinkaton on 15-34% of opponent teams and halved the
+// pool's distinct species (204 -> ~80), so the curve was flattened.
 const DEFAULT_RANK_ALPHA = 1.0;
-const DEFAULT_RANK_OFFSET = 5;
+const DEFAULT_RANK_OFFSET = 20;
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));

@@ -39,6 +39,8 @@ import {
   makeBlendedWeightFn,
   DEFAULT_BLEND_ALPHA,
 } from './sample.js';
+import { coreRivalryFitness, candidateProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../meta/archetypes.js';
+import { createSimilarity } from '../engine/similarity.js';
 
 const TEAM_SIZE = 3;
 const BACK_SLOTS = [1, 2];
@@ -405,7 +407,14 @@ function shadowRivalryLosers(population, fitness, matrix) {
  *   behavior) rather than throwing or looping forever. `lineage.died` lists
  *   the OLD population's dead indices, worst-fitness first;
  *   `lineage.shadowRivalryDied` is the subset of those that died for losing a
- *   shadow rivalry rather than for ranking in the bottom `deathRate`. `lineage.entries`
+ *   shadow rivalry rather than for ranking in the bottom `deathRate`;
+ *   `lineage.coreRivalryDied` the subset that died only because better teams
+ *   sharing a two-species core -- or a similar core by pvpoke's similarity
+ *   (`opts.similarity`, a src/engine/similarity.js createSimilarity scorer,
+ *   built on demand when absent; `opts.similarFloor` / `opts.similarRivalry`,
+ *   defaults DEFAULT_SIMILAR_FLOOR / DEFAULT_SIMILAR_RIVALRY) -- pushed them below the cut
+ *   (`opts.coreRivalry`, default DEFAULT_CORE_RIVALRY, 0 disables -- see
+ *   src/meta/archetypes.js coreRivalryFitness). `lineage.entries`
  *   is parallel to the RETURNED `population` (same order, same length): each
  *   entry says whether that slot is an unchanged survivor (with its index in
  *   the OLD population), a mutant (with its OLD-population parent index and
@@ -416,7 +425,7 @@ function shadowRivalryLosers(population, fitness, matrix) {
  */
 export function nextGeneration({ population, fitness, pool, matrix, weights, seed, opts = {} }) {
   const P = population.length;
-  if (P === 0) return { population: [], lineage: { died: [], shadowRivalryDied: [], entries: [] } };
+  if (P === 0) return { population: [], lineage: { died: [], shadowRivalryDied: [], coreRivalryDied: [], entries: [] } };
 
   const targetSize = Math.max(0, opts.targetSize ?? P);
   const deathRate = opts.deathRate ?? DEFAULT_DEATH_RATE;
@@ -427,16 +436,30 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const immigrantFraction = opts.immigrantFraction ?? DEFAULT_IMMIGRANT_FRACTION;
   const alpha = typeof opts.alpha === 'number' ? opts.alpha : DEFAULT_BLEND_ALPHA;
   const excludeSpecies = opts.excludeSpecies ?? [];
+  const coreRivalry = opts.coreRivalry ?? DEFAULT_CORE_RIVALRY;
+  const similarRivalry = opts.similarRivalry ?? DEFAULT_SIMILAR_RIVALRY;
+  const similarFloor = opts.similarFloor ?? DEFAULT_SIMILAR_FLOOR;
+  const similarity = coreRivalry > 0 && similarRivalry > 0 ? opts.similarity ?? createSimilarity() : null;
   const rng = rngFromSeed(seed, 'nextGeneration');
 
   // Shadow rivalries settle first: the losers are dead regardless of rank.
   const shadowRivalryDied = shadowRivalryLosers(population, fitness, matrix);
   const rivalryLoserSet = new Set(shadowRivalryDied);
+  // Core rivalries (src/meta/archetypes.js coreRivalryFitness): the cull and
+  // the mutation ranking below use a fitness penalised per better team
+  // sharing a two-species core. `fitness` itself is untouched -- the
+  // checkpoint, analytics and trailing history all keep the raw number.
+  const { shared: rankFitness, rivalsAbove } = coreRivalryFitness(
+    population.map((team) => candidateProfiles(matrix, team)),
+    fitness,
+    coreRivalry,
+    { similar: similarRivalry, floor: similarFloor, similarity }
+  );
   // Worst-fitness-first ranking of everyone else (ties broken by original index for determinism).
   const rankedWorstFirst = population
     .map((_, i) => i)
     .filter((i) => !rivalryLoserSet.has(i))
-    .sort((a, b) => fitness[a] - fitness[b] || a - b);
+    .sort((a, b) => rankFitness[a] - rankFitness[b] || a - b);
   const contenders = rankedWorstFirst.length;
   // `churn` is the share of the NEXT generation that is newly created
   // (mutants + immigrants); everything else is a survivor carried over. When
@@ -453,8 +476,14 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const deathCount = Math.max(0, Math.min(contenders, P - survivorsWanted));
   const died = [...shadowRivalryDied, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
   const survivorIndicesAsc = rankedWorstFirst.slice(deathCount); // still worst-to-best among survivors
+  // Deaths the core rivalry caused: culled here, but inside the raw-fitness
+  // survivor cut (so they would have lived under a plain ranking).
+  const rawCut = new Set(
+    population.map((_, i) => i).filter((i) => !rivalryLoserSet.has(i)).sort((a, b) => fitness[a] - fitness[b] || a - b).slice(deathCount)
+  );
+  const coreRivalryDied = rankedWorstFirst.slice(0, deathCount).filter((i) => rawCut.has(i) && rivalsAbove[i] > 0);
 
-  const mutationSuccesses = rollMutations(survivorIndicesAsc, fitness, mutationFloor, mutationCeil, leadRotationRate, shadowFlipRate, rng);
+  const mutationSuccesses = rollMutations(survivorIndicesAsc, rankFitness, mutationFloor, mutationCeil, leadRotationRate, shadowFlipRate, rng);
 
   const deadSlots = Math.max(0, targetSize - survivorIndicesAsc.length);
   const immigrantFloor = Math.min(deadSlots, Math.round(immigrantFraction * targetSize));
@@ -562,7 +591,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
     ...immigrantEntries.map(() => ({ origin: 'immigrant' })),
   ];
 
-  return { population: nextPopulation, lineage: { died, shadowRivalryDied, entries } };
+  return { population: nextPopulation, lineage: { died, shadowRivalryDied, coreRivalryDied, entries } };
 }
 
 /**

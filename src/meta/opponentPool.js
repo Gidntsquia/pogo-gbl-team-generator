@@ -43,6 +43,8 @@
 import { rngFromSeed, pickWeighted } from '../util/rng.js';
 import { buildMetaMon } from '../scoring/index.js';
 import { curatedTierWeight } from './teams.js';
+import { coreRivalryFitness, opponentProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from './archetypes.js';
+import { createSimilarity } from '../engine/similarity.js';
 import {
   baseIdOf,
   composeSampledOpponent,
@@ -257,11 +259,22 @@ function mutantOrigin(parent) {
  *   opts?: {
  *     deathRate?: number, mutationFloor?: number, mutationCeil?: number,
  *     curatedMutationRate?: number, leadRotationRate?: number,
- *     immigrantFraction?: number,
+ *     immigrantFraction?: number, coreRivalry?: number, similarRivalry?: number,
+ *     similarFloor?: number, similarity?: (a: object, b: object) => number,
  *   },
- * }} params
- * @returns {{pool: OpponentEntry[], lineage: {died: number[], originCounts: object}}}
- *   `lineage.died` lists indices into the INPUT `pool`, worst-fitness first.
+ * }} params -- `opts.coreRivalry` (default DEFAULT_CORE_RIVALRY, 0 disables)
+ *   penalises each evolvable entry per better evolvable entry sharing a
+ *   two-species core -- or a similar core by pvpoke's similarity of the
+ *   built members (`opts.similarity`, a src/engine/similarity.js
+ *   createSimilarity scorer, built on demand when absent; `opts.similarFloor`
+ *   / `opts.similarRivalry`, defaults DEFAULT_SIMILAR_FLOOR /
+ *   DEFAULT_SIMILAR_RIVALRY), e.g. Tinkaton/Empoleon vs Tinkaton/Feraligatr
+ *   -- before the cull ranks it (src/meta/archetypes.js
+ *   coreRivalryFitness), so a bred counter core keeps only the variants
+ *   that out-fight the rest of the pool on their own merits.
+ * @returns {{pool: OpponentEntry[], lineage: {died: number[], coreRivalryDied: number[], originCounts: object}}}
+ *   `lineage.died` lists indices into the INPUT `pool`, worst-fitness first;
+ *   `coreRivalryDied` the subset that only died because of the core penalty.
  *   The returned pool is held at `targetSize` unless the meta pool is too
  *   small to supply enough distinct teams, in which case it falls short
  *   gracefully rather than throwing.
@@ -285,6 +298,9 @@ export function nextOpponentPool(ctx, params) {
   const curatedMutationRate = opts.curatedMutationRate ?? DEFAULT_CURATED_MUTATION_RATE;
   const leadRotationRate = opts.leadRotationRate ?? DEFAULT_OPPONENT_LEAD_ROTATION_RATE;
   const immigrantFraction = opts.immigrantFraction ?? DEFAULT_OPPONENT_IMMIGRANT_FRACTION;
+  const coreRivalry = opts.coreRivalry ?? DEFAULT_CORE_RIVALRY;
+  const similarRivalry = opts.similarRivalry ?? DEFAULT_SIMILAR_RIVALRY;
+  const similarFloor = opts.similarFloor ?? DEFAULT_SIMILAR_FLOOR;
 
   const rng = rngFromSeed(seed, 'nextOpponentPool');
   const movesetPool = params.movesetPool ?? loadMovesetPool(ctx, { metaPoolSize });
@@ -311,7 +327,18 @@ export function nextOpponentPool(ctx, params) {
 
   // ---- (2) evolvable: rank worst-first, cull -------------------------------
   const evolvableIdx = pool.map((_, i) => i).filter((i) => !isProtectedOpponent(pool[i]));
-  const rankedWorstFirst = evolvableIdx.slice().sort((a, b) => fitness[a] - fitness[b] || a - b);
+  // Core rivalry among the evolvable entries (curated ones are neither
+  // penalised nor count as rivals -- they are never culled anyway).
+  const similarity = coreRivalry > 0 && similarRivalry > 0 ? opts.similarity ?? createSimilarity() : null;
+  const { shared, rivalsAbove } = coreRivalryFitness(
+    evolvableIdx.map((i) => opponentProfiles(pool[i])),
+    evolvableIdx.map((i) => fitness[i]),
+    coreRivalry,
+    { similar: similarRivalry, floor: similarFloor, similarity }
+  );
+  const rankFitness = new Map(evolvableIdx.map((i, k) => [i, shared[k]]));
+  const rivalsOf = new Map(evolvableIdx.map((i, k) => [i, rivalsAbove[k]]));
+  const rankedWorstFirst = evolvableIdx.slice().sort((a, b) => rankFitness.get(a) - rankFitness.get(b) || a - b);
   const evolvableTarget = Math.max(0, targetSize - curatedOut.length);
   // The churn is a share of who is ALIVE NOW, not of the target -- the
   // opponent pool grows over a run (scripts/evolve.mjs trades candidate slots
@@ -325,6 +352,8 @@ export function nextOpponentPool(ctx, params) {
   const deathCount = rankedWorstFirst.length - survivorsKept;
   const died = rankedWorstFirst.slice(0, deathCount);
   const survivorIdxAsc = rankedWorstFirst.slice(deathCount); // worst-to-best among survivors
+  const rawCut = new Set(evolvableIdx.slice().sort((a, b) => fitness[a] - fitness[b] || a - b).slice(deathCount));
+  const coreRivalryDied = died.filter((i) => rawCut.has(i) && rivalsOf.get(i) > 0);
   const survivorsOut = survivorIdxAsc
     .slice()
     .sort((a, b) => a - b)
@@ -396,7 +425,7 @@ export function nextOpponentPool(ctx, params) {
   const nextPool = [...curatedOut, ...survivorsOut, ...mutants, ...immigrants];
   const originCounts = {};
   for (const e of nextPool) originCounts[e.origin] = (originCounts[e.origin] ?? 0) + 1;
-  return { pool: nextPool, lineage: { died, originCounts } };
+  return { pool: nextPool, lineage: { died, coreRivalryDied, originCounts } };
 }
 
 /**

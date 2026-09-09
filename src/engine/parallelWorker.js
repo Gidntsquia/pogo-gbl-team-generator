@@ -42,7 +42,10 @@
 // selects pvpoke's RECOMMENDED moveset, which is not what a buildMetaMon-built
 // mon (e.g. a curated preset team member) necessarily carries.
 
-import { parentPort, workerData } from 'node:worker_threads';
+import { parentPort, workerData, threadId } from 'node:worker_threads';
+import { Session } from 'node:inspector';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { initEngine, buildPokemon } from './harness.js';
 import { battleTeams } from './teamBattle.js';
 import { applyGroupMoveset } from '../scoring/index.js';
@@ -50,6 +53,40 @@ import { BoundedCache } from './boundedCache.js';
 
 if (!parentPort) {
   throw new Error('parallelWorker.js must be run as a worker_thread');
+}
+
+// Diagnostic-only, opt-in via createExecutor({ profileDir }) / evolve.mjs's
+// --profile flag: a per-worker node:inspector CPU profile spanning this
+// worker's entire life, so a real multi-generation run can be inspected the
+// same way scripts/bench.mjs's single-process --cpu-prof capture is (see
+// src/engine/README.md's Performance section) but across every thread that
+// actually did the battling. Started eagerly at init so battle #1 is
+// captured too; stopped and flushed only on the graceful 'shutdown' message
+// below -- terminate() (used on crash/abrupt close) gives no such chance, so
+// profiling only ever produces a file on a clean run.
+let profileSession = null;
+if (workerData?.profileDir) {
+  profileSession = new Session();
+  profileSession.connect();
+  profileSession.post('Profiler.enable');
+  profileSession.post('Profiler.start');
+}
+
+// Diagnostic-only, same --profile gate as the CPU profiler above: tracks the
+// highest RSS this worker has hit, sampled every 5s. This is what actually
+// answers "how much RAM is this run using" per worker -- the cache-size
+// numbers in `stats` below are entry counts, not bytes, and don't capture
+// engine/vm overhead. unref()'d so it never keeps the process alive past a
+// normal exit.
+let peakRssBytes = 0;
+let rssTimer = null;
+if (workerData?.profileDir) {
+  peakRssBytes = process.memoryUsage().rss;
+  rssTimer = setInterval(() => {
+    const rss = process.memoryUsage().rss;
+    if (rss > peakRssBytes) peakRssBytes = rss;
+  }, 5000);
+  rssTimer.unref();
 }
 
 /** Stable cache key for a plain-data mon spec (moveset included -- two specs for the same species/IVs but different explicit movesets must not share a build). */
@@ -118,7 +155,50 @@ async function init() {
   parentPort.postMessage({ type: 'ready' });
 }
 
+/** Stop this worker's CPU profiler (if running), flush its .cpuprofile, and
+ * report scenario-memo hit/miss counts -- the graceful counterpart to
+ * terminate(), which src/engine/parallel.js's close() sends before tearing
+ * down the pool so profiling/stats data isn't silently lost. */
+function shutdown() {
+  if (rssTimer) clearInterval(rssTimer);
+  const memo = ctx?.__teamBattle?.scenarioMemo;
+  const rss = process.memoryUsage().rss;
+  const stats = {
+    memoHits: memo?.hits ?? 0,
+    memoMisses: memo?.misses ?? 0,
+    memoSize: memo?.map.size ?? 0,
+    cacheASize: cacheA.size,
+    cacheBSize: cacheB.size,
+    rssMb: Math.round(rss / 1048576),
+    peakRssMb: Math.round(Math.max(peakRssBytes, rss) / 1048576),
+  };
+  if (!profileSession) {
+    parentPort.postMessage({ type: 'shutdownDone', stats });
+    process.exit(0);
+    return;
+  }
+  profileSession.post('Profiler.stop', (err, { profile } = {}) => {
+    if (!err && profile) {
+      const file = path.join(workerData.profileDir, `worker-${threadId}.cpuprofile`);
+      try {
+        writeFileSync(file, JSON.stringify(profile));
+        stats.profilePath = file;
+      } catch (writeErr) {
+        stats.profileError = writeErr.message;
+      }
+    } else if (err) {
+      stats.profileError = err.message;
+    }
+    parentPort.postMessage({ type: 'shutdownDone', stats });
+    process.exit(0);
+  });
+}
+
 parentPort.on('message', (msg) => {
+  if (msg.type === 'shutdown') {
+    shutdown();
+    return;
+  }
   if (msg.type !== 'battle') return;
   const { id, spec } = msg;
   if (spec.__crashWorker) {

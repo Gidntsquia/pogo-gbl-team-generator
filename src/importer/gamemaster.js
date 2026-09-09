@@ -203,3 +203,4 @@ export function createDefaultIvResolver() {
     return { atk, def, hp };
   };
 }
+

@@ -317,6 +317,28 @@ test('lead-rotation rate controls the mix of mutation types (statistical check o
   assert.ok(highRatio > lowRatio, `expected a higher leadRotationRate to produce more lead-rotation mutants (low=${lowRatio}, high=${highRatio})`);
 });
 
+test('coreRivalry: trailing near-duplicates of a core are culled before weaker unrelated teams; the best variant survives', () => {
+  // 12 teams on the same mon0/mon1 core (fitness 100..89) above 8 unrelated
+  // teams (88..81). A plain 40% cull kills the 8 unrelated teams; with the
+  // rivalry the 4th+ core variants carry >= 3 steps of penalty (3 x 0.1 x
+  // range 19 = 5.7 points) and fall below the unrelated pack, so the cull
+  // takes them instead. The best core team is untouched.
+  const core = Array.from({ length: 12 }, (_, i) => ['mon0', 'mon1', `mon${i + 2}`]);
+  const others = Array.from({ length: 8 }, (_, i) => [`mon${20 + i}`, `mon${30 + i}`, `mon${14 + (i % 6)}`]);
+  const population = [...core, ...others];
+  const fitness = population.map((_, i) => 100 - i);
+  const run = (coreRivalry) =>
+    nextGeneration({ population, fitness, pool: WIDE_POOL, matrix: WIDE_MATRIX, seed: 'rival-gen', opts: { deathRate: 0.4, coreRivalry } });
+  const off = run(0);
+  assert.ok(off.lineage.died.every((i) => i >= 12), 'sanity: without rivalry only the unrelated tail dies');
+  assert.equal(off.lineage.coreRivalryDied.length, 0);
+  const on = run(0.1);
+  assert.ok(!on.lineage.died.includes(0), 'the best core variant never pays');
+  assert.ok(on.lineage.coreRivalryDied.length > 0 && on.lineage.coreRivalryDied.every((i) => i < 12 && i > 0));
+  assert.ok(on.lineage.died.filter((i) => i >= 12).length < off.lineage.died.length, 'fewer unrelated teams die');
+  assert.equal(on.population.length, population.length);
+});
+
 test('population stays unique and exactly at target size, with the immigrant floor respected', () => {
   const P = 30;
   const population = samplePopulation(P, 'size-pop');
@@ -877,6 +899,14 @@ test('computeConsistencyScore: 25th percentile of per-archetype mean win rate, w
   ];
   const { consistencyScore, archetypeWinRates } = computeConsistencyScore(perMeta, 0.5);
   assert.equal(archetypeWinRates.length, 5);
+  // Strength weighting inside an archetype: two opponents in one group, the
+  // strong one (strength 1) at 0.2 and a weak one (strength 0.1) at 1.0 ->
+  // the group's rate is pulled to the strong opponent's number.
+  const weighted = computeConsistencyScore(
+    [{ winRate: 0.2, archetypeGroup: 0, strength: 1 }, { winRate: 1.0, archetypeGroup: 0, strength: 0.1 }],
+    0.5
+  );
+  assert.ok(Math.abs(weighted.archetypeWinRates[0] - (0.2 + 0.1) / 1.1) < 1e-9);
   // p25 over 5 sorted values [0.2,0.3,0.7,0.8,0.9]: idx = 0.25*4 = 1 -> exactly the 2nd value.
   assert.ok(Math.abs(consistencyScore - 0.3) < 1e-9);
 
@@ -929,6 +959,16 @@ test('computeCandidateWeights: inverse of a team\'s most-common member\'s popula
   assert.ok(weights[3] > weights[0]);
   const total = weights.reduce((s, w) => s + w, 0);
   assert.ok(Math.abs(total - population.length) < 1e-9);
+  // Clamp is relative to the mean, not the raw reciprocal: with every
+  // species at a tiny share (1/maxShare far above 5 for all teams) the
+  // weights must still spread, not all pin to the ceiling and flatten to 1.
+  const tinyShares = new Map([...shareBySpecies].map(([k, v]) => [k, v / 100]));
+  const spread = computeCandidateWeights(matrix, population, tinyShares);
+  assert.ok(spread[3] > spread[0]);
+  assert.ok(Math.abs(spread.reduce((s, w) => s + w, 0) - population.length) < 1e-9);
+  // ...but a lone extreme reciprocal is still capped at 5x the mean.
+  const capped = computeCandidateWeights(matrix, population, new Map([...tinyShares, ['rare', 1e-9], ['x', 1e-9], ['y', 1e-9]]));
+  assert.ok(capped[3] / (capped.reduce((s, w) => s + w, 0) / population.length) <= 5 + 1e-9);
 
   // Clamping: an extreme (near-zero) share is capped at weight 5.
   const extreme = computeCandidateWeights(

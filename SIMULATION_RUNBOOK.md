@@ -215,6 +215,7 @@ Options (anything else is passed through to `evolve.mjs`):
 | `--population N` | candidate population at gen 0 | 300 |
 | `--hours H` | wall-clock budget → `--deadline-minutes` | none |
 | `--threads N` | battle worker threads | cpus-1 capped at 8 (use 8 or 12) |
+| `--profile` | per-worker CPU profile + scenario-memo + RSS stats → `out/evolve-NAME/` | off |
 | `--fg` | foreground instead of nohup | detached |
 | `--dry-run` | print command, exit | off |
 
@@ -261,6 +262,28 @@ The limit is the machine, not the executor: 8 independent single-worker
 processes each run 2.1x slower than one alone (103 -> 217 ms/battle). 8 threads
 gives ~3.8x; 12 and 15 are slower than 8. Profiling and the engine's scenario
 memo are documented in `src/engine/README.md`, "The scenario memo".
+
+### Profiling a run (`--profile`)
+
+```bash
+scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 --profile
+```
+
+Requires `--threads > 0` (no-op serial). Each worker runs a `node:inspector`
+CPU profile for its whole life; on a clean stop (generation/deadline cap
+reached, not a kill) it writes `out/evolve-NAME/worker-<id>.cpuprofile`
+(load into Chrome DevTools' Performance tab) plus
+`out/evolve-NAME/profile-summary.json` with each worker's scenario-memo
+hit/miss counts, build-cache sizes, and RSS (current + 5s-sampled peak) at
+exit — the log line also prints the aggregate hit rate and worker RSS
+totals. A hard kill/Ctrl-C skips the flush, same as `--cpu-prof` elsewhere in
+this repo. Full mechanics: `src/engine/parallel.js`'s `profileDir` option
+and `src/engine/parallelWorker.js`'s `shutdown()`.
+
+Main-thread RSS is logged every generation regardless of `--profile` (in
+each `generation N: done -- ...` log line), since the main process holds the
+full population/checkpoint state and its own growth is worth watching on a
+long run independent of worker profiling.
 
 ## 4. Monitor, stop, resume, queue
 
@@ -483,7 +506,10 @@ Resolved settings for `scripts/sim.sh <csv> --name NAME --threads 12`:
 | Candidate draw weight | 50% normalized 1v1 score + 50% normalized pvpoke usage, usage = rank-position Zipf weight `1/(rank+5)^1.0` (as of 2026-09-08; replaced a raw-score power law that went nearly flat over a wide field) |
 | Curated opponent target | 66% of the pool, capped by the curated teams available; curated teams are never culled or mutated |
 | Composed opponents | built from pvpoke's overall top 100 species |
-| Opponent archetype grouping | opponents sharing ≥2 of 3 base species are grouped (`--archetype-beta`, default 0.5); a group of size s counts for `s^(1-beta)` total votes, both as candidate-side opponent weight and as the divisor of each candidate's consistency score (since 2026-09-08, see `docs/plans/2026-09-08-fitness-restructure.md`) |
+| Opponent archetype grouping | opponents are grouped by their dominant two-species core (the pair of base species most common across the pool; no transitive chaining, since 2026-09-09) (`--archetype-beta`, default 0.5); a group of size s counts for `s^(1-beta)` total votes, both as candidate-side opponent weight and as the divisor of each candidate's consistency score (since 2026-09-08, see `docs/plans/2026-09-08-fitness-restructure.md`) |
+| Opponent-strength weighting | each opponent's vote in a candidate's win rate (and inside its archetype for consistency) is scaled by (that opponent's own win rate against the population)^`--opponent-strength-gamma` (default 1; 0 = off), computed from the same generation's battles in a second pass -- beating a weak singleton earns little, beating a strong team earns most (since 2026-09-09) |
+| Core rivalry | `--core-rivalry R` (default 0.1; 0 = off): in both the candidate population and the opponent pool, every better team sharing any two base species costs a team R x (the field's max-min fitness) before the cull and mutation ranking -- the shadow-twin rule made soft, so trailing near-duplicates of a core are culled first while a second variant that fights well on its own survives; raw fitness in checkpoints is untouched (since 2026-09-09) |
+| Similar-core rivalry | `--similar-rivalry S` (default 1) / `--similar-floor F` (default 0.35; 0 similar-rivalry = exact cores only): a better team whose core is a *similar*, not identical, pair adds a fraction of an identical-core rival to the core-rivalry load, scored by pvpoke's own "Similar Pokemon" metric (`src/engine/similarity.js`, `calculateSimilarity` -- shared types, moves, and traits, normalised 0..1). Matches at or below the floor count as unrelated (0); above it the score scales linearly up to `similar` at 1.0 (Feraligatr/Empoleon ~0.55 loads ~0.3, Charizard/Blaziken ~0.62 loads ~0.4, Annihilape/Mimikyu ~0.33 loads nothing at the default floor). Each better team counts once, through its best-matching core, and a team is charged only for its single most crowded core, so carrying two or three popular cores does not stack the penalty (since 2026-09-09; pvpoke metric adopted 2026-09-09) |
 | Opponent fitness | frequency-normalised by default (`--no-opponent-fitness-normalised` to disable): each candidate's contribution to an opponent's win-rate ledger is weighted down by its most-common member's population share (clamped [0.2, 5]), so a crowded counter-bred core no longer collects N× the credit for beating it |
 | Fitness | `battle-reality` = 0.45 win rate + 0.20 consistency (25th-percentile per-archetype win rate) + 0.25 decided lead-exchange win rate + 0.10 mean closer prior of the back line |
 | Selection statistic | each team's recency-weighted mean fitness over its last 5 generations (`--selection-trailing`, its own window separate from convergence's); the cull, the mutation ranking and the finalist pick all use it, never a single generation's draw (since 2026-09-05; the s2 run showed one draw moves 3.9 points while real teams sit 2.2 apart) |

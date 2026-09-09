@@ -53,7 +53,9 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 - `engine/` — the only code that touches pvpoke. `pvpokeLoader.js` boots
   vendor sources in a Node `vm`; `harness.js` (`buildPokemon`, 1v1
   `simBattle`); `teamBattle.js` (3v3 `battleTeams`, Training/emulate mode);
-  `parallel.js`/`parallelWorker.js` (worker-thread executor, `--threads`).
+  `parallel.js`/`parallelWorker.js` (worker-thread executor, `--threads`);
+  `similarity.js` (pvpoke's own "Similar Pokemon" score, normalised 0..1, for
+  archetypes.js's core-rivalry penalty).
   **Has its own README.md** for engine internals and determinism history.
 - `scoring/` — the 1v1 pruning matrix (`scoreCollection`), shield-scenario
   weighted. Prunes candidates only; never the final ranking.
@@ -64,8 +66,10 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   `data/meta-teams-community.json`, tier weights), `sampleTeams.js` (weighted
   opponent sampler), `usage.js` (per-species usage weights, rank-position
   weighted), `roles.js` (lead/closer/switch priors), `opponentPool.js`
-  (opponent-side GA), `archetypes.js` (groups opponents sharing >=2 base
-  species so a crowded bred core doesn't out-vote a lone one in fitness math).
+  (opponent-side GA), `archetypes.js` (groups opponents by dominant
+  two-species core so a crowded bred core doesn't out-vote a lone one in fitness math,
+  plus the core-rivalry penalty both GAs rank with: identical or pvpoke-similar
+  cores, per `engine/similarity.js`, compete for seats).
 - `evolution/` — expands a collection so each mon also competes as its
   possible evolutions (default on; `--no-evolutions`).
 - `cost/` — `powerup.js` (Stardust/Candy build cost, pure arithmetic) +

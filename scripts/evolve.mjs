@@ -191,7 +191,8 @@ import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
 import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
 import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf, composeSampledOpponent } from '../src/meta/sampleTeams.js';
-import { archetypeGroups, archetypeWeights, DEFAULT_ARCHETYPE_BETA } from '../src/meta/archetypes.js';
+import { archetypeGroups, archetypeWeights, DEFAULT_ARCHETYPE_BETA, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../src/meta/archetypes.js';
+import { createSimilarity } from '../src/engine/similarity.js';
 import { loadMetaTeams, curatedTierWeight } from '../src/meta/teams.js';
 import { rngFromSeed } from '../src/util/rng.js';
 import {
@@ -287,6 +288,30 @@ const DEFAULTS = Object.freeze({
   // 1%-share one. On by default; --no-opponent-fitness-normalised restores
   // the old flat mean for comparison.
   opponentFitnessNormalised: true,
+  // Opponent-strength weighting of each candidate's win rate (2026-09-09,
+  // see evaluateTeamsInOrder): opponent j's vote is scaled by
+  // (its own win rate against the population)^gamma, so beating a weak
+  // singleton that barely wins anything itself earns little and beating a
+  // strong team earns the most. 0 = off (every opponent votes equally).
+  opponentStrengthGamma: 1,
+  // Core rivalry on both GAs (src/meta/archetypes.js coreRivalryFitness):
+  // each better team sharing a two-species core costs a team this fraction
+  // of the field's fitness range before the cull ranks it -- like the
+  // shadow-twin rule, but a penalty rather than a death sentence, so a
+  // second variant that plays differently and fights well still survives.
+  // Keeps a strong core from filling the pool with its own trailing
+  // near-duplicates (the v2 run's opponent pool was 81% mutants of a few
+  // cores by gen 59). 0 = off.
+  coreRivalry: DEFAULT_CORE_RIVALRY,
+  // SIMILAR cores in that penalty, scored by pvpoke's own "Similar Pokemon"
+  // metric (src/engine/similarity.js: shared types, moves and traits,
+  // normalised 0..1). Member pairs at or below `similarFloor` are unrelated;
+  // above it they count linearly up to `similarRivalry` of an identical
+  // species (Feraligatr vs Empoleon ~0.55 raw -> ~0.3 with the defaults).
+  // A team is charged only for its most crowded core, never for two or
+  // three at once. similarRivalry 0 = exact cores only.
+  similarRivalry: DEFAULT_SIMILAR_RIVALRY,
+  similarFloor: DEFAULT_SIMILAR_FLOOR,
 });
 
 const FITNESS_MODES = ['classic', 'battle-reality'];
@@ -796,6 +821,8 @@ function leadExchangeLoser(summary) {
  * everything else; it takes its share out of `winRate` and `snowball` rather
  * than being tacked on, since it is itself a transform of winRate data.
  */
+/** See buildRunConfig's `fitnessSemantics` comment. */
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v5';
 const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 0.45, consistency: 0.2, snowball: 0.25, closer: 0.1 });
 
 /**
@@ -868,7 +895,7 @@ function percentile(sortedAsc, p) {
  * archetypes in the sample is too few for a percentile to mean anything, so
  * consistencyScore falls back to the team's overall winRate in that case.
  *
- * @param {Array<{winRate: number, archetypeGroup: number|null}>} perMeta -
+ * @param {Array<{winRate: number, archetypeGroup: number|null, strength?: number}>} perMeta -
  *   per-opponent results for one team this pass, each tagged with its
  *   opponent's archetype group id (null if no grouping was supplied).
  * @param {number} winRate - this team's overall (weighted) win rate, the
@@ -879,9 +906,13 @@ export function computeConsistencyScore(perMeta, winRate) {
   const byGroup = new Map();
   for (const p of perMeta) {
     if (p.archetypeGroup === null || p.archetypeGroup === undefined) continue;
+    // Each opponent's vote inside its archetype carries its strength weight
+    // (perMeta[].strength, 1 when strength weighting is off).
+    const w = p.strength ?? 1;
+    if (!(w > 0)) continue;
     const cur = byGroup.get(p.archetypeGroup) ?? { sum: 0, n: 0 };
-    cur.sum += p.winRate;
-    cur.n += 1;
+    cur.sum += p.winRate * w;
+    cur.n += w;
     byGroup.set(p.archetypeGroup, cur);
   }
   const archetypeWinRates = [...byGroup.values()].map((v) => v.sum / v.n);
@@ -1284,6 +1315,16 @@ function buildRunConfig(csvPath, opts) {
     // selected/mutated under the old one.
     archetypeBeta: opts.archetypeBeta ?? DEFAULTS.archetypeBeta,
     opponentFitnessNormalised: opts.opponentFitnessNormalised ?? DEFAULTS.opponentFitnessNormalised,
+    // Fingerprint of the grouping/weighting semantics themselves (not a
+    // knob): bumped 2026-09-09 when archetypeGroups moved from transitive
+    // union-find to dominant-core-pair grouping and computeCandidateWeights
+    // moved its clamp after mean-normalisation, so the v2 checkpoints
+    // written under the old semantics start fresh instead of resuming.
+    fitnessSemantics: FITNESS_SEMANTICS,
+    opponentStrengthGamma: opts.opponentStrengthGamma ?? DEFAULTS.opponentStrengthGamma,
+    coreRivalry: opts.coreRivalry ?? DEFAULTS.coreRivalry,
+    similarRivalry: opts.similarRivalry ?? DEFAULTS.similarRivalry,
+    similarFloor: opts.similarFloor ?? DEFAULTS.similarFloor,
     // GA-rate / convergence overrides enter the fingerprint ONLY when set:
     // they change what every generation computes, but leaving them out when
     // absent keeps every pre-flag checkpoint dir resumable.
@@ -1423,6 +1464,20 @@ function teamSignature(team) {
  * @returns {{opponentOriginCounts: object, opponentMeanFitness: number,
  *   opponentMaxFitness: number, toughestOpponents: Array<object>}}
  */
+/** Share of total opponent vote weight (archetype weight x strength) held by archetypes of size 1. */
+function singletonVoteShare(groups, weights, strength) {
+  const size = new Map();
+  for (const g of groups) size.set(g, (size.get(g) ?? 0) + 1);
+  let total = 0;
+  let single = 0;
+  groups.forEach((g, j) => {
+    const w = weights[j] * (strength?.[j] ?? 1);
+    total += w;
+    if (size.get(g) === 1) single += w;
+  });
+  return total > 0 ? single / total : 0;
+}
+
 function computeOpponentAnalytics({ opponents, opponentFitness, opponentArchetypeGroups = null }) {
   const opponentOriginCounts = {};
   for (const o of opponents) opponentOriginCounts[o.origin ?? o.label ?? 'unknown'] = (opponentOriginCounts[o.origin ?? o.label ?? 'unknown'] ?? 0) + 1;
@@ -1496,12 +1551,15 @@ function computeSpeciesShare(matrix, population) {
  * of docs/plans/2026-09-08-fitness-restructure.md): a team's weight is the
  * inverse of its MOST COMMON member's share of the current population, so a
  * counter-bred opponent isn't rewarded N times over just for beating a
- * majority-share core no matter how rare its other two members are. Clamped
- * to [0.2, 5] before normalising so a single near-unique species can't
- * dominate one opponent's fitness on its own; normalised to sum to
- * `population.length` so the weighted totals stay comparable in magnitude to
- * the un-normalised 1-per-team baseline (the `0.5` opponent-fitness
- * fallback, etc).
+ * majority-share core no matter how rare its other two members are. The raw
+ * reciprocals are first scaled to a mean of 1, THEN clamped to [0.2, 5] so a
+ * single near-unique species can't dominate one opponent's fitness on its
+ * own, then renormalised to sum to `population.length` so the weighted
+ * totals stay comparable in magnitude to the un-normalised 1-per-team
+ * baseline (the `0.5` opponent-fitness fallback, etc). Clamping the raw
+ * reciprocal instead (as the 2026-09-08 version did) pinned every team to
+ * the ceiling whenever no species held >20% of the population -- i.e.
+ * always -- and the normalisation then flattened everything to 1.00.
  *
  * @param {object} matrix
  * @param {string[][]} population
@@ -1509,14 +1567,17 @@ function computeSpeciesShare(matrix, population) {
  * @returns {number[]} weight per team, parallel to `population`.
  */
 export function computeCandidateWeights(matrix, population, shareBySpecies) {
+  const n = population.length;
+  if (n === 0) return [];
   const raw = population.map((team) => {
     const species = [...new Set(speciesOfTeam(matrix, team))];
     const maxShare = species.reduce((m, s) => Math.max(m, shareBySpecies.get(s) ?? 0), 1e-9);
-    return Math.min(Math.max(1 / maxShare, 0.2), 5);
+    return 1 / maxShare;
   });
-  const total = raw.reduce((s, w) => s + w, 0);
-  const n = raw.length;
-  return total > 0 ? raw.map((w) => (w / total) * n) : raw;
+  const mean = raw.reduce((s, w) => s + w, 0) / n;
+  const clamped = raw.map((w) => Math.min(Math.max(w / mean, 0.2), 5));
+  const total = clamped.reduce((s, w) => s + w, 0);
+  return clamped.map((w) => (w / total) * n);
 }
 
 function computeGenerationAnalytics({ matrix, population, fitness, lineage, results }) {
@@ -1545,6 +1606,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
     // Deaths from losing a shadow rivalry (a team vs. its shadow-twin) rather
     // than from ranking in the bottom deathRate; see src/teams/evolve.js.
     originCounts.shadowRivalryDied = lineage.shadowRivalryDied?.length ?? 0;
+    originCounts.coreRivalryDied = lineage.coreRivalryDied?.length ?? 0;
 
     const oldCounts = new Map();
     const survivedCounts = new Map();
@@ -1644,9 +1706,14 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   difficulty?: number, trackLeads?: boolean, executor?: object,
  *   onLog?: (msg:string)=>void, roleScores?: Map<string, object>,
  *   cache?: object, opponentWeights?: number[], candidateWeights?: number[],
- *   opponentArchetypeGroups?: number[],
+ *   opponentArchetypeGroups?: number[], opponentStrengthGamma?: number,
  * }} params -- `opponentWeights[j]` (optional, parallel to `opponents`)
- *   weights opponent j's battles in each team's `winRate`; raw counts
+ *   weights opponent j's battles in each team's `winRate`; with
+ *   `opponentStrengthGamma` > 0 (default 0 = off) that weight is further
+ *   multiplied by (opponent j's own raw win rate against every team in this
+ *   call)^gamma, so a vote from an opponent that barely wins anything counts
+ *   for little and a vote from a strong one counts most -- computed from the
+ *   same battles in a second pass, no extra fights; raw counts
  *   (`battles`, per-opponent tallies) are never weighted. `candidateWeights[i]`
  *   (optional, parallel to `teams`) weights team i's contribution to
  *   `opponentTally[j].weightedWinPoints`/`weightedBattles` (frequency-
@@ -1656,7 +1723,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   each `perMeta` entry with its opponent's archetype group id, so
  *   consistencyScore can be computed below.
  * @returns {Promise<{results:object[], opponentTally:Array<{winPoints:number, battles:number}>,
- *   battleCount:number, cachedCount:number, errorCount:number, elapsedMs:number,
+ *   opponentStrength:number[], battleCount:number, cachedCount:number, errorCount:number, elapsedMs:number,
  *   startedAt:number, finishedAt:number}>}
  *   `opponentTally[j]` is the CANDIDATE side's ledger against `opponents[j]`
  *   across every team battled -- src/meta/opponentPool.js turns it into that
@@ -1686,6 +1753,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     opponentWeights = null,
     candidateWeights = null,
     opponentArchetypeGroups = null,
+    opponentStrengthGamma = 0,
   } = params;
   const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
@@ -1785,7 +1853,7 @@ async function evaluateTeamsInOrder(ctx, params) {
   // ---- (3) accumulate --------------------------------------------------
   const opponentTally = opponents.map(() => ({ winPoints: 0, battles: 0, weightedWinPoints: 0, weightedBattles: 0 }));
   let cursor = 0;
-  const results = [];
+  const partials = [];
   for (let idx = 0; idx < prepared.length; idx++) {
     const { members, oppPlans } = prepared[idx];
     const candWeight = candidateWeights ? (candidateWeights[idx] ?? 1) : 1;
@@ -1895,8 +1963,51 @@ async function evaluateTeamsInOrder(ctx, params) {
           winRate: oppWinPoints / oppBattles,
           avgHpMargin: oppHpSum / oppBattles,
           archetypeGroup: opponentArchetypeGroups ? opponentArchetypeGroups[oppIndex] ?? null : null,
+          oppIndex,
+          oppWeight,
+          strength: 1,
         });
       }
+    }
+
+    partials.push({
+      members, perMeta, weightedWinPoints, weightedBattles, hpSum, battles, candidateErrors,
+      exchangeWon, exchangeLost, winsGivenExchangeWon, winsGivenExchangeLost,
+      leadWins, leadBattles, swapHpSum, swapHpCount,
+    });
+  }
+
+  // ---- (4) score: second pass, once every opponent's own win rate is known --
+  // Opponent j's strength = its raw win rate against every team battled here
+  // (the candidate side of the ledger inverted; same battles, no new ones).
+  const opponentStrength = opponentTally.map((t) =>
+    opponentStrengthGamma > 0 && t.battles > 0 ? Math.pow(Math.max(0, 1 - t.winPoints / t.battles), opponentStrengthGamma) : 1
+  );
+  const results = [];
+  for (const partial of partials) {
+    const { members, perMeta, hpSum, battles, candidateErrors, exchangeWon, exchangeLost,
+      winsGivenExchangeWon, winsGivenExchangeLost, leadWins, leadBattles, swapHpSum, swapHpCount } = partial;
+    let { weightedWinPoints, weightedBattles } = partial;
+    if (opponentStrengthGamma > 0) {
+      let sp = 0;
+      let sb = 0;
+      for (const p of perMeta) {
+        p.strength = opponentStrength[p.oppIndex];
+        const w = p.oppWeight * p.strength;
+        const oppBattles = p.wins + p.losses + p.ties;
+        sp += w * (p.wins + 0.5 * p.ties);
+        sb += w * oppBattles;
+      }
+      // Every opponent lost everything (strength 0 across the board): fall
+      // back to the archetype-weighted mean rather than 0/0.
+      if (sb > 0) {
+        weightedWinPoints = sp;
+        weightedBattles = sb;
+      }
+    }
+    for (const p of perMeta) {
+      delete p.oppIndex;
+      delete p.oppWeight;
     }
 
     // With no opponentWeights every oppWeight is 1 and this IS winPoints/battles.
@@ -1964,6 +2075,7 @@ async function evaluateTeamsInOrder(ctx, params) {
   return {
     results,
     opponentTally,
+    opponentStrength,
     battleCount,
     cachedCount,
     errorCount,
@@ -2562,6 +2674,10 @@ function renderDoneMarker(result) {
  *   opponentMetaPool?:number, - top-N species cap on the composed half of the
  *     opponent pool (see src/meta/sampleTeams.js).
  *   battleCache?:boolean, - memoize identical pairings (default true).
+ *   profile?:boolean, - capture per-worker CPU profiles + scenario-memo
+ *     hit/miss stats + RSS (current and peak, sampled every 5s) into outDir
+ *     on a clean exit (default false; no-op without threads). Main-thread
+ *     RSS is also logged every generation regardless of this flag.
  *     NOT part of the checkpoint fingerprint (pure performance knob).
  *   deadlineMinutes?:number, - simple stop-before-next-generation budget;
  *     NOT part of the checkpoint config fingerprint (see buildRunConfig).
@@ -2599,6 +2715,8 @@ export async function runEvolution(csvPath, opts = {}) {
 
   const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath, { cp: config.cp });
   const ctx = await initEngine({ cp: config.cp });
+  // One pvpoke similarity scorer (memoised per species/moveset pair) shared by both GAs' core rivalry.
+  const similarity = createSimilarity();
   const league = leagueForCp(config.cp);
   // Same expansion src/cli.js does: each mon also competes as anything it can
   // evolve into, so the GA can pick a form you don't own yet. Part of the run
@@ -2645,12 +2763,31 @@ export async function runEvolution(csvPath, opts = {}) {
   );
 
   const threaded = typeof threads === 'number' && threads > 0;
-  const executor = threaded ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true }) : null;
+  const profileDir = opts.profile ? outDir : undefined;
+  const executor = threaded
+    ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true, profileDir })
+    : null;
 
   try {
     return await runLoop();
   } finally {
-    if (executor) await executor.close();
+    if (executor) {
+      const stats = await executor.close();
+      if (profileDir && stats.length > 0) {
+        const totalHits = stats.reduce((s, w) => s + w.memoHits, 0);
+        const totalMisses = stats.reduce((s, w) => s + w.memoMisses, 0);
+        const hitRate = totalHits + totalMisses > 0 ? totalHits / (totalHits + totalMisses) : 0;
+        const peakRssMb = Math.max(...stats.map((w) => w.peakRssMb ?? 0));
+        const totalRssMb = stats.reduce((s, w) => s + (w.rssMb ?? 0), 0);
+        writeFileSync(path.join(profileDir, 'profile-summary.json'), JSON.stringify(stats, null, 2), 'utf8');
+        log(
+          `evolve: profiling captured -- ${stats.length} worker .cpuprofile file(s) in ${profileDir}, ` +
+            `scenario-memo hit rate ${(hitRate * 100).toFixed(1)}% (${totalHits} hits / ${totalMisses} misses), ` +
+            `worker RSS at exit ${totalRssMb}MB total (peak ${peakRssMb}MB on the worst worker); ` +
+            `per-worker detail in ${path.join(profileDir, 'profile-summary.json')}`
+        );
+      }
+    }
   }
 
   async function runLoop() {
@@ -2757,6 +2894,7 @@ export async function runEvolution(csvPath, opts = {}) {
         opponentWeights: oppArchetypeWeights,
         candidateWeights: config.opponentFitnessNormalised ? candidateWeights : null,
         opponentArchetypeGroups: oppArchetypeGroups,
+        opponentStrengthGamma: config.opponentStrengthGamma,
       });
       // 'classic' (default) keeps today's plain win-rate
       // fitness; 'battle-reality' uses the blend (see computeBlendFitness) --
@@ -2822,6 +2960,10 @@ export async function runEvolution(csvPath, opts = {}) {
             // -- see mutationRatesAt.
             ...mutationRatesAt(generation, config),
             immigrantFraction: config.immigrantFraction,
+            coreRivalry: config.coreRivalry,
+            similarRivalry: config.similarRivalry,
+            similarFloor: config.similarFloor,
+            similarity,
           },
         });
         lineage = advanced.lineage;
@@ -2845,6 +2987,10 @@ export async function runEvolution(csvPath, opts = {}) {
             opts: {
               ...(config.opponentDeathRate !== undefined ? { deathRate: config.opponentDeathRate } : {}),
               ...opponentMutationRatesAt(generation, config),
+              coreRivalry: config.coreRivalry,
+              similarRivalry: config.similarRivalry,
+              similarFloor: config.similarFloor,
+              similarity,
             },
           });
           nextOpponents = advancedOpponents.pool;
@@ -2874,7 +3020,9 @@ export async function runEvolution(csvPath, opts = {}) {
         opponentCount: opponents.length,
         opponentPool: serializeOpponentPool(opponents),
         opponentFitness,
-        opponentLineage: opponentLineage ? { diedCount: opponentLineage.died.length, originCounts: opponentLineage.originCounts } : null,
+        opponentLineage: opponentLineage
+          ? { diedCount: opponentLineage.died.length, coreRivalryDiedCount: opponentLineage.coreRivalryDied?.length ?? 0, originCounts: opponentLineage.originCounts }
+          : null,
         lineage,
         nextPopulation,
         nextOpponentPool: serializeOpponentPool(nextOpponents),
@@ -2890,6 +3038,10 @@ export async function runEvolution(csvPath, opts = {}) {
         analytics: {
           ...computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),
           ...computeOpponentAnalytics({ opponents, opponentFitness, opponentArchetypeGroups: oppArchetypeGroups }),
+          // Share of the candidates' total vote weight (archetype x strength)
+          // held by singleton archetypes -- the number the 2026-09-09
+          // strength weighting exists to bring down.
+          singletonVoteShare: singletonVoteShare(oppArchetypeGroups, oppArchetypeWeights, run.opponentStrength),
         },
         resumed: false,
       };
@@ -2919,7 +3071,7 @@ export async function runEvolution(csvPath, opts = {}) {
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
           `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
-          `${formatDuration(run.elapsedMs)} elapsed`
+          `${formatDuration(run.elapsedMs)} elapsed, main-thread RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB`
       );
 
       const conv = hasConverged(history, config.convergence ?? {});
@@ -3034,6 +3186,7 @@ export async function runEvolution(csvPath, opts = {}) {
       opponents: eliteOpponents,
       pairingsFor: ownLeadPairing,
       difficulty,
+      opponentStrengthGamma: config.opponentStrengthGamma,
       trackLeads: true,
       executor,
       onLog: log,
@@ -3212,6 +3365,16 @@ Options:
                             --threads 1 for the serial reference mode, or
                             a value above 8 if the machine has memory to
                             spare                                        (default ${defaultThreadCount()} on this machine)
+  --profile                capture a per-worker CPU profile (node:inspector)
+                            spanning the whole run plus scenario-memo hit/
+                            miss stats and RSS (current + 5s-sampled peak);
+                            written to <out-dir>/worker-*.cpuprofile and
+                            <out-dir>/profile-summary.json on a clean exit
+                            (Ctrl-C/kill skips the flush -- only a normal or
+                            --deadline-minutes stop captures data). Main-
+                            thread RSS is logged every generation regardless
+                            of this flag. Requires
+                            --threads > 0 (a no-op in serial mode)
   --deadline-minutes D    optional wall-clock budget (stop before the next
                             generation once past it; no self-tuning)   (default: none)
   --cp N                  CP cap / league                            (default ${DEFAULTS.cp})
@@ -3296,6 +3459,24 @@ Options:
                             archetype's total weight (src/meta/archetypes.js);
                             0 = flat/raw mean, 1 = one-vote-per-archetype
                                                        (default ${DEFAULTS.archetypeBeta})
+  --opponent-strength-gamma G  scale each opponent's vote in a candidate's
+                            win rate by (that opponent's own win rate)^G, so
+                            beating a strong team counts more than beating a
+                            weak singleton; 0 = off        (default ${DEFAULTS.opponentStrengthGamma})
+  --core-rivalry R         each better team sharing a two-species core costs
+                            a team R x (field's fitness range) before the
+                            cull ranks it, in the population and the opponent
+                            pool alike; 0 = off             (default ${DEFAULTS.coreRivalry})
+  --similar-rivalry S      weight of a maximally similar different-species
+                            member in --core-rivalry, relative to the identical
+                            species; similarity is pvpoke's own "Similar
+                            Pokemon" score (types, moves, traits; 0..1); only a
+                            team's most crowded core is charged; 0 = exact
+                            cores only                      (default ${DEFAULTS.similarRivalry})
+  --similar-floor F        pvpoke similarity at or below which two species are
+                            unrelated for --similar-rivalry; above it the match
+                            scales linearly (Feraligatr vs Empoleon ~0.55,
+                            Charizard vs Blaziken ~0.62)    (default ${DEFAULTS.similarFloor})
   --no-opponent-fitness-normalised  disable frequency-normalised opponent
                             fitness (each candidate's contribution to an
                             opponent's win-rate ledger weighted down by its
@@ -3317,6 +3498,15 @@ function intFlag(value, name, fallback) {
   return n;
 }
 
+/** A non-negative finite number flag (no upper bound, unlike fractionFlag). */
+function numberFlag(value, name, fallback) {
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`--${name} must be a non-negative number, got "${value}"`);
+  }
+  return n;
+}
 function fractionFlag(value, name, fallback) {
   if (value === undefined) return fallback;
   const n = Number(value);
@@ -3346,6 +3536,7 @@ async function main(argv) {
         generations: { type: 'string' },
         seed: { type: 'string' },
         threads: { type: 'string' },
+        profile: { type: 'boolean' },
         'deadline-minutes': { type: 'string' },
         cp: { type: 'string' },
         'fixed-opponents': { type: 'boolean' },
@@ -3383,6 +3574,10 @@ async function main(argv) {
         'conv-top-n': { type: 'string' },
         'archetype-beta': { type: 'string' },
         'no-opponent-fitness-normalised': { type: 'boolean' },
+        'opponent-strength-gamma': { type: 'string' },
+        'core-rivalry': { type: 'string' },
+        'similar-rivalry': { type: 'string' },
+        'similar-floor': { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -3406,6 +3601,7 @@ async function main(argv) {
     generations: intFlag(values.generations, 'generations', DEFAULTS.generations),
     seed: values.seed ?? DEFAULTS.seed,
     threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : defaultThreadCount(),
+    profile: !!values.profile,
     deadlineMinutes: values['deadline-minutes'] !== undefined ? intFlag(values['deadline-minutes'], 'deadline-minutes', undefined) : undefined,
     cp: intFlag(values.cp, 'cp', DEFAULTS.cp),
     fixedOpponents: !!values['fixed-opponents'],
@@ -3448,6 +3644,10 @@ async function main(argv) {
     convTopN: values['conv-top-n'] !== undefined ? intFlag(values['conv-top-n'], 'conv-top-n', undefined) : undefined,
     archetypeBeta: fractionFlag(values['archetype-beta'], 'archetype-beta', undefined),
     opponentFitnessNormalised: values['no-opponent-fitness-normalised'] ? false : undefined,
+    opponentStrengthGamma: values['opponent-strength-gamma'] !== undefined ? numberFlag(values['opponent-strength-gamma'], 'opponent-strength-gamma') : undefined,
+    coreRivalry: values['core-rivalry'] !== undefined ? numberFlag(values['core-rivalry'], 'core-rivalry') : undefined,
+    similarRivalry: values['similar-rivalry'] !== undefined ? numberFlag(values['similar-rivalry'], 'similar-rivalry') : undefined,
+    similarFloor: values['similar-floor'] !== undefined ? numberFlag(values['similar-floor'], 'similar-floor') : undefined,
   };
 
   const realLog = console.log;

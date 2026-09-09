@@ -277,11 +277,11 @@ export function partitionContiguous(n, workers) {
  *   caller can track/terminate it if a LATER worker in the same pool fails.
  * @returns {Promise<Worker>}
  */
-function bootWorker(vendorRoot, onStarted) {
+function bootWorker(vendorRoot, onStarted, profileDir) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
-      worker = new Worker(WORKER_PATH, { workerData: { vendorRoot } });
+      worker = new Worker(WORKER_PATH, { workerData: { vendorRoot, profileDir } });
     } catch (err) {
       reject(new Error(`createExecutor: failed to start worker: ${err.message}`));
       return;
@@ -327,7 +327,11 @@ function bootWorker(vendorRoot, onStarted) {
  * of paying it per batch. See the module header above for the full run()
  * concurrency policy and worker-crash policy.
  *
- * @param {{ threads?: number, vendorRoot?: string, continueOnError?: boolean }} [opts]
+ * @param {{ threads?: number, vendorRoot?: string, continueOnError?: boolean, profileDir?: string }} [opts]
+ *   `profileDir` is diagnostic-only and off by default: when set, each worker
+ *   runs a `node:inspector` CPU profiler for its whole life and, on `close()`,
+ *   writes `<profileDir>/worker-<i>.cpuprofile` plus reports its scenario-memo
+ *   hit/miss counts (see `close()`'s return value and parallelWorker.js).
  *   `threads` is resolved ONCE via resolveThreadCount() when the pool boots
  *   and fixed for the executor's lifetime -- unlike `runBattles`, it is NOT
  *   re-clamped to any individual `run()` call's `specs.length`, because the
@@ -399,6 +403,34 @@ export function createExecutor(opts = {}) {
       w.removeAllListeners();
       w.terminate().catch(() => undefined);
     }
+  }
+
+  /** Diagnostic-only, opt-in via opts.profileDir: ask every worker to stop its
+   * CPU profiler (if running), flush a .cpuprofile file, and report its
+   * scenario-memo hit/miss counts before the pool is torn down -- terminate()
+   * gives a worker no chance to flush anything, so a plain close() would
+   * silently lose profiling data. Best-effort: a worker that doesn't answer
+   * within the timeout is skipped rather than blocking close() indefinitely. */
+  function collectShutdownStats(p) {
+    if (!p || !opts.profileDir) return Promise.resolve([]);
+    return Promise.all(
+      p.workers.map(
+        (w, i) =>
+          new Promise((resolve) => {
+            const done = (stats) => {
+              w.off('message', onMessage);
+              clearTimeout(timer);
+              resolve(stats ? { worker: i, ...stats } : null);
+            };
+            const onMessage = (msg) => {
+              if (msg.type === 'shutdownDone') done(msg.stats);
+            };
+            const timer = setTimeout(() => done(null), 5000);
+            w.on('message', onMessage);
+            w.postMessage({ type: 'shutdown' });
+          })
+      )
+    ).then((results) => results.filter(Boolean));
   }
 
   /** A worker died (crash or unexpected exit) -- see module header's worker-
@@ -502,7 +534,7 @@ export function createExecutor(opts = {}) {
 
     const threadCount = Math.max(1, resolveThreadCount(opts.threads));
     const started = [];
-    const bootOne = () => bootWorker(vendorRoot, (w) => started.push(w));
+    const bootOne = () => bootWorker(vendorRoot, (w) => started.push(w), opts.profileDir);
 
     bootPromise = Promise.all(Array.from({ length: threadCount }, bootOne))
       .then((workers) => {
@@ -551,6 +583,8 @@ export function createExecutor(opts = {}) {
       return enqueue(() => runInternal(specs));
     },
 
+    /** @returns {Promise<Array<object>>} per-worker profile/memo stats
+     *   (empty unless `opts.profileDir` was set) -- see collectShutdownStats. */
     async close() {
       closed = true;
       return enqueue(async () => {
@@ -562,9 +596,11 @@ export function createExecutor(opts = {}) {
             // to terminate.
           }
         }
+        const stats = await collectShutdownStats(pool);
         terminatePool(pool);
         pool = null;
         bootPromise = null;
+        return stats;
       });
     },
   };

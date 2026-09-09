@@ -331,3 +331,22 @@ test('the same seed and inputs produce the same next pool', () => {
   const c = nextOpponentPool(ctx, { ...params, seed: 'determinism-other' });
   assert.notDeepEqual(a.pool.map((e) => e.id), c.pool.map((e) => e.id));
 });
+
+test('coreRivalry: evolvable opponents sharing a core are ranked with a penalty per better rival; curated entries neither pay nor count', () => {
+  // similarRivalry 0: a 12-species meta slice is full of same-role members, so only the exact core is under test here.
+  const base = newPool(12, 'core-rival', 0);
+  // Force a shared core: give entries 1..3 the first two members of entry 0.
+  const pool = base.map((e, i) =>
+    i >= 1 && i <= 3
+      ? { ...e, id: `${e.id}-core${i}`, members: [e.members[0] === base[0].members[0] ? e.members[0] : base[0].members[0], base[0].members[1], e.members[2]] }
+      : e
+  );
+  const fitness = pool.map((_, i) => 1 - i * 0.01); // entry 0 best, then 1, 2, 3 ... 11
+  const params = { pool, targetSize: 12, weights, curated, curatedRatio: 0, movesetPool, seed: 'core-rival-next', opts: { ...NEVER, deathRate: 0.25 } };
+  const off = nextOpponentPool(ctx, { ...params, fitness, opts: { ...params.opts, coreRivalry: 0 } });
+  assert.deepEqual(off.lineage.died.slice().sort((a, b) => a - b), [9, 10, 11], 'sanity: plain cull takes the tail');
+  const on = nextOpponentPool(ctx, { ...params, fitness, opts: { ...params.opts, coreRivalry: 0.5, similarRivalry: 0 } });
+  assert.ok(!on.lineage.died.includes(0), 'the best of the core never pays');
+  assert.ok(on.lineage.coreRivalryDied.some((i) => i >= 1 && i <= 3), 'a trailing core variant died to the penalty');
+  assert.equal(on.pool.length, 12);
+});

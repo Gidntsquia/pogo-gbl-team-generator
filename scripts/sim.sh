@@ -31,6 +31,10 @@
 #   --population N    GA population                           (default 300)
 #   --hours H         wall-clock budget -> --deadline-minutes (default: none)
 #   --threads N       worker threads (default: evolve.mjs's cpus-1, capped at 8)
+#   --profile         passthrough to evolve.mjs: per-worker CPU profile +
+#                     scenario-memo hit/miss stats, flushed to out/evolve-NAME/
+#                     on a clean exit (not a recognized flag here -- falls
+#                     through to evolve.mjs via the generic passthrough)
 #   --fg              run in the foreground instead of detaching
 #   --dry-run         print the evolve.mjs command and exit
 #   --help            this text

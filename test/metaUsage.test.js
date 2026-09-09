@@ -70,7 +70,7 @@ test('a species absent from the score source is left out of the map entirely', (
 test('rank weighting: ratio between adjacent ranks matches ((r2+k)/(r1+k))^alpha', () => {
   // Source scores: alpha 90 (rank 1) > delta 70 (rank 2) > beta 50 (rank 3) > gamma 10 (rank 4).
   const weights = loadUsageWeights(ctx, FAKE_UNIVERSE_OPTS);
-  const expectedRatio = Math.pow((2 + 5) / (1 + 5), 1.0); // rank1 vs rank2, default alpha=1, k=5
+  const expectedRatio = Math.pow((2 + 20) / (1 + 20), 1.0); // rank1 vs rank2, default alpha=1, k=20
   const actualRatio = weights.get('alpha') / weights.get('delta');
   assert.ok(Math.abs(actualRatio - expectedRatio) < 1e-9, `expected ratio ${expectedRatio}, got ${actualRatio}`);
 });
