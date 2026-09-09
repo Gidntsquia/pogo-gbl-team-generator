@@ -30,6 +30,7 @@ import {
 } from '../src/teams/evolve.js';
 
 import {
+  assertCollectionMatchesCheckpoint,
   buildOpponentArchive,
   configsMatch,
   expandBanToCandidateSpeciesIds,
@@ -875,17 +876,23 @@ test('configsMatch ignores eliteCount (a finished run re-renders with --elites N
   assert.ok(!configsMatch(base, { ...base, selectionTrailing: 5 })); // a selection change IS a different run
 });
 
-test('computeBlendFitness folds in consistencyScore under the new weight key, falls back to winRate when omitted', () => {
+test('computeBlendFitness folds in consistencyScore under the given weight key, falls back to winRate when omitted', () => {
+  const weights = { winRate: 0.45, consistency: 0.2, snowball: 0.25, closer: 0.1 };
   const parts = { winRate: 0.6, snowballScore: 0.5, closerScore: 0.4, consistencyScore: 0.2 };
-  const withConsistency = computeBlendFitness(parts);
+  const withConsistency = computeBlendFitness(parts, weights);
   const expected = 0.45 * 0.6 + 0.2 * 0.2 + 0.25 * 0.5 + 0.1 * 0.4;
   assert.ok(Math.abs(withConsistency - expected) < 1e-9);
 
   // Omitting consistencyScore falls back to winRate for that term.
   const { consistencyScore, ...withoutConsistency } = parts;
-  const fallback = computeBlendFitness(withoutConsistency);
+  const fallback = computeBlendFitness(withoutConsistency, weights);
   const expectedFallback = 0.45 * 0.6 + 0.2 * 0.6 + 0.25 * 0.5 + 0.1 * 0.4;
   assert.ok(Math.abs(fallback - expectedFallback) < 1e-9);
+});
+
+test('computeBlendFitness defaults to pure winRate (snowball/closer/consistency currently disabled)', () => {
+  const parts = { winRate: 0.6, snowballScore: 0.5, closerScore: 0.4, consistencyScore: 0.2 };
+  assert.strictEqual(computeBlendFitness(parts), 0.6);
 });
 
 test('computeConsistencyScore: 25th percentile of per-archetype mean win rate, with a <4-archetype fallback to winRate', () => {
@@ -996,4 +1003,21 @@ test('renderEvolveReportHtml: held-out final-pass shape (archive + fresh strata,
   assert.match(html, /By opponent stratum \(unweighted\): curated 52% \(147\)/);
   assert.match(html, /last 10 generation\(s\) \(1500 eligible of 2400 seen\)/);
   assert.ok(!/undefined|NaN/.test(html), 'no undefined/NaN in the held-out shape');
+});
+
+test('assertCollectionMatchesCheckpoint: passes on an identical collection, names the cause when the CSV was rewritten', () => {
+  const builtMons = { 'tinkaton#2': { speciesId: 'tinkaton' }, 'furret#21': { speciesId: 'furret' } };
+  const population = [['tinkaton#2', 'furret#21']];
+  const same = { population, builtMons, checkpointHash: 'abc', collectionHash: 'abc', csvPath: 'x.csv' };
+  assert.doesNotThrow(() => assertCollectionMatchesCheckpoint(same));
+  // Pre-hash checkpoint (no checkpointHash) still resumes when every key resolves.
+  assert.doesNotThrow(() => assertCollectionMatchesCheckpoint({ ...same, checkpointHash: undefined }));
+  // Hash mismatch wins even when the keys happen to resolve.
+  assert.throws(() => assertCollectionMatchesCheckpoint({ ...same, collectionHash: 'def' }), /collection changed/);
+  // Row shift (the 2026-09-09 crash): the key parses but row 21 is now a different species.
+  const shifted = { ...builtMons, 'furret#21': undefined, 'jellicent#21': { speciesId: 'jellicent' } };
+  assert.throws(
+    () => assertCollectionMatchesCheckpoint({ ...same, checkpointHash: undefined, builtMons: shifted }),
+    /1 candidate key\(s\).*furret#21/
+  );
 });

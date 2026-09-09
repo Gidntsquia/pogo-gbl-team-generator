@@ -178,7 +178,8 @@
 // lost even without a full checkpoint resume. out/evolve-DONE is written
 // LAST, only on a fully successful run.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -823,7 +824,10 @@ function leadExchangeLoser(summary) {
  */
 /** See buildRunConfig's `fitnessSemantics` comment. */
 const FITNESS_SEMANTICS = 'core-pair-archetypes-v5';
-const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 0.45, consistency: 0.2, snowball: 0.25, closer: 0.1 });
+// Snowball/closer/consistency disabled for now (weights zeroed rather than
+// removed, so they're a one-line revert away) -- fitness is currently pure
+// winRate.
+const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 1, consistency: 0, snowball: 0, closer: 0 });
 
 /**
  * Per-team snowball score: this team's OWN fraction of DECIDED lead exchanges
@@ -1374,6 +1378,203 @@ export function configsMatch(a, b) {
   return JSON.stringify(strip(a ?? {})) === JSON.stringify(strip(b ?? {}));
 }
 
+/** Which config keys differ between a stale checkpoint and this run, for a resume-refusal error message. */
+function describeConfigMismatch(stale, current) {
+  const keys = new Set([...Object.keys(stale ?? {}), ...Object.keys(current ?? {})]);
+  keys.delete('eliteCount');
+  const diffs = [];
+  for (const key of keys) {
+    const a = (stale ?? {})[key];
+    const b = (current ?? {})[key];
+    if (JSON.stringify(a) !== JSON.stringify(b)) diffs.push(`${key}: ${JSON.stringify(a)} -> ${JSON.stringify(b)}`);
+  }
+  return diffs.length > 0 ? diffs.join(', ') : 'unknown difference';
+}
+
+/**
+ * Guard for the one input the config fingerprint cannot see: the collection's
+ * CONTENT. Candidate keys are `${speciesId}#${sourceRow}` (src/scoring), so a
+ * checkpoint's population only means something against the exact CSV it was
+ * bred from. The 2026-09-09 `meta-vs-meta-newseason-v3` resume crashed with
+ * `Cannot read properties of undefined (reading 'speciesId')` because sim.sh
+ * --meta rebuilt out/meta-collection-1500.csv from a newer vendor pin whose
+ * rankings order had shifted: every `speciesId#row` still parsed, but pointed
+ * at a different species' row. Two checks, either of which throws a message
+ * naming the actual cause instead of an undefined-property crash:
+ *
+ *  1. `collectionHash` (sha256 of the CSV bytes, written into every
+ *     checkpoint alongside `config`, NOT part of the fingerprint so pre-hash
+ *     checkpoint dirs still resume) must match when the checkpoint has one.
+ *  2. Every key in the population to resume must resolve in the freshly
+ *     built candidate lookup (`deduped.builtMons`) to the same speciesId the
+ *     key names -- the fallback for checkpoints written before the hash.
+ *
+ * @param {object} args
+ * @param {string[][]} args.population - teams (member keys) to resume from
+ * @param {Record<string, {speciesId: string}>} args.builtMons - the freshly built lookup
+ * @param {string|undefined} args.checkpointHash - `collectionHash` from the checkpoint, if any
+ * @param {string} args.collectionHash - sha256 of the CSV about to be used
+ * @param {string} args.csvPath - for the error text
+ * @throws {Error} when the collection no longer matches the checkpoint
+ */
+export function assertCollectionMatchesCheckpoint({ population, builtMons, checkpointHash, collectionHash, csvPath }) {
+  const hint =
+    `Candidate keys are speciesId#csvRow, so a run can only resume against the byte-identical ` +
+    `collection it started from (${csvPath}). Restore that file (for --meta runs: the CSV built ` +
+    `from the vendor pin the run launched under), or delete the checkpoints to start fresh.`;
+  if (checkpointHash && checkpointHash !== collectionHash) {
+    throw new Error(
+      `evolve: collection changed since the checkpoint was written ` +
+        `(checkpoint sha256 ${checkpointHash.slice(0, 12)}, current ${collectionHash.slice(0, 12)}). ${hint}`
+    );
+  }
+  const stale = [];
+  for (const team of population) {
+    for (const key of team) {
+      const speciesOfKey = key.slice(0, key.lastIndexOf('#'));
+      const built = builtMons[key];
+      if (!built || built.speciesId !== speciesOfKey) stale.push(key);
+    }
+  }
+  if (stale.length > 0) {
+    const distinct = [...new Set(stale)];
+    throw new Error(
+      `evolve: ${distinct.length} candidate key(s) in the checkpoint population no longer resolve in the ` +
+        `collection (e.g. ${distinct.slice(0, 5).join(', ')}). ${hint}`
+    );
+  }
+}
+
+function hashFile(p) {
+  return createHash('sha256').update(readFileSync(p)).digest('hex');
+}
+
+/**
+ * Pre-baked start / cross-flag "resume": load generation 0's population and
+ * opponent pool from ANOTHER run's checkpoint file (`--seed-from`) instead of
+ * sampling fresh via initPopulation/initOpponentPool. This is deliberately
+ * NOT a config-matching resume -- the whole point is to let a new run start
+ * a few generations in with different flags (population size, curated-ratio,
+ * mutation rates, even a different-but-similar collection), which the
+ * strict `configsMatch` in-place resume (see the main resume scan above)
+ * cannot do without silently overwriting the source checkpoints. Point
+ * `--out-dir` at a NEW directory and `--seed-from` at the old run's
+ * checkpoint you want to branch from (e.g.
+ * `out/evolve-old/evolve-gen42.json`); the new run gets its own fresh
+ * checkpoint chain from generation 0, seeded with that population.
+ *
+ * Species keys that no longer resolve against the CURRENT collection
+ * (checked the same way `assertCollectionMatchesCheckpoint` does, but as a
+ * per-team filter rather than a hard stop -- a "similar" seed collection is
+ * expected to differ) are dropped; if the collection hash also differs this
+ * is logged, not thrown, since seeding across collections is the point.
+ * Short of the target count, `initPopulation` tops up the remainder;
+ * long, the fittest are kept (by the checkpoint's own last-measured
+ * fitness, oldest members with no fitness score sorted last).
+ *
+ * @param {object} params
+ * @param {string} params.seedPath - path to a `evolve-gen<N>.json` checkpoint
+ * @param {object} params.ctx - engine context (for rehydrateOpponentPool)
+ * @param {object} params.deduped - this run's scored/deduped matrix
+ * @param {string[]} params.pool - this run's candidate sampling pool
+ * @param {Map<string,number>} params.weights
+ * @param {number} params.populationCount - target gen-0 population size
+ * @param {number} params.opponentCount - target gen-0 opponent pool size
+ * @param {Array<object>} params.curatedPool
+ * @param {string[]} params.candidateExcludeSpecies
+ * @param {string} params.seed
+ * @param {(msg:string)=>void} params.log
+ * @returns {{population: string[][], opponentPool: object[]}}
+ */
+function seedFromCheckpoint({
+  seedPath,
+  ctx,
+  deduped,
+  pool,
+  weights,
+  populationCount,
+  opponentCount,
+  curatedPool,
+  candidateExcludeSpecies,
+  seed,
+  log,
+}) {
+  if (!existsSync(seedPath)) {
+    throw new Error(`evolve: --seed-from ${seedPath} does not exist`);
+  }
+  const cp = JSON.parse(readFileSync(seedPath, 'utf8'));
+  if (cp.formatVersion !== CHECKPOINT_FORMAT_VERSION) {
+    throw new Error(
+      `evolve: --seed-from ${seedPath} is checkpoint format ${cp.formatVersion ?? '(unversioned)'} but this ` +
+        `code expects format ${CHECKPOINT_FORMAT_VERSION}. Re-run the source simulation with current code first.`
+    );
+  }
+  const seedPopulation = cp.nextPopulation ?? [];
+  const valid = [];
+  let dropped = 0;
+  for (const team of seedPopulation) {
+    const ok = team.every((key) => {
+      const speciesOfKey = key.slice(0, key.lastIndexOf('#'));
+      const built = deduped.builtMons[key];
+      return built && built.speciesId === speciesOfKey;
+    });
+    if (ok) valid.push(team);
+    else dropped += 1;
+  }
+  if (dropped > 0) {
+    log(`evolve: --seed-from dropped ${dropped}/${seedPopulation.length} seed team(s) whose species no longer resolve in this collection`);
+  }
+  // `cp.fitness` is index-aligned to `cp.population` (the checkpoint's last-scored
+  // generation), not `nextPopulation` -- look each seed team up by signature so
+  // elites carried over unchanged land their real fitness; bred offspring with no
+  // match (undefined) sort last, per this function's own JSDoc.
+  const fitnessBySignature = new Map(
+    (cp.population ?? []).map((team, i) => [teamSignature(team), cp.fitness?.[i]])
+  );
+  const sortedValid = [...valid].sort((a, b) => {
+    const fa = fitnessBySignature.get(teamSignature(a));
+    const fb = fitnessBySignature.get(teamSignature(b));
+    if (fa === undefined && fb === undefined) return 0;
+    if (fa === undefined) return 1;
+    if (fb === undefined) return -1;
+    return fb - fa;
+  });
+  let population = sortedValid.slice(0, populationCount);
+  if (population.length < populationCount) {
+    const topUp = initPopulation({
+      matrix: deduped,
+      pool,
+      weights,
+      count: populationCount - population.length,
+      seed: `${seed}-seed-topup`,
+      excludeSpecies: candidateExcludeSpecies,
+    });
+    population = [...population, ...topUp];
+  }
+
+  let opponentPool = cp.nextOpponentPool ? rehydrateOpponentPool(ctx, cp.nextOpponentPool, curatedPool, log) : [];
+  if (opponentPool.length > opponentCount) {
+    opponentPool = opponentPool.slice(0, opponentCount);
+  } else if (opponentPool.length < opponentCount) {
+    const fresh = initOpponentPool(ctx, {
+      size: opponentCount - opponentPool.length,
+      weights,
+      curated: [],
+      curatedRatio: 0,
+      roleScores: undefined,
+      movesetPool: undefined,
+      seed: `${seed}-seed-opponent-topup`,
+    }).filter(Boolean);
+    opponentPool = [...opponentPool, ...fresh];
+  }
+
+  log(
+    `evolve: seeded from ${seedPath} -- population ${population.length} (${valid.length} carried over), ` +
+      `opponent pool ${opponentPool.length}`
+  );
+  return { population, opponentPool };
+}
+
 function checkpointPath(outDir, generation) {
   return path.join(outDir, `evolve-gen${generation}.json`);
 }
@@ -1390,7 +1591,14 @@ function readCheckpoint(outDir, generation) {
 
 function writeCheckpoint(outDir, generation, data) {
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(checkpointPath(outDir, generation), JSON.stringify(data, null, 2), 'utf8');
+  const finalPath = checkpointPath(outDir, generation);
+  // Write to a temp file then rename over the final path -- rename is atomic
+  // on POSIX, so a SIGTERM (e.g. from mem-watchdog.sh) landing mid-write can
+  // only ever leave a stray .tmp file, never a truncated checkpoint that
+  // readCheckpoint's catch-and-return-null would silently treat as absent.
+  const tmpPath = `${finalPath}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+  renameSync(tmpPath, finalPath);
 }
 
 function writeGenerationsAnalytics(outDir, generationRecords) {
@@ -2006,8 +2214,8 @@ async function evaluateTeamsInOrder(ctx, params) {
       }
     }
     for (const p of perMeta) {
-      delete p.oppIndex;
-      delete p.oppWeight;
+      p.oppIndex = undefined;
+      p.oppWeight = undefined;
     }
 
     // With no opponentWeights every oppWeight is 1 and this IS winPoints/battles.
@@ -2674,10 +2882,13 @@ function renderDoneMarker(result) {
  *   opponentMetaPool?:number, - top-N species cap on the composed half of the
  *     opponent pool (see src/meta/sampleTeams.js).
  *   battleCache?:boolean, - memoize identical pairings (default true).
- *   profile?:boolean, - capture per-worker CPU profiles + scenario-memo
- *     hit/miss stats + RSS (current and peak, sampled every 5s) into outDir
- *     on a clean exit (default false; no-op without threads). Main-thread
- *     RSS is also logged every generation regardless of this flag.
+ *   profile?:boolean, - capture per-worker CPU profiles into outDir on a
+ *     clean exit (default false; no-op without threads). Also gates a live
+ *     per-generation poll (see parallel.js's executor.stats()): with
+ *     --profile, every generation's log line adds each worker's current+peak
+ *     RSS, scenario-memo size, and mon-cache size, for mid-run memory/speed
+ *     debugging -- off by default so a normal run pays nothing for it.
+ *     Main-thread RSS is logged every generation regardless of this flag.
  *     NOT part of the checkpoint fingerprint (pure performance knob).
  *   deadlineMinutes?:number, - simple stop-before-next-generation budget;
  *     NOT part of the checkpoint config fingerprint (see buildRunConfig).
@@ -2686,6 +2897,15 @@ function renderDoneMarker(result) {
  *     run and reused across every generation AND the final elites pass.
  *     Omitted/falsy keeps the serial battleTeams loop. NOT part of the
  *     checkpoint fingerprint (pure performance knob).
+ *   seedFrom?:string, - path to another run's `evolve-gen<N>.json` checkpoint
+ *     to seed generation 0's population and opponent pool from, instead of
+ *     initPopulation/initOpponentPool sampling fresh (pre-baked start / a
+ *     "resume with different flags" -- point --out-dir at a new directory
+ *     and --seed-from at the old run's checkpoint; see seedFromCheckpoint).
+ *     Ignored once an in-place config-matching checkpoint resume applies.
+ *   forceFresh?:boolean, - allow starting fresh in an --out-dir whose
+ *     evolve-gen0.json config doesn't match this run (discarding it),
+ *     instead of the default hard error (see the resume-refusal check).
  *   outDir?:string, out?:string, - out = Markdown report path.
  *   html?:string, noHtml?:boolean, - HTML report path (default
  *     <outDir>/my-teams-evolve.html) and an opt-out (mirrors src/cli.js's
@@ -2714,6 +2934,9 @@ export async function runEvolution(csvPath, opts = {}) {
   log(`evolve: starting (collection=${config.csvPath}, out-dir=${outDir}, report=${reportPath})`);
 
   const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath, { cp: config.cp });
+  // Written into every checkpoint (not the fingerprint) so a resume against a
+  // rewritten CSV fails with a real message -- see assertCollectionMatchesCheckpoint.
+  const collectionHash = hashFile(csvPath);
   const ctx = await initEngine({ cp: config.cp });
   // One pvpoke similarity scorer (memoised per species/moveset pair) shared by both GAs' core rivalry.
   const similarity = createSimilarity();
@@ -2798,10 +3021,12 @@ export async function runEvolution(csvPath, opts = {}) {
     let opponentPool = null; // live (rehydrated or freshly built) opponent entries for the NEXT generation
     const history = []; // [{population, fitness}], oldest-first -- for hasConverged
     const generationRecords = []; // full per-generation records for the report
+    let checkpointHash; // `collectionHash` of the last matching checkpoint (see assertCollectionMatchesCheckpoint)
 
     while (true) {
       const cp = readCheckpoint(outDir, generation);
       if (!cp || !configsMatch(cp.config, config)) break;
+      checkpointHash = cp.collectionHash;
       if (cp.formatVersion !== CHECKPOINT_FORMAT_VERSION) {
         throw new Error(
           `evolve: ${checkpointPath(outDir, generation)} is checkpoint format ` +
@@ -2819,10 +3044,68 @@ export async function runEvolution(csvPath, opts = {}) {
       population = cp.nextPopulation;
       opponentPool = cp.nextOpponentPool ? rehydrateOpponentPool(ctx, cp.nextOpponentPool, curatedPool, log) : null;
       generation += 1;
+      // MEMORY: apply the same per-generation trim the live loop applies below
+      // (see the "only the newest record's population is ever read back out"
+      // comment there) -- otherwise a resume pins every resumed generation's
+      // full population/lineage/opponent-pool arrays for the rest of the run,
+      // and a watchdog-triggered resume cycle re-inflates this from scratch.
+      const supersededOnResume = generationRecords[generationRecords.length - 2];
+      if (supersededOnResume) {
+        supersededOnResume.population = null;
+        supersededOnResume.nextPopulation = null;
+        supersededOnResume.lineage = null;
+        supersededOnResume.opponentLineage = null;
+        supersededOnResume.nextOpponentPool = null;
+      }
+      // Same historyLookback trim the live loop applies (see its comment below) --
+      // `history` is rebuilt from checkpoints here too, so it needs the identical bound.
+      const convergenceTrailingOnResume = config.convergence?.trailing ?? DEFAULT_CONVERGENCE_TRAILING;
+      const convergenceWindowOnResume = config.convergence?.window ?? DEFAULT_CONVERGENCE_WINDOW;
+      const historyLookbackOnResume =
+        Math.max(selectionTrailingOf(config), convergenceWindowOnResume + 2 * convergenceTrailingOnResume - 2) + 5;
+      const staleHistoryIdxOnResume = history.length - 1 - historyLookbackOnResume;
+      if (staleHistoryIdxOnResume >= 0 && history[staleHistoryIdxOnResume].population) {
+        history[staleHistoryIdxOnResume].population = null;
+      }
+    }
+
+    if (generation === 0) {
+      const stale = readCheckpoint(outDir, 0);
+      if (stale && !configsMatch(stale.config, config) && !opts.forceFresh) {
+        throw new Error(
+          `evolve: ${checkpointPath(outDir, 0)} exists but its config doesn't match this run's flags ` +
+            `(${describeConfigMismatch(stale.config, config)}). Refusing to overwrite it. ` +
+            `A config change can't resume in place -- use a different --out-dir (optionally with ` +
+            `--seed-from ${checkpointPath(outDir, 0)} to carry its population over), ` +
+            `or pass --force-fresh to discard this directory's checkpoints and start over here.`
+        );
+      }
     }
 
     if (generation > 0) {
+      assertCollectionMatchesCheckpoint({
+        population,
+        builtMons: deduped.builtMons,
+        checkpointHash,
+        collectionHash,
+        csvPath: config.csvPath,
+      });
       log(`evolve: resuming -- ${generation} generation(s) already complete (config matches)`);
+    } else if (opts.seedFrom) {
+      runStartedAtMs = Date.now();
+      ({ population, opponentPool } = seedFromCheckpoint({
+        seedPath: opts.seedFrom,
+        ctx,
+        deduped,
+        pool,
+        weights,
+        populationCount: populationAt(0, config),
+        opponentCount: opponentsAt(0, config),
+        curatedPool,
+        candidateExcludeSpecies,
+        seed: config.seed,
+        log,
+      }));
     } else {
       runStartedAtMs = Date.now();
       population = initPopulation({
@@ -2919,19 +3202,21 @@ export async function runEvolution(csvPath, opts = {}) {
       history.push({ population, fitness });
       // MEMORY: trailingFitness/hasConverged only ever look back a bounded
       // number of generations from the current newest entry (selection's own
-      // trailing window, or convergence's trailing+window) -- once an entry
+      // trailing window, or convergence's baseline scan) -- once an entry
       // falls further behind the newest than the widest of those lookbacks
       // will ever reach, it can never be dereferenced again by any later
       // iteration either (the lookback windows are fixed, the newest index
-      // only moves forward). +5 is slack for any smaller custom windows a
-      // flag might set. Past that, `.population` is dead weight -- same
-      // unbounded-growth shape as generationRecords above.
+      // only moves forward). hasConverged's baseline scan reaches back
+      // window + 2*trailing - 2 generations (eliteSnapshot's smoothedScores
+      // call at the oldest baseline generation itself looks back `trailing`
+      // more) -- retaining only trailing+window drops entries it still reads,
+      // throwing on `history[g].population.map(...)`. +5 is slack for any
+      // smaller custom windows a flag might set. Past that, `.population` is
+      // dead weight -- same unbounded-growth shape as generationRecords above.
+      const convergenceTrailing = config.convergence?.trailing ?? DEFAULT_CONVERGENCE_TRAILING;
+      const convergenceWindow = config.convergence?.window ?? DEFAULT_CONVERGENCE_WINDOW;
       const historyLookback =
-        Math.max(
-          selectionTrailingOf(config),
-          (config.convergence?.trailing ?? DEFAULT_CONVERGENCE_TRAILING) +
-            (config.convergence?.window ?? DEFAULT_CONVERGENCE_WINDOW)
-        ) + 5;
+        Math.max(selectionTrailingOf(config), convergenceWindow + 2 * convergenceTrailing - 2) + 5;
       const staleHistoryIdx = history.length - 1 - historyLookback;
       if (staleHistoryIdx >= 0 && history[staleHistoryIdx].population) history[staleHistoryIdx].population = null;
       // Selection ranks on each team's trailing mean, not this generation's
@@ -3002,6 +3287,7 @@ export async function runEvolution(csvPath, opts = {}) {
         formatVersion: CHECKPOINT_FORMAT_VERSION,
         generation,
         config,
+        collectionHash,
         runStartedAt: new Date(runStartedAtMs).toISOString(),
         threadsUsed: threaded ? threads : null,
         population,
@@ -3068,10 +3354,27 @@ export async function runEvolution(csvPath, opts = {}) {
       }
       writeGenerationsAnalytics(outDir, generationRecords);
       lastEvaluated = record;
+      let workerStatsMsg = '';
+      if (executor && profileDir) {
+        // Live, non-destructive poll (see parallel.js's collectLiveStats) --
+        // this is the mid-run visibility into per-worker memory/cache growth
+        // that used to only exist as a one-shot dump on clean exit.
+        const workerStats = await executor.stats();
+        if (workerStats.length > 0) {
+          const totalRss = workerStats.reduce((s, w) => s + w.rssMb, 0);
+          const peakRss = Math.max(...workerStats.map((w) => w.peakRssMb));
+          const totalMemoSize = workerStats.reduce((s, w) => s + w.memoSize, 0);
+          const totalCacheSize = workerStats.reduce((s, w) => s + w.cacheASize + w.cacheBSize, 0);
+          workerStatsMsg =
+            `, worker RSS ${totalRss}MB total (peak ${peakRss}MB), ` +
+            `scenario-memo ${totalMemoSize} entries, mon caches ${totalCacheSize} entries`;
+        }
+      }
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
           `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
-          `${formatDuration(run.elapsedMs)} elapsed, main-thread RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB`
+          `${formatDuration(run.elapsedMs)} elapsed, main-thread RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
+          workerStatsMsg
       );
 
       const conv = hasConverged(history, config.convergence ?? {});
@@ -3366,17 +3669,35 @@ Options:
                             a value above 8 if the machine has memory to
                             spare                                        (default ${defaultThreadCount()} on this machine)
   --profile                capture a per-worker CPU profile (node:inspector)
-                            spanning the whole run plus scenario-memo hit/
-                            miss stats and RSS (current + 5s-sampled peak);
-                            written to <out-dir>/worker-*.cpuprofile and
+                            spanning the whole run, written to
+                            <out-dir>/worker-*.cpuprofile and
                             <out-dir>/profile-summary.json on a clean exit
                             (Ctrl-C/kill skips the flush -- only a normal or
-                            --deadline-minutes stop captures data). Main-
-                            thread RSS is logged every generation regardless
-                            of this flag. Requires
-                            --threads > 0 (a no-op in serial mode)
+                            --deadline-minutes stop captures data). Also adds
+                            a live per-generation line: each worker's
+                            current+peak RSS, scenario-memo size, and
+                            mon-cache size, polled between generations for
+                            mid-run memory/speed debugging. Main-thread RSS
+                            is always logged every generation regardless.
+                            Requires --threads > 0 (a no-op in serial mode)
   --deadline-minutes D    optional wall-clock budget (stop before the next
                             generation once past it; no self-tuning)   (default: none)
+  --seed-from PATH        pre-bake generation 0's population + opponent pool
+                            from another run's evolve-gen<N>.json checkpoint
+                            instead of sampling fresh. Ignored if --out-dir
+                            already has a matching in-place resume. This is
+                            also how to "resume with different flags": point
+                            --out-dir at a NEW directory and --seed-from at
+                            the old run's checkpoint -- the new run gets its
+                            own checkpoint chain from generation 0, seeded
+                            with that population, under whatever new flags
+                            you pass                                   (default: none)
+  --force-fresh           allow starting fresh in an --out-dir whose
+                            evolve-gen0.json config doesn't match this run's
+                            flags, discarding it (without this, a config
+                            mismatch is a hard error instead of a silent
+                            overwrite -- see the resume-refusal message)
+                                                                         (default: off)
   --cp N                  CP cap / league                            (default ${DEFAULTS.cp})
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
@@ -3538,6 +3859,8 @@ async function main(argv) {
         threads: { type: 'string' },
         profile: { type: 'boolean' },
         'deadline-minutes': { type: 'string' },
+        'seed-from': { type: 'string' },
+        'force-fresh': { type: 'boolean' },
         cp: { type: 'string' },
         'fixed-opponents': { type: 'boolean' },
         elites: { type: 'string' },
@@ -3603,6 +3926,8 @@ async function main(argv) {
     threads: values.threads !== undefined ? intFlag(values.threads, 'threads', undefined) : defaultThreadCount(),
     profile: !!values.profile,
     deadlineMinutes: values['deadline-minutes'] !== undefined ? intFlag(values['deadline-minutes'], 'deadline-minutes', undefined) : undefined,
+    seedFrom: values['seed-from'],
+    forceFresh: !!values['force-fresh'],
     cp: intFlag(values.cp, 'cp', DEFAULTS.cp),
     fixedOpponents: !!values['fixed-opponents'],
     eliteCount: intFlag(values.elites, 'elites', DEFAULTS.elites),
