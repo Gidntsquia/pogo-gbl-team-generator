@@ -252,21 +252,40 @@ export function coreRivalryFitness(profilesByTeam, fitness, rivalry = DEFAULT_CO
   const rankOf = new Array(n);
   order.forEach((i, rank) => (rankOf[i] = rank));
 
+  // Two teams that carry the exact same set of pair ids (near-duplicate
+  // mutants/elites, or teams that happen to collapse onto the same cores)
+  // always produce the same per-p `best` array against a given rival, so
+  // cache it by (own's pair ids, rival's sorted pair ids) instead of
+  // recomputing the O(own*rival) inner scan for every (i, j) that shares
+  // either side's signature -- a crowded core, the exact case this fitness
+  // term targets, is also the case with the most duplicate signatures.
+  const bestArrayCache = new Map();
+  const jSigCache = new Array(n);
+  const jSigOf = (j) => (jSigCache[j] ??= pairsOf[j].slice().sort((a, b) => a - b).join(','));
+
   for (let i = 0; i < n; i++) {
     const own = pairsOf[i];
     if (own.length === 0) continue;
+    const ownKey = own.join(',');
     const load = new Array(own.length).fill(0);
     for (let rank = 0; rank < rankOf[i]; rank++) {
       const j = order[rank];
-      for (let p = 0; p < own.length; p++) {
-        let best = 0;
-        for (const q of pairsOf[j]) {
-          const s = pairSim(own[p], q);
-          if (s > best) best = s;
-          if (best === 1) break;
+      const cacheKey = `${ownKey}||${jSigOf(j)}`;
+      let bestArr = bestArrayCache.get(cacheKey);
+      if (!bestArr) {
+        bestArr = new Array(own.length);
+        for (let p = 0; p < own.length; p++) {
+          let best = 0;
+          for (const q of pairsOf[j]) {
+            const s = pairSim(own[p], q);
+            if (s > best) best = s;
+            if (best === 1) break;
+          }
+          bestArr[p] = best;
         }
-        load[p] += best;
+        bestArrayCache.set(cacheKey, bestArr);
       }
+      for (let p = 0; p < own.length; p++) load[p] += bestArr[p];
     }
     rivalsAbove[i] = Math.max(...load);
   }

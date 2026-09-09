@@ -27,6 +27,10 @@
  * @param {object} p - a built pvpoke Pokemon (harness buildPokemon / sampleTeams buildMetaMon).
  * @returns {string}
  */
+import { BoundedCache } from './boundedCache.js';
+
+const MAX_SIMILARITY_CACHE_ENTRIES = 20000;
+
 export function similarityKey(p) {
   const charged = (p.chargedMoves ?? []).map((m) => (m ? m.moveId : '-')).sort().join(',');
   return `${p.speciesId}|${p.fastMove ? p.fastMove.moveId : '-'}|${charged}`;
@@ -43,9 +47,9 @@ export function similarityKey(p) {
  *   base included) and 0 when either object cannot be scored.
  */
 export function createSimilarity() {
-  const traits = new Map();
-  const selfScore = new Map();
-  const pairs = new Map();
+  const traits = new BoundedCache(MAX_SIMILARITY_CACHE_ENTRIES);
+  const selfScore = new BoundedCache(MAX_SIMILARITY_CACHE_ENTRIES);
+  const pairs = new BoundedCache(MAX_SIMILARITY_CACHE_ENTRIES);
 
   const traitsOf = (p) => {
     const key = similarityKey(p);
