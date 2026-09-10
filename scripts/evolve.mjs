@@ -194,6 +194,7 @@ import { loadUsageWeights } from '../src/meta/usage.js';
 import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf, composeSampledOpponent } from '../src/meta/sampleTeams.js';
 import { archetypeGroups, archetypeWeights, DEFAULT_ARCHETYPE_BETA, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../src/meta/archetypes.js';
 import { createSimilarity } from '../src/engine/similarity.js';
+import { crowdingWeights, trailingFitnessGeneric } from '../src/ga/core.js';
 import { loadMetaTeams, curatedTierWeight } from '../src/meta/teams.js';
 import { rngFromSeed } from '../src/util/rng.js';
 import {
@@ -216,6 +217,7 @@ import {
   DEFAULT_MUTATION_FLOOR,
   DEFAULT_MUTATION_CEIL,
   DEFAULT_SELECTION_TRAILING,
+  DEFAULT_SELECTION_RECENCY_DECAY,
   DEFAULT_CONVERGENCE_TRAILING,
   DEFAULT_CONVERGENCE_WINDOW,
 } from '../src/teams/evolve.js';
@@ -232,7 +234,6 @@ const DEFAULTS = Object.freeze({
   cp: 1500,
   elites: 10,
   scoreMeta: 20,
-  pool: 40,
   // 0.66 (Jaxon 2026-08-26, down from the 0.70 his real runs were passing).
   // Curated teams are the only OBSERVED-reality anchor in the opponent pool,
   // so they stay the majority; the extra 4 points go to the evolving half,
@@ -297,9 +298,11 @@ const DEFAULTS = Object.freeze({
   opponentStrengthGamma: 1,
   // Core rivalry on both GAs (src/meta/archetypes.js coreRivalryFitness):
   // each better team sharing a two-species core costs a team this fraction
-  // of the field's fitness range before the cull ranks it -- like the
-  // shadow-twin rule, but a penalty rather than a death sentence, so a
-  // second variant that plays differently and fights well still survives.
+  // of the field's fitness range before the cull ranks it -- a penalty
+  // rather than a death sentence, so a second variant that plays differently
+  // and fights well still survives. A team that is a better team's shadow
+  // variant (whole-team similarity 0.9) pays 2.8 steps instead of 1 -- high,
+  // but not fatal; only an exact duplicate dies outright, whatever R is.
   // Keeps a strong core from filling the pool with its own trailing
   // near-duplicates (the v2 run's opponent pool was 81% mutants of a few
   // cores by gen 59). 0 = off.
@@ -823,10 +826,12 @@ function leadExchangeLoser(summary) {
  * than being tacked on, since it is itself a transform of winRate data.
  */
 /** See buildRunConfig's `fitnessSemantics` comment. */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v5';
-// Snowball/closer/consistency disabled for now (weights zeroed rather than
-// removed, so they're a one-line revert away) -- fitness is currently pure
-// winRate.
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v6';
+// Closer/consistency disabled for now (weights zeroed rather than removed,
+// so they're a one-line revert away). Snowball is opt-in via
+// --snowball-weight (candidate side only -- the opponent side has its own,
+// separate win-rate fitness in src/meta/opponentPool.js, so this weight
+// never touches it).
 const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 1, consistency: 0, snowball: 0, closer: 0 });
 
 /**
@@ -1283,7 +1288,8 @@ function buildRunConfig(csvPath, opts) {
     csvPath: path.resolve(csvPath),
     scoreMeta: opts.scoreMeta ?? DEFAULTS.scoreMeta,
     evolutions: opts.evolutions ?? true,
-    pool: opts.pool ?? DEFAULTS.pool,
+    // undefined = no cap, whole deduped collection (buildSamplingPool).
+    pool: opts.pool ?? undefined,
     seed: String(opts.seed ?? DEFAULTS.seed),
     cp: opts.cp ?? DEFAULTS.cp,
     curatedRatio: opts.curatedRatio ?? DEFAULTS.curatedRatio,
@@ -1324,8 +1330,16 @@ function buildRunConfig(csvPath, opts) {
     // union-find to dominant-core-pair grouping and computeCandidateWeights
     // moved its clamp after mean-normalisation, so the v2 checkpoints
     // written under the old semantics start fresh instead of resuming.
+    // Bumped again to v6 the same day when computeCandidateWeights switched
+    // from species-share normalisation to the shared archetype-pair
+    // crowding scheme (src/ga/core.js crowdingWeights) and opponent
+    // selection started reading trailing-mean fitness instead of raw
+    // single-generation fitness -- both change what a generation's numbers
+    // MEAN, not just how they're computed, so a v5 checkpoint must not
+    // resume under v6 semantics.
     fitnessSemantics: FITNESS_SEMANTICS,
     opponentStrengthGamma: opts.opponentStrengthGamma ?? DEFAULTS.opponentStrengthGamma,
+    snowballWeight: opts.snowballWeight ?? DEFAULT_FITNESS_WEIGHTS.snowball,
     coreRivalry: opts.coreRivalry ?? DEFAULTS.coreRivalry,
     similarRivalry: opts.similarRivalry ?? DEFAULTS.similarRivalry,
     similarFloor: opts.similarFloor ?? DEFAULTS.similarFloor,
@@ -1593,7 +1607,7 @@ function writeCheckpoint(outDir, generation, data) {
   mkdirSync(outDir, { recursive: true });
   const finalPath = checkpointPath(outDir, generation);
   // Write to a temp file then rename over the final path -- rename is atomic
-  // on POSIX, so a SIGTERM (e.g. from mem-watchdog.sh) landing mid-write can
+  // on POSIX, so a SIGTERM (e.g. from earlyoom) landing mid-write can
   // only ever leave a stray .tmp file, never a truncated checkpoint that
   // readCheckpoint's catch-and-return-null would silently treat as absent.
   const tmpPath = `${finalPath}.tmp`;
@@ -1632,6 +1646,9 @@ function buildSamplingPool(deduped, poolSize, excludeSpecies) {
     .filter((key) => !exclude.has(deduped.builtMons[key].speciesId))
     .map((key) => ({ key, speciesId: deduped.builtMons[key].speciesId, score: computeWeightedScore(deduped.ratings[key]) }))
     .sort((a, b) => b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  // No poolSize (--pool not passed) or <= 0 means no cap -- the whole
+  // (deduped) collection.
+  if (!poolSize || poolSize <= 0) return scored.map((m) => m.key);
   const keptSpecies = new Set();
   for (const m of scored) {
     if (keptSpecies.size >= poolSize && !keptSpecies.has(m.speciesId)) break;
@@ -1743,49 +1760,24 @@ function summarizeOpponentPool(pool, fitness) {
  *   -- used only to source `topTeams`' snowballIndex/comebackIndex/designatedCloser;
  *   everything else here is unaffected if omitted.
  */
-/** Per-species share of `population` -- speciesId -> fraction of teams containing it (one count per distinct species per team, matching computeGenerationAnalytics's bySpecies below). */
-function computeSpeciesShare(matrix, population) {
-  const counts = new Map();
-  population.forEach((team) => {
-    for (const s of new Set(speciesOfTeam(matrix, team))) counts.set(s, (counts.get(s) ?? 0) + 1);
-  });
-  const share = new Map();
-  for (const [s, c] of counts) share.set(s, population.length > 0 ? c / population.length : 0);
-  return share;
-}
-
 /**
- * Per-candidate weight for frequency-normalised opponent fitness (section C
- * of docs/plans/2026-09-08-fitness-restructure.md): a team's weight is the
- * inverse of its MOST COMMON member's share of the current population, so a
- * counter-bred opponent isn't rewarded N times over just for beating a
- * majority-share core no matter how rare its other two members are. The raw
- * reciprocals are first scaled to a mean of 1, THEN clamped to [0.2, 5] so a
- * single near-unique species can't dominate one opponent's fitness on its
- * own, then renormalised to sum to `population.length` so the weighted
- * totals stay comparable in magnitude to the un-normalised 1-per-team
- * baseline (the `0.5` opponent-fitness fallback, etc). Clamping the raw
- * reciprocal instead (as the 2026-09-08 version did) pinned every team to
- * the ceiling whenever no species held >20% of the population -- i.e.
- * always -- and the normalisation then flattened everything to 1.00.
+ * Per-candidate weight for frequency-normalised opponent fitness: the same
+ * archetype-pair crowding scheme the opponent pool already uses to discount
+ * a crowded bred core when IT votes on candidate fitness (src/meta/
+ * archetypes.js archetypeGroups/archetypeWeights, via the shared
+ * src/ga/core.js crowdingWeights), applied here to the candidate population
+ * so a counter-bred opponent isn't rewarded N times over just for beating a
+ * majority-share candidate core. Replaces the prior species-share scheme
+ * (computeSpeciesShare/computeCandidateWeights, removed 2026-09-09) so both
+ * voting sides normalise on one scheme instead of two.
  *
  * @param {object} matrix
  * @param {string[][]} population
- * @param {Map<string, number>} shareBySpecies - from computeSpeciesShare.
+ * @param {{beta?: number}} [opts]
  * @returns {number[]} weight per team, parallel to `population`.
  */
-export function computeCandidateWeights(matrix, population, shareBySpecies) {
-  const n = population.length;
-  if (n === 0) return [];
-  const raw = population.map((team) => {
-    const species = [...new Set(speciesOfTeam(matrix, team))];
-    const maxShare = species.reduce((m, s) => Math.max(m, shareBySpecies.get(s) ?? 0), 1e-9);
-    return 1 / maxShare;
-  });
-  const mean = raw.reduce((s, w) => s + w, 0) / n;
-  const clamped = raw.map((w) => Math.min(Math.max(w / mean, 0.2), 5));
-  const total = clamped.reduce((s, w) => s + w, 0);
-  return clamped.map((w) => (w / total) * n);
+export function computeCandidateWeights(matrix, population, opts = {}) {
+  return crowdingWeights(population, (team) => team.map((key) => ({ speciesId: matrix.builtMons[key].speciesId })), opts);
 }
 
 function computeGenerationAnalytics({ matrix, population, fitness, lineage, results }) {
@@ -1811,9 +1803,6 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
   if (lineage) {
     originCounts = { survived: 0, mutant: 0, immigrant: 0 };
     for (const e of lineage.entries) originCounts[e.origin] = (originCounts[e.origin] ?? 0) + 1;
-    // Deaths from losing a shadow rivalry (a team vs. its shadow-twin) rather
-    // than from ranking in the bottom deathRate; see src/teams/evolve.js.
-    originCounts.shadowRivalryDied = lineage.shadowRivalryDied?.length ?? 0;
     originCounts.coreRivalryDied = lineage.coreRivalryDied?.length ?? 0;
 
     const oldCounts = new Map();
@@ -1962,6 +1951,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     candidateWeights = null,
     opponentArchetypeGroups = null,
     opponentStrengthGamma = 0,
+    snowballWeight = 0,
   } = params;
   const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
@@ -2240,7 +2230,10 @@ async function evaluateTeamsInOrder(ctx, params) {
       exchangeLost,
       snowballScore,
       closerScore,
-      blendFitness: computeBlendFitness({ winRate, snowballScore, closerScore, consistencyScore }),
+      blendFitness: computeBlendFitness(
+        { winRate, snowballScore, closerScore, consistencyScore },
+        { ...DEFAULT_FITNESS_WEIGHTS, snowball: snowballWeight }
+      ),
       // Report-facing metrics -- see the
       // comment above computeSnowballIndex for how these differ from
       // snowballScore/closerScore above. Always computed too (cheap).
@@ -2886,9 +2879,9 @@ function renderDoneMarker(result) {
  *     clean exit (default false; no-op without threads). Also gates a live
  *     per-generation poll (see parallel.js's executor.stats()): with
  *     --profile, every generation's log line adds each worker's current+peak
- *     RSS, scenario-memo size, and mon-cache size, for mid-run memory/speed
+ *     heap, scenario-memo size, and mon-cache size, for mid-run memory/speed
  *     debugging -- off by default so a normal run pays nothing for it.
- *     Main-thread RSS is logged every generation regardless of this flag.
+ *     Process RSS is logged every generation regardless of this flag.
  *     NOT part of the checkpoint fingerprint (pure performance knob).
  *   deadlineMinutes?:number, - simple stop-before-next-generation budget;
  *     NOT part of the checkpoint config fingerprint (see buildRunConfig).
@@ -3000,13 +2993,13 @@ export async function runEvolution(csvPath, opts = {}) {
         const totalHits = stats.reduce((s, w) => s + w.memoHits, 0);
         const totalMisses = stats.reduce((s, w) => s + w.memoMisses, 0);
         const hitRate = totalHits + totalMisses > 0 ? totalHits / (totalHits + totalMisses) : 0;
-        const peakRssMb = Math.max(...stats.map((w) => w.peakRssMb ?? 0));
-        const totalRssMb = stats.reduce((s, w) => s + (w.rssMb ?? 0), 0);
+        const peakHeapMb = Math.max(...stats.map((w) => w.peakHeapMb ?? 0));
+        const totalHeapMb = stats.reduce((s, w) => s + (w.heapMb ?? 0), 0);
         writeFileSync(path.join(profileDir, 'profile-summary.json'), JSON.stringify(stats, null, 2), 'utf8');
         log(
           `evolve: profiling captured -- ${stats.length} worker .cpuprofile file(s) in ${profileDir}, ` +
             `scenario-memo hit rate ${(hitRate * 100).toFixed(1)}% (${totalHits} hits / ${totalMisses} misses), ` +
-            `worker RSS at exit ${totalRssMb}MB total (peak ${peakRssMb}MB on the worst worker); ` +
+            `worker heap at exit ${totalHeapMb}MB total (peak ${peakHeapMb}MB on the worst worker); ` +
             `per-worker detail in ${path.join(profileDir, 'profile-summary.json')}`
         );
       }
@@ -3020,6 +3013,12 @@ export async function runEvolution(csvPath, opts = {}) {
     let runStartedAtMs = null;
     let opponentPool = null; // live (rehydrated or freshly built) opponent entries for the NEXT generation
     const history = []; // [{population, fitness}], oldest-first -- for hasConverged
+    // Opponent-side analog of `history`, entries shaped {id} (not the full
+    // OpponentEntry -- only the id, which trailingFitnessGeneric's signature
+    // adapter reads, needs to survive) so opponent selection can be smoothed
+    // over the same trailing-mean window the candidate side already used
+    // (src/ga/core.js trailingFitnessGeneric; see FITNESS_SEMANTICS v6).
+    const opponentHistory = [];
     const generationRecords = []; // full per-generation records for the report
     let checkpointHash; // `collectionHash` of the last matching checkpoint (see assertCollectionMatchesCheckpoint)
 
@@ -3039,6 +3038,7 @@ export async function runEvolution(csvPath, opts = {}) {
         );
       }
       history.push({ population: cp.population, fitness: cp.fitness });
+      opponentHistory.push({ population: cp.opponentPool.map((e) => ({ id: e.id })), fitness: cp.opponentFitness });
       generationRecords.push({ ...cp, resumed: true });
       if (generation === 0) runStartedAtMs = new Date(cp.runStartedAt).getTime();
       population = cp.nextPopulation;
@@ -3048,7 +3048,7 @@ export async function runEvolution(csvPath, opts = {}) {
       // (see the "only the newest record's population is ever read back out"
       // comment there) -- otherwise a resume pins every resumed generation's
       // full population/lineage/opponent-pool arrays for the rest of the run,
-      // and a watchdog-triggered resume cycle re-inflates this from scratch.
+      // and an OOM-kill-then-resume cycle re-inflates this from scratch.
       const supersededOnResume = generationRecords[generationRecords.length - 2];
       if (supersededOnResume) {
         supersededOnResume.population = null;
@@ -3066,6 +3066,10 @@ export async function runEvolution(csvPath, opts = {}) {
       const staleHistoryIdxOnResume = history.length - 1 - historyLookbackOnResume;
       if (staleHistoryIdxOnResume >= 0 && history[staleHistoryIdxOnResume].population) {
         history[staleHistoryIdxOnResume].population = null;
+      }
+      const staleOpponentHistoryIdxOnResume = opponentHistory.length - 1 - historyLookbackOnResume;
+      if (staleOpponentHistoryIdxOnResume >= 0 && opponentHistory[staleOpponentHistoryIdxOnResume].population) {
+        opponentHistory[staleOpponentHistoryIdxOnResume].population = null;
       }
     }
 
@@ -3156,8 +3160,7 @@ export async function runEvolution(csvPath, opts = {}) {
       // evaluateTeamsInOrder.
       const oppArchetypeGroups = archetypeGroups(opponents);
       const oppArchetypeWeights = archetypeWeights(oppArchetypeGroups, { beta: config.archetypeBeta });
-      const shareBySpecies = computeSpeciesShare(deduped, population);
-      const candidateWeights = computeCandidateWeights(deduped, population, shareBySpecies);
+      const candidateWeights = computeCandidateWeights(deduped, population, { beta: config.archetypeBeta });
       log(
         `generation ${generation}: battling ${population.length} teams against ${opponents.length} opponents ` +
           `(${curatedInPool} curated, ${opponents.length - curatedInPool} evolved); ` +
@@ -3178,6 +3181,7 @@ export async function runEvolution(csvPath, opts = {}) {
         candidateWeights: config.opponentFitnessNormalised ? candidateWeights : null,
         opponentArchetypeGroups: oppArchetypeGroups,
         opponentStrengthGamma: config.opponentStrengthGamma,
+        snowballWeight: config.snowballWeight,
       });
       // 'classic' (default) keeps today's plain win-rate
       // fitness; 'battle-reality' uses the blend (see computeBlendFitness) --
@@ -3200,6 +3204,7 @@ export async function runEvolution(csvPath, opts = {}) {
       });
 
       history.push({ population, fitness });
+      opponentHistory.push({ population: opponents.map((e) => ({ id: e.id })), fitness: opponentFitness });
       // MEMORY: trailingFitness/hasConverged only ever look back a bounded
       // number of generations from the current newest entry (selection's own
       // trailing window, or convergence's baseline scan) -- once an entry
@@ -3219,10 +3224,27 @@ export async function runEvolution(csvPath, opts = {}) {
         Math.max(selectionTrailingOf(config), convergenceWindow + 2 * convergenceTrailing - 2) + 5;
       const staleHistoryIdx = history.length - 1 - historyLookback;
       if (staleHistoryIdx >= 0 && history[staleHistoryIdx].population) history[staleHistoryIdx].population = null;
+      const staleOpponentHistoryIdx = opponentHistory.length - 1 - historyLookback;
+      if (staleOpponentHistoryIdx >= 0 && opponentHistory[staleOpponentHistoryIdx].population) {
+        opponentHistory[staleOpponentHistoryIdx].population = null;
+      }
       // Selection ranks on each team's trailing mean, not this generation's
       // draw (see the header note) -- a pure function of `history`, so a
       // resumed run computes exactly the same values.
       const selectionFitness = trailingFitness(history, selectionTrailingOf(config));
+      // Same trailing-mean smoothing, now applied to the opponent side too
+      // (FITNESS_SEMANTICS v6): an opponent's single-generation fitness is
+      // just as noisy a draw as a candidate's (see trailingFitness's header
+      // for the s2 post-mortem numbers), so opponent selection reads its
+      // trailing mean rather than raw `opponentFitness` -- matched across
+      // generations by id (positional/lead-aware, stable across
+      // rehydrateOpponentPool).
+      const opponentSelectionFitness = trailingFitnessGeneric(
+        opponentHistory,
+        (e) => e.id,
+        selectionTrailingOf(config),
+        DEFAULT_SELECTION_RECENCY_DECAY
+      );
       const isLastAllowedGeneration = generation === config.generations - 1;
 
       let lineage = null;
@@ -3261,7 +3283,7 @@ export async function runEvolution(csvPath, opts = {}) {
         } else {
           const advancedOpponents = nextOpponentPool(ctx, {
             pool: opponents,
-            fitness: opponentFitness,
+            fitness: opponentSelectionFitness,
             targetSize: opponentsAt(generation + 1, config),
             weights,
             curated: curatedPool,
@@ -3306,8 +3328,16 @@ export async function runEvolution(csvPath, opts = {}) {
         opponentCount: opponents.length,
         opponentPool: serializeOpponentPool(opponents),
         opponentFitness,
+        // Trailing-mean smoothed opponent fitness actually used to select the
+        // NEXT opponent pool (see opponentSelectionFitness above); `opponentFitness`
+        // above stays the raw single-generation ledger.
+        opponentSelectionFitness,
         opponentLineage: opponentLineage
-          ? { diedCount: opponentLineage.died.length, coreRivalryDiedCount: opponentLineage.coreRivalryDied?.length ?? 0, originCounts: opponentLineage.originCounts }
+          ? {
+              diedCount: opponentLineage.died.length,
+              coreRivalryDiedCount: opponentLineage.coreRivalryDied?.length ?? 0,
+              originCounts: opponentLineage.originCounts,
+            }
           : null,
         lineage,
         nextPopulation,
@@ -3361,19 +3391,23 @@ export async function runEvolution(csvPath, opts = {}) {
         // that used to only exist as a one-shot dump on clean exit.
         const workerStats = await executor.stats();
         if (workerStats.length > 0) {
-          const totalRss = workerStats.reduce((s, w) => s + w.rssMb, 0);
-          const peakRss = Math.max(...workerStats.map((w) => w.peakRssMb));
+          // Per-isolate heap, NOT rss: inside a worker_thread rss is the whole
+          // process's figure, so summing it just multiplies the RSS logged
+          // below by the thread count (the "worker RSS 68 GB" lines in older
+          // logs). Process RSS is logged once, below.
+          const totalHeap = workerStats.reduce((s, w) => s + w.heapMb, 0);
+          const peakHeap = Math.max(...workerStats.map((w) => w.peakHeapMb));
           const totalMemoSize = workerStats.reduce((s, w) => s + w.memoSize, 0);
           const totalCacheSize = workerStats.reduce((s, w) => s + w.cacheASize + w.cacheBSize, 0);
           workerStatsMsg =
-            `, worker RSS ${totalRss}MB total (peak ${peakRss}MB), ` +
+            `, worker heap ${totalHeap}MB total (peak ${peakHeap}MB), ` +
             `scenario-memo ${totalMemoSize} entries, mon caches ${totalCacheSize} entries`;
         }
       }
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
           `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
-          `${formatDuration(run.elapsedMs)} elapsed, main-thread RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
+          `${formatDuration(run.elapsedMs)} elapsed, process RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
           workerStatsMsg
       );
 
@@ -3490,6 +3524,7 @@ export async function runEvolution(csvPath, opts = {}) {
       pairingsFor: ownLeadPairing,
       difficulty,
       opponentStrengthGamma: config.opponentStrengthGamma,
+      snowballWeight: config.snowballWeight,
       trackLeads: true,
       executor,
       onLog: log,
@@ -3675,9 +3710,9 @@ Options:
                             (Ctrl-C/kill skips the flush -- only a normal or
                             --deadline-minutes stop captures data). Also adds
                             a live per-generation line: each worker's
-                            current+peak RSS, scenario-memo size, and
+                            current+peak heap, scenario-memo size, and
                             mon-cache size, polled between generations for
-                            mid-run memory/speed debugging. Main-thread RSS
+                            mid-run memory/speed debugging. Process RSS
                             is always logged every generation regardless.
                             Requires --threads > 0 (a no-op in serial mode)
   --deadline-minutes D    optional wall-clock budget (stop before the next
@@ -3717,7 +3752,8 @@ Options:
                             these are essentially random legal teams, not
                             opponent-GA-selected ones (default ${DEFAULTS.finalFresh}, or ${FINAL_FRESH_WHEN_NO_CURATED} at --curated-ratio 0)
   --score-meta S           1v1-pruning meta size                      (default ${DEFAULTS.scoreMeta})
-  --pool P                 sampling pool size                         (default ${DEFAULTS.pool})
+  --pool P                 candidate sampling pool size, in species (top P
+                            by 1v1 score)               (default: no cap, whole deduped collection)
   --curated-ratio R        curated-vs-evolved opponent mix             (default ${DEFAULTS.curatedRatio})
   --population-final-ratio R  candidate population at the LAST generation as
                             a fraction of --population; the opponent count
@@ -3784,6 +3820,12 @@ Options:
                             win rate by (that opponent's own win rate)^G, so
                             beating a strong team counts more than beating a
                             weak singleton; 0 = off        (default ${DEFAULTS.opponentStrengthGamma})
+  --snowball-weight R      candidate-side fitness weight on snowballScore
+                            (own fraction of decided lead exchanges won),
+                            on top of winRate=1; opponent-side fitness
+                            (src/meta/opponentPool.js) is a separate, plain
+                            win-rate calc and is never affected by this flag
+                                                       (default ${DEFAULT_FITNESS_WEIGHTS.snowball})
   --core-rivalry R         each better team sharing a two-species core costs
                             a team R x (field's fitness range) before the
                             cull ranks it, in the population and the opponent
@@ -3898,6 +3940,7 @@ async function main(argv) {
         'archetype-beta': { type: 'string' },
         'no-opponent-fitness-normalised': { type: 'boolean' },
         'opponent-strength-gamma': { type: 'string' },
+        'snowball-weight': { type: 'string' },
         'core-rivalry': { type: 'string' },
         'similar-rivalry': { type: 'string' },
         'similar-floor': { type: 'string' },
@@ -3941,7 +3984,9 @@ async function main(argv) {
     finalFresh: values['final-fresh'] !== undefined ? intFlag(values['final-fresh'], 'final-fresh', undefined) : undefined,
     scoreMeta: intFlag(values['score-meta'], 'score-meta', DEFAULTS.scoreMeta),
     evolutions: !values['no-evolutions'],
-    pool: intFlag(values.pool, 'pool', DEFAULTS.pool),
+    // Left undefined when not passed (rather than defaulted here) so
+    // buildSamplingPool's own "no cap" fallback applies.
+    pool: values.pool !== undefined ? intFlag(values.pool, 'pool', undefined) : undefined,
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     populationFinalRatio: fractionFlag(values['population-final-ratio'], 'population-final-ratio', DEFAULTS.populationFinalRatio),
     opponentMetaPool: intFlag(values['opponent-meta-pool'], 'opponent-meta-pool', DEFAULTS.opponentMetaPool),
@@ -3970,6 +4015,7 @@ async function main(argv) {
     archetypeBeta: fractionFlag(values['archetype-beta'], 'archetype-beta', undefined),
     opponentFitnessNormalised: values['no-opponent-fitness-normalised'] ? false : undefined,
     opponentStrengthGamma: values['opponent-strength-gamma'] !== undefined ? numberFlag(values['opponent-strength-gamma'], 'opponent-strength-gamma') : undefined,
+    snowballWeight: values['snowball-weight'] !== undefined ? numberFlag(values['snowball-weight'], 'snowball-weight') : undefined,
     coreRivalry: values['core-rivalry'] !== undefined ? numberFlag(values['core-rivalry'], 'core-rivalry') : undefined,
     similarRivalry: values['similar-rivalry'] !== undefined ? numberFlag(values['similar-rivalry'], 'similar-rivalry') : undefined,
     similarFloor: values['similar-floor'] !== undefined ? numberFlag(values['similar-floor'], 'similar-floor') : undefined,

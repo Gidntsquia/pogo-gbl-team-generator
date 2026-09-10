@@ -436,9 +436,10 @@ const SHADOW_MATRIX = fakeMatrix(SHADOW_POOL_MONS);
 const SHADOW_POOL = poolKeys(SHADOW_POOL_MONS);
 const shadowOf = (key) => !!SHADOW_MATRIX.builtMons[key].spec?.shadow;
 
-test('shadowFlip mutants swap exactly one member for its opposite-shadow twin (same species, same lead)', () => {
+test('shadowFlip mutants swap a random non-empty set of members for their opposite-shadow twins (same species, same lead)', () => {
   const population = initPopulation({ matrix: SHADOW_MATRIX, pool: SHADOW_POOL, count: 30, seed: 'shadow-init' });
   let flips = 0;
+  const flipCounts = new Map(); // how many slots flipped -> occurrences
   for (let seed = 0; seed < 20; seed++) {
     const fitness = population.map((_, i) => (i * 37) % 100 / 100);
     const { population: next, lineage } = nextGeneration({
@@ -452,11 +453,13 @@ test('shadowFlip mutants swap exactly one member for its opposite-shadow twin (s
     lineage.entries.forEach((e, i) => {
       if (e.origin !== 'mutant' || e.mutationType !== 'shadowFlip') return;
       flips++;
+      flipCounts.set(e.flippedSlots.length, (flipCounts.get(e.flippedSlots.length) ?? 0) + 1);
       const parent = population[e.parentIndex];
       const child = next[i];
       assert.equal(shadowBlindSignature(child, SHADOW_MATRIX), shadowBlindSignature(parent, SHADOW_MATRIX), 'species and lead unchanged');
+      assert.ok(e.flippedSlots.length >= 1, 'never the empty set');
       for (let slot = 0; slot < 3; slot++) {
-        if (slot === e.flippedSlot) {
+        if (e.flippedSlots.includes(slot)) {
           assert.notEqual(child[slot], parent[slot]);
           assert.notEqual(shadowOf(child[slot]), shadowOf(parent[slot]), 'flipped slot changes shadow state');
         } else assert.equal(child[slot], parent[slot]);
@@ -464,6 +467,7 @@ test('shadowFlip mutants swap exactly one member for its opposite-shadow twin (s
     });
   }
   assert.ok(flips > 20, `expected plenty of shadowFlip mutants at rate 1, got ${flips}`);
+  assert.ok((flipCounts.get(1) ?? 0) > 0 && (flipCounts.get(2) ?? 0) > 0, `single and multi-slot flips both occur: ${[...flipCounts]}`);
 });
 
 test('shadowFlipRate 0 (or a pool with no twins) never produces a shadowFlip mutant', () => {
@@ -475,34 +479,33 @@ test('shadowFlipRate 0 (or a pool with no twins) never produces a shadowFlip mut
   assert.deepEqual(a.population, b.population, 'a twin-less pool evolves identically whatever the rate');
 });
 
-test('shadow rivalry: of two teams identical except shadow-ness only the fitter survives, on top of the normal cull', () => {
+test('shadow rivalry: a shadow twin of a fitter team is penalised into the cull when marginal, but survives when it clearly out-fights the tail', () => {
   const base = ['mon0', 'mon1', 'mon2'];
   const twinA = ['mon0S', 'mon1', 'mon2']; // lead flipped
   const twinB = ['mon0', 'mon1S', 'mon2']; // a back flipped
-  const otherLead = ['mon1', 'mon0', 'mon2']; // same trio, different lead: NOT a rival
-  const filler = initPopulation({ matrix: SHADOW_MATRIX, pool: SHADOW_POOL, count: 40, seed: 'filler' })
-    .filter((t) => !t.includes('mon0') && !t.includes('mon0S'))
-    .slice(0, 8);
+  const otherLead = ['mon1', 'mon0', 'mon2']; // same trio, different lead: shares cores, but no twin load
+  // Three core-disjoint filler teams, so the only rivalry in the field is the one under test.
+  const filler = [['mon3', 'mon4', 'mon5'], ['mon6', 'mon7', 'mon8'], ['mon9', 'mon10', 'mon11']];
   const population = [base, twinA, twinB, otherLead, ...filler];
-  // The twins are the three FITTEST teams in the population; base is the best of the three.
-  const fitness = population.map((_, i) => (i === 0 ? 0.95 : i === 1 ? 0.9 : i === 2 ? 0.92 : i === 3 ? 0.85 : 0.5 - i * 0.01));
-  const { population: next, lineage } = nextGeneration({
-    population,
-    fitness,
-    pool: SHADOW_POOL,
-    matrix: SHADOW_MATRIX,
-    seed: 'rivalry',
-    opts: { deathRate: 1 / 3, mutationFloor: 0, mutationCeil: 0 },
-  });
-  assert.deepEqual([...lineage.shadowRivalryDied].sort(), [1, 2], 'both shadow twins lose to the fitter base team');
-  const survivors = lineage.entries.filter((e) => e.origin === 'survived').map((e) => e.parentIndex);
-  assert.ok(survivors.includes(0) && survivors.includes(3), 'the base team and the different-lead team survive');
-  assert.ok(!survivors.includes(1) && !survivors.includes(2));
-  const normalDeaths = Math.round(population.length / 3);
-  assert.equal(lineage.died.length, 2 + normalDeaths, 'rivalry deaths come on top of the deathRate cull');
-  assert.equal(next.length, population.length, 'freed slots are refilled to hold the population size');
-  const sigs = next.map((t) => shadowBlindSignature(t, SHADOW_MATRIX));
-  assert.equal(new Set(sigs).size, sigs.length, 'no shadow twins remain among the carried-over population');
+  const opts = { deathRate: 2 / 7, mutationFloor: 0, mutationCeil: 0 }; // exactly 2 deaths
+
+  // Marginal twins: raw fitness just above the two worst fillers. Field range
+  // 0.95 - 0.5 = 0.45, step 0.045; each twin owes 1 + 2 x 0.9 = 2.8 steps
+  // (0.126) to the base team and so drops under the filler.
+  const marginal = [0.95, 0.6, 0.61, 0.85, 0.6, 0.55, 0.5];
+  const a = nextGeneration({ population, fitness: marginal, pool: SHADOW_POOL, matrix: SHADOW_MATRIX, seed: 'rivalry', opts });
+  assert.deepEqual(a.lineage.died.slice().sort(), [1, 2], 'both twins are the two culled, in place of the two worst fillers');
+  assert.deepEqual(a.lineage.coreRivalryDied.slice().sort(), [1, 2], 'they die to the penalty, not the raw ranking');
+  const survivorsA = a.lineage.entries.filter((e) => e.origin === 'survived').map((e) => e.parentIndex);
+  assert.ok(survivorsA.includes(0) && survivorsA.includes(3), 'the base team and the different-lead team survive');
+  assert.equal(a.population.length, population.length);
+
+  // Strong twins: the three fittest teams in the field. 2.8 steps is high
+  // but not fatal -- they still outrank the filler and keep their seats.
+  const strong = [0.95, 0.9, 0.92, 0.85, 0.6, 0.55, 0.5];
+  const b = nextGeneration({ population, fitness: strong, pool: SHADOW_POOL, matrix: SHADOW_MATRIX, seed: 'rivalry', opts });
+  const survivorsB = b.lineage.entries.filter((e) => e.origin === 'survived').map((e) => e.parentIndex);
+  assert.ok([0, 1, 2, 3].every((i) => survivorsB.includes(i)), 'strong shadow twins survive alongside the base team');
 });
 
 test('filterBannedCuratedTeams drops a WHOLE curated team containing a banned base species (shadow variant included)', () => {
@@ -933,57 +936,17 @@ function candidateWeightsMatrix(pairs) {
   return { builtMons };
 }
 
-test('computeCandidateWeights: inverse of a team\'s most-common member\'s population share, clamped and normalised to sum to n', () => {
-  // Population of 4 teams; species 'majority' appears in 3/4 teams (share 0.75), 'rare' in 1/4 (0.25).
+test('computeCandidateWeights: delegates to the shared crowdingWeights scheme, resolving keys to speciesId through the matrix', () => {
+  // The crowding math itself is covered in test/ga.test.js; this only checks
+  // the call site's key -> speciesId adapter (a crowded core weighs less than
+  // a singleton).
   const matrix = candidateWeightsMatrix([
     ['a1', 'majority'], ['a2', 'x'], ['a3', 'y'],
-    ['b1', 'majority'], ['b2', 'z'], ['b3', 'w'],
-    ['c1', 'majority'], ['c2', 'p'], ['c3', 'q'],
-    ['d1', 'rare'], ['d2', 'x'], ['d3', 'y'],
+    ['b1', 'majority'], ['b2', 'x'], ['b3', 'z'],
+    ['d1', 'rare'], ['d2', 'p'], ['d3', 'q'],
   ]);
-  const population = [
-    ['a1', 'a2', 'a3'],
-    ['b1', 'b2', 'b3'],
-    ['c1', 'c2', 'c3'],
-    ['d1', 'd2', 'd3'],
-  ];
-  const shareBySpecies = new Map([
-    ['majority', 0.75],
-    ['rare', 0.25],
-    ['x', 0.5],
-    ['y', 0.5],
-    ['z', 0.25],
-    ['w', 0.25],
-    ['p', 0.25],
-    ['q', 0.25],
-  ]);
-  const weights = computeCandidateWeights(matrix, population, shareBySpecies);
-  assert.equal(weights.length, 4);
-  // Teams a/b/c share the same max-share member (majority, 0.75) -> equal weight.
-  assert.ok(Math.abs(weights[0] - weights[1]) < 1e-9);
-  assert.ok(Math.abs(weights[1] - weights[2]) < 1e-9);
-  // Team d's most-common-member share (max of rare=0.25, x=0.5, y=0.5) is 0.5, still lower than 0.75 -> higher weight.
-  assert.ok(weights[3] > weights[0]);
-  const total = weights.reduce((s, w) => s + w, 0);
-  assert.ok(Math.abs(total - population.length) < 1e-9);
-  // Clamp is relative to the mean, not the raw reciprocal: with every
-  // species at a tiny share (1/maxShare far above 5 for all teams) the
-  // weights must still spread, not all pin to the ceiling and flatten to 1.
-  const tinyShares = new Map([...shareBySpecies].map(([k, v]) => [k, v / 100]));
-  const spread = computeCandidateWeights(matrix, population, tinyShares);
-  assert.ok(spread[3] > spread[0]);
-  assert.ok(Math.abs(spread.reduce((s, w) => s + w, 0) - population.length) < 1e-9);
-  // ...but a lone extreme reciprocal is still capped at 5x the mean.
-  const capped = computeCandidateWeights(matrix, population, new Map([...tinyShares, ['rare', 1e-9], ['x', 1e-9], ['y', 1e-9]]));
-  assert.ok(capped[3] / (capped.reduce((s, w) => s + w, 0) / population.length) <= 5 + 1e-9);
-
-  // Clamping: an extreme (near-zero) share is capped at weight 5.
-  const extreme = computeCandidateWeights(
-    candidateWeightsMatrix([['e1', 's']]),
-    [['e1']],
-    new Map([['s', 0.0001]])
-  );
-  assert.ok(extreme[0] <= 5 + 1e-9);
+  const weights = computeCandidateWeights(matrix, [['a1', 'a2', 'a3'], ['b1', 'b2', 'b3'], ['d1', 'd2', 'd3']]);
+  assert.ok(weights[2] > weights[0]);
 });
 
 test('renderEvolveReportHtml: held-out final-pass shape (archive + fresh strata, selectionFitness) renders the strata line with no undefined/NaN', () => {

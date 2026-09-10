@@ -166,6 +166,23 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_PATH = path.join(__dirname, 'parallelWorker.js');
 
+// Old-generation heap ceiling per worker isolate. Without one, V8 sizes each
+// worker's heap against the whole machine and lets garbage from the battle
+// sim (which allocates heavily) pile up before collecting: measured 2026-09-09,
+// one isolate sat at ~450 MB RSS over ~20 MB of live heap, and 8 of them
+// accounted for most of an evolve run's ~6.5 GB starting RSS. A worker's live
+// data is small and bounded -- the scenario memo (~40 MB at its 20k cap, see
+// teamBattle.js) plus the two built-Pokemon caches (~70 MB each at their
+// 5000-entry cap, see parallelWorker.js) -- so 512 MB is a ~2.5x margin over
+// the worst case, and just makes V8 collect sooner instead of growing.
+// Exceeding it is fatal to that worker (and, per the crash policy above, to
+// the run), so raise it via POGO_GBL_WORKER_HEAP_MB rather than lifting the
+// cache caps without revisiting this number.
+const WORKER_OLD_GEN_MB = (() => {
+  const n = Number(process.env.POGO_GBL_WORKER_HEAP_MB);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 512;
+})();
+
 export const THREADS_ENV_VAR = 'POGO_GBL_THREADS';
 
 /**
@@ -281,7 +298,10 @@ function bootWorker(vendorRoot, onStarted, profileDir) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
-      worker = new Worker(WORKER_PATH, { workerData: { vendorRoot, profileDir } });
+      worker = new Worker(WORKER_PATH, {
+        workerData: { vendorRoot, profileDir },
+        resourceLimits: { maxOldGenerationSizeMb: WORKER_OLD_GEN_MB },
+      });
     } catch (err) {
       reject(new Error(`createExecutor: failed to start worker: ${err.message}`));
       return;
@@ -620,12 +640,13 @@ export function createExecutor(opts = {}) {
     },
 
     /** @returns {Promise<Array<object>>} per-worker {worker, memoHits,
-     *   memoMisses, memoSize, cacheASize, cacheBSize, rssMb, peakRssMb} --
+     *   memoMisses, memoSize, cacheASize, cacheBSize, heapMb, peakHeapMb} --
      *   safe to call between run() calls (e.g. once per evolve.mjs
      *   generation) for live memory/speed visibility. Non-destructive: does
-     *   NOT stop the CPU profiler or clear caches, unlike close(). rssMb/
-     *   peakRssMb are 0 unless this executor was booted with `profileDir`
-     *   (RSS sampling is gated the same as the CPU profiler -- see
+     *   NOT stop the CPU profiler or clear caches, unlike close(). heapMb is
+     *   the worker isolate's own heapUsed (rss would be the whole process's);
+     *   peakHeapMb is 0 unless this executor was booted with `profileDir`
+     *   (heap sampling is gated the same as the CPU profiler -- see
      *   parallelWorker.js). Returns [] before the pool has booted. */
     async stats() {
       return collectLiveStats(pool);

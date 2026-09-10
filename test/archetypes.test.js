@@ -123,7 +123,8 @@ test('coreRivalryFitness: a similar core loads at the similarity weight, and a t
     [copper, empo, clod], // 3: see the per-core loads below
     [sab, clod, copper], // 4
   ];
-  const opts = { similar: 0.5, floor: 0, similarity: (a, b) => (a.id === b.id ? 1 : SCORES[[a.id, b.id].sort().join('|')] === 0.7 ? 1 : 0) };
+  // twinRivalry 0: this test isolates the CORE term (the whole-team term is covered below).
+  const opts = { similar: 0.5, floor: 0, twinRivalry: 0, similarity: (a, b) => (a.id === b.id ? 1 : SCORES[[a.id, b.id].sort().join('|')] === 0.7 ? 1 : 0) };
   const fitness = [1, 0.9, 0.8, 0.7, 0.6]; // range 0.4, step 0.04
   const { shared, rivalsAbove } = coreRivalryFitness(teams, fitness, 0.1, opts);
   assert.equal(rivalsAbove[0], 0);
@@ -135,17 +136,57 @@ test('coreRivalryFitness: a similar core loads at the similarity weight, and a t
   //   copper/clod: 0 + 0.5 + 0.5 = 1.0
   assert.ok(Math.abs(rivalsAbove[3] - 1.5) < 1e-12, 'max over cores, not their sum (3.5)');
   assert.ok(Math.abs(shared[3] - (0.7 - 0.04 * 1.5)) < 1e-12);
-  const exact = coreRivalryFitness(teams, fitness, 0.1, { similar: 0 });
+  const exact = coreRivalryFitness(teams, fitness, 0.1, { similar: 0, twinRivalry: 0 });
   assert.deepEqual(exact.rivalsAbove, [0, 0, 1, 1, 1], 'similar 0 counts identical cores only');
 });
 
-test('opponentProfiles dedupes shadow twins by base id and carries the built Pokemon only when it can score similarity', () => {
+test('opponentProfiles keeps slot order, strips shadow to the base id, and carries the built Pokemon only when it can score similarity', () => {
   const withSim = { speciesId: 'feraligatr', calculateSimilarity: () => 0 };
   const noSim = { speciesId: 'feraligatr_shadow' };
   const other = { speciesId: 'tinkaton', calculateSimilarity: () => 0 };
-  const o = { members: [withSim, noSim, other] };
-  const profiles = opponentProfiles(o);
-  assert.deepEqual(profiles.map((p) => p.baseId), ['feraligatr', 'tinkaton']);
-  assert.equal(profiles[0].pokemon, withSim, 'first feraligatr entry wins the dedupe');
-  assert.equal(profiles[1].pokemon, other);
+  const profiles = opponentProfiles({ members: [other, withSim, noSim] });
+  assert.deepEqual(profiles.map((p) => p.baseId), ['tinkaton', 'feraligatr', 'feraligatr']);
+  assert.equal(profiles[0].pokemon, other);
+  assert.equal(profiles[1].pokemon, withSim);
+  assert.equal(profiles[2].pokemon, undefined);
+  // Core math dedupes by base id: a shadow and its base are one member, so this team has a single (shadow-flipped, 0.9) core.
+  const { rivalsAbove } = coreRivalryFitness([['tinkaton', 'feraligatr'], ['tinkaton', 'feraligatr_shadow', 'feraligatr']], [1, 0], 0.1, { twins: false });
+  assert.ok(Math.abs(rivalsAbove[1] - 0.9) < 1e-12);
+});
+
+test('shadow similarity: a species and its own shadow score 0.9 -- high, but not identical -- with or without a similarity callback', () => {
+  const g = { baseId: 'feraligatr' };
+  const gs = { baseId: 'feraligatr', shadow: true };
+  assert.equal(memberSimilarity(g, gs), 0.9);
+  assert.equal(memberSimilarity(g, gs, { similar: 0 }), 0.9, 'not gated by the similar-species knob');
+  assert.equal(memberSimilarity(g, gs, { shadowSimilar: 0.5 }), 0.5);
+  assert.equal(memberSimilarity(gs, { ...gs }), 1, 'shadow vs shadow is identical');
+});
+
+test('twin load: a shadow variant of a better team pays 1 + 2 x 0.9 steps, not death; only an exact duplicate dies outright', () => {
+  const teams = [
+    ['a', 'b', 'c'], // 0: best
+    ['a_shadow', 'c', 'b'], // 1: shadow twin of 0 under 'lead' (backs swapped, lead flipped)
+    ['b', 'a', 'c'], // 2: same trio, different lead -- shares every core (1) but is no twin (lead sim 0)
+    ['a', 'b', 'd'], // 3: shares the a|b core with 0, 1 and 2
+  ];
+  const fitness = [0.9, 0.8, 0.7, 0.6]; // range 0.3, step 0.03
+  const { shared, rivalsAbove, twinLosers } = coreRivalryFitness(teams, fitness, 0.1);
+  assert.deepEqual(twinLosers, [], 'a shadow twin is not a duplicate');
+  assert.ok(Math.abs(rivalsAbove[1] - (1 + 2 * 0.9)) < 1e-12, 'core 1 (b|c identical) + twin 2 x 0.9');
+  assert.ok(Math.abs(shared[1] - (0.8 - 0.03 * 2.8)) < 1e-12);
+  assert.ok(Math.abs(rivalsAbove[2] - 2) < 1e-12, 'b|c from 0 and 1 (identical both times); no twin load across a different lead');
+  assert.ok(Math.abs(rivalsAbove[3] - (1 + 0.9 + 1)) < 1e-12, 'a|b: identical in 0 and 2, shadow-flipped in 1');
+  assert.deepEqual(coreRivalryFitness(teams, fitness, 0.1, { twinRivalry: 0 }).rivalsAbove, [0, 1, 2, 2.9], 'twinRivalry 0 leaves the core load alone');
+  // Positional: 1's backs are swapped relative to 0, so its whole-team similarity to 0 is 0 -- no twin load.
+  const positional = coreRivalryFitness(teams, fitness, 0.1, { twins: 'positional' });
+  assert.ok(Math.abs(positional.rivalsAbove[1] - 1) < 1e-12);
+  // Exact duplicates: the fitter lives (ties to the lower index), the rest die whatever the rivalry, and count for nobody.
+  const dup = [['a', 'b', 'c'], ['a', 'b', 'c'], ['a', 'c', 'b'], ['a', 'b', 'd']];
+  const r = coreRivalryFitness(dup, [0.5, 0.5, 0.4, 0.3], 0);
+  assert.deepEqual(r.twinLosers, [2, 1], 'worst-fitness first; [2] is a lead-mode duplicate of [0]');
+  assert.equal(r.shared[1], -Infinity);
+  assert.deepEqual(coreRivalryFitness(dup, [0.5, 0.5, 0.4, 0.3], 0.1).rivalsAbove, [0, 0, 0, 1], 'the living [0] is the only rival left for [3]');
+  assert.deepEqual(coreRivalryFitness(dup, [0.5, 0.5, 0.4, 0.3], 0, { twins: 'positional' }).twinLosers, [1], 'positional: swapped backs are distinct');
+  assert.deepEqual(coreRivalryFitness(dup, [0.5, 0.5, 0.4, 0.3], 0, { twins: false }).twinLosers, []);
 });

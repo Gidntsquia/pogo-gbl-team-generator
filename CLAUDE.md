@@ -4,6 +4,8 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 
 **Fresh clone / start of every scheduled run:** `bash scripts/setup.sh` FIRST — `vendor/pvpoke` is gitignored and absent until it runs.
 
+**Running or resuming an evolve sim:** read `RUNBOOK.md` first — it has the established recipes, resume gotchas, and flag conventions for `scripts/sim.sh`/`scripts/evolve.mjs`.
+
 - Tests: `npm test` (fast tier, ~1s) while working, `npm run test:full` (~13s) before a push. Real battles run in `test/e2e.test.js` and nowhere else. Only node's built-in `node:test` + `node:assert`. Full policy and the rest of the commands under **Tests** below.
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
 - `vendor/pvpoke` is a pinned read-only sparse clone (gitignored). Load/execute its code and data; never edit it, never reimplement its battle math. Need a path not checked out? `git -C vendor/pvpoke sparse-checkout add <path>`.

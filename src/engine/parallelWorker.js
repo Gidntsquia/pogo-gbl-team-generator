@@ -22,8 +22,8 @@
 // every generation introduces candidates with new IVs/movesets -- there is no
 // natural ceiling on the number of distinct mons a worker will ever see, so
 // an unbounded cache here grows for as long as the run does. This was the
-// root cause of the RSS growth observed on long evolve runs (mem-watchdog.sh,
-// 2026-09-07): each worker's cache size, not a fixed per-battle allocation,
+// root cause of the RSS growth observed on long evolve runs (2026-09-07):
+// each worker's cache size, not a fixed per-battle allocation,
 // was what kept climbing. `BoundedCache` caps each side's cache at a fixed
 // entry count with LRU eviction so memory plateaus instead of growing with
 // generation count -- while still spanning many generations, so the cross-
@@ -73,20 +73,28 @@ if (workerData?.profileDir) {
 }
 
 // Diagnostic-only, same --profile gate as the CPU profiler above: tracks the
-// highest RSS this worker has hit, sampled every 5s. Also what backs the
+// highest heap this worker has hit, sampled every 5s. Also what backs the
 // live per-generation 'stats' poll (see below) -- gated behind --profile,
 // same as the CPU profiler, so a run with no interest in this diagnostic
 // pays nothing for it. unref()'d so it never keeps the process alive past a
 // normal exit.
-let peakRssBytes = 0;
-let rssTimer = null;
+//
+// Why heapUsed and not rss: worker_threads share one OS process, so
+// `process.memoryUsage().rss` inside a worker is the WHOLE process's RSS,
+// identical in every worker. An earlier version of this file summed it
+// across workers and logged "worker RSS 68 GB total" on a 12 GB box -- and
+// derived a ~1.5 MB-per-built-Pokemon estimate from that, which is wrong by
+// ~100x (measured ~14 KB). heapUsed is per-isolate and is the number that
+// actually attributes memory to this worker.
+let peakHeapBytes = 0;
+let heapTimer = null;
 if (workerData?.profileDir) {
-  peakRssBytes = process.memoryUsage().rss;
-  rssTimer = setInterval(() => {
-    const rss = process.memoryUsage().rss;
-    if (rss > peakRssBytes) peakRssBytes = rss;
+  peakHeapBytes = process.memoryUsage().heapUsed;
+  heapTimer = setInterval(() => {
+    const heap = process.memoryUsage().heapUsed;
+    if (heap > peakHeapBytes) peakHeapBytes = heap;
   }, 5000);
-  rssTimer.unref();
+  heapTimer.unref();
 }
 
 /** Stable cache key for a plain-data mon spec (moveset included -- two specs for the same species/IVs but different explicit movesets must not share a build). */
@@ -130,17 +138,16 @@ function buildTeam(ctx, cache, monSpecs) {
  * meant to span MANY generations, not one: a mon that keeps reappearing
  * (elites, survivors, recurring opponents) is refreshed on every hit and so
  * never ages out, and the cap only decides how many generations' worth of
- * churned-out mutants stay around before being evicted. Live telemetry from a
- * `--threads 8` run (out/evolve-meta-vs-meta-newseason-v4.log, correlating
- * total worker RSS growth to total mon-cache-entry growth gen16->gen28) puts a
- * built Pokemon at ~1.5 MB, not the ~12 KB this comment previously claimed --
- * so 5000/side at cap is ~7.5 GB/side, ~15 GB/worker, well past an 8 GB box
- * per worker on its own if a long, high-diversity run ever fills the cache
- * that far (the standard recipe sees at most ~900 distinct teamA and ~360
- * distinct teamB mons per generation, so a run stays well under cap for many
- * generations before this matters). Override with `POGO_GBL_WORKER_CACHE=N`
- * to lower the cap on memory-constrained boxes; there is currently no
- * automatic sizing against available RAM. */
+ * churned-out mutants stay around before being evicted. A built Pokemon costs
+ * ~14 KB of heap (measured 2026-09-09 by heap delta over 300 real builds), so
+ * 5000/side at cap is ~70 MB/side, ~140 MB/worker -- bounded and harmless. An
+ * earlier revision of this comment put it at ~1.5 MB by correlating the
+ * per-worker "RSS" telemetry with cache growth; that telemetry was the whole
+ * process's RSS repeated once per worker (see the heap sampler above), so the
+ * estimate was ~100x too high. The standard recipe sees at most ~900 distinct
+ * teamA and ~360 distinct teamB mons per generation, so a run takes many
+ * generations to reach cap at all. Override with `POGO_GBL_WORKER_CACHE=N`;
+ * raising it should be paired with parallel.js's WORKER_OLD_GEN_MB. */
 const MAX_CACHE_ENTRIES = (() => {
   const n = Number(process.env.POGO_GBL_WORKER_CACHE);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5000;
@@ -160,20 +167,22 @@ async function init() {
   parentPort.postMessage({ type: 'ready' });
 }
 
-/** Snapshot of this worker's current memo/cache/RSS numbers -- the shared
+/** Snapshot of this worker's current memo/cache/heap numbers -- the shared
  * shape both the live 'stats' poll (non-destructive, mid-run) and shutdown()
- * (destructive, end-of-run) report. */
+ * (destructive, end-of-run) report. `heapMb`/`peakHeapMb` are THIS isolate's
+ * heap (see the note above the sampler); process RSS is the main thread's to
+ * report, once. */
 function snapshotStats() {
   const memo = ctx?.__teamBattle?.scenarioMemo;
-  const rss = process.memoryUsage().rss;
+  const heap = process.memoryUsage().heapUsed;
   return {
     memoHits: memo?.hits ?? 0,
     memoMisses: memo?.misses ?? 0,
     memoSize: memo?.map.size ?? 0,
     cacheASize: cacheA.size,
     cacheBSize: cacheB.size,
-    rssMb: Math.round(rss / 1048576),
-    peakRssMb: Math.round(Math.max(peakRssBytes, rss) / 1048576),
+    heapMb: Math.round(heap / 1048576),
+    peakHeapMb: Math.round(Math.max(peakHeapBytes, heap) / 1048576),
   };
 }
 
@@ -182,7 +191,7 @@ function snapshotStats() {
  * terminate(), which src/engine/parallel.js's close() sends before tearing
  * down the pool so profiling/stats data isn't silently lost. */
 function shutdown() {
-  if (rssTimer) clearInterval(rssTimer);
+  if (heapTimer) clearInterval(heapTimer);
   const stats = snapshotStats();
   if (!profileSession) {
     parentPort.postMessage({ type: 'shutdownDone', stats });

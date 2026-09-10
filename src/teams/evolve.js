@@ -24,9 +24,13 @@
 // -sampled species-set a seeded-random lead; mutation gains a second type,
 // lead-rotation (promote a back to lead), alongside the pre-existing member
 // -swap type -- see `DEFAULT_LEAD_ROTATION_RATE`. A third type, shadow-flip
-// (`DEFAULT_SHADOW_FLIP_RATE`), swaps one member for its opposite-shadow twin
-// when the pool holds both; a team and its shadow-twin then share a
-// `shadowBlindSignature` and only the fitter survives each generation.
+// (`DEFAULT_SHADOW_FLIP_RATE`), swaps a random non-empty subset of members for
+// their opposite-shadow twins when the pool holds both; a team and its shadow-twin then share a
+// `shadowBlindSignature` and compete hard for one seat (the twin load of
+// src/meta/archetypes.js coreRivalryFitness: a shadow and its base are
+// near-maximally similar, 0.9, so the weaker twin is charged 2.8 rivalry
+// steps against the better one -- high, but not a death sentence, so a twin
+// that fights well still lives; the final ranking keeps one per signature).
 // Downstream battle-driving
 // code (scripts/evolve.mjs) deciding to evaluate a team ONLY at its own
 // `team[0]` lead (a ~3x battle-count saving) is NOT this module's
@@ -41,6 +45,7 @@ import {
 } from './sample.js';
 import { coreRivalryFitness, candidateProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../meta/archetypes.js';
 import { createSimilarity } from '../engine/similarity.js';
+import { trailingFitnessGeneric } from '../ga/core.js';
 
 const TEAM_SIZE = 3;
 const BACK_SLOTS = [1, 2];
@@ -61,15 +66,20 @@ export const DEFAULT_MUTATION_CEIL = 0.4;
 // still explores species composition, including at the lead slot) stays the
 // majority of mutations, matching its pre-existing primacy.
 export const DEFAULT_LEAD_ROTATION_RATE = 0.3;
-// Of the mutation successes, this share become a SHADOW-FLIP (swap one member
-// for its opposite-shadow twin -- same species, same lead, only the shadow
-// flag changes). Rolled AFTER lead-rotation on the same type draw, so with
-// the defaults a success is 30% lead-rotation, 15% shadow-flip, 55%
-// member-swap. A shadow-flip only exists when the pool actually holds the
-// twin (see `buildShadowTwins`); when the chosen parent has no flippable
-// slot the roll falls through to a member-swap, so a collection with no
-// shadow twins evolves exactly as it did before this type was added.
-export const DEFAULT_SHADOW_FLIP_RATE = 0.15;
+// Of the mutation successes, this share become a SHADOW-FLIP (swap a random
+// non-empty subset of the flippable members for their opposite-shadow twins
+// -- same species, same lead, only shadow flags change). Rolled AFTER
+// lead-rotation on the same type draw, so with the defaults a success is 30%
+// lead-rotation, 20% shadow-flip, 50% member-swap (Jaxon 2026-09-10: 0.15 ->
+// 0.3 -> 0.2). Every combination of flips is equally likely, not just single
+// flips: a trio may only clear the damage breakpoints it needs with two or
+// three shadows at once, and a one-flip-at-a-time walk would see each
+// intermediate step die and never get there (and vice versa for shedding
+// shadows). A shadow-flip only exists when the pool actually holds the twin
+// (see `buildShadowTwins`); when the chosen parent has no flippable slot the
+// roll falls through to a member-swap, so a collection with no shadow twins
+// evolves exactly as it did before this type was added.
+export const DEFAULT_SHADOW_FLIP_RATE = 0.2;
 // A floor of ~10% of P fresh IMMIGRANT teams is always reserved.
 export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 // Convergence (see `hasConverged`). TRAILING is the number of generations of
@@ -137,10 +147,12 @@ function teamSignature(team) {
  * built from each member's base speciesId instead of its userMonKey, so a
  * team and its shadow-twin (identical species and lead, one or more members
  * flipped between shadow and non-shadow) collapse to ONE signature. Two
- * teams sharing it are rivals: `nextGeneration` lets only the fitter one
- * survive each generation, and the final ranking (scripts/evolve.mjs) keeps
- * one per signature, so a report never lists the same trio several times
- * differing only in who is shadow.
+ * teams sharing it are twins: `nextGeneration` ranks the weaker one under a
+ * heavy core-rivalry penalty (coreRivalryFitness's twin load, `twins:
+ * 'lead'`, is this same lead-aware shape scored on member similarity), and
+ * the final ranking (scripts/evolve.mjs) keeps one per signature, so a
+ * report never lists the same trio several times differing only in who is
+ * shadow.
  *
  * @param {string[]} team - 3 userMonKeys, `team[0]` the lead.
  * @param {object} matrix - needs `builtMons[key].speciesId`.
@@ -297,12 +309,14 @@ function buildLeadRotation(parentTeam, usedSignatures, rng, maxAttempts) {
 }
 
 /**
- * Attempt to build one shadow-flip mutant of `parentTeam`: pick a uniform
- * -random slot among those whose mon has an opposite-shadow twin in the pool
- * (`shadowTwins`) and swap the key for that twin -- same 3 species, same
- * lead, one member's shadow state flipped. Returns `{team, flippedSlot}`, or
- * `null` when no slot is flippable or every flip collides with a used
- * signature (each slot has exactly one flip, so this exhausts fast).
+ * Attempt to build one shadow-flip mutant of `parentTeam`: among the slots
+ * whose mon has an opposite-shadow twin in the pool (`shadowTwins`), pick a
+ * uniform-random NON-EMPTY subset (all 2^k - 1 combinations equally likely,
+ * so a two- or three-shadow variant is as reachable in one step as a single
+ * flip) and swap each chosen key for its twin -- same 3 species, same lead,
+ * only shadow states change. Returns `{team, flippedSlots}` (ascending slot
+ * indices), or `null` when no slot is flippable or every combination tried
+ * collides with a used signature.
  */
 function buildShadowFlip(parentTeam, shadowTwins, usedSignatures, rng, maxAttempts) {
   const flippable = [];
@@ -310,47 +324,25 @@ function buildShadowFlip(parentTeam, shadowTwins, usedSignatures, rng, maxAttemp
     if (shadowTwins.has(key)) flippable.push(slot);
   });
   if (flippable.length === 0) return null;
+  const combos = 2 ** flippable.length - 1;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const flippedSlot = flippable[Math.floor(rng() * flippable.length) % flippable.length];
+    const mask = 1 + (Math.floor(rng() * combos) % combos); // 1..combos, never the empty set
+    const flippedSlots = flippable.filter((_, bit) => mask & (1 << bit));
     const flipped = parentTeam.slice();
-    flipped[flippedSlot] = shadowTwins.get(parentTeam[flippedSlot]);
+    for (const slot of flippedSlots) flipped[slot] = shadowTwins.get(parentTeam[slot]);
     const signature = teamSignature(flipped);
     if (usedSignatures.has(signature)) continue;
     usedSignatures.add(signature);
-    return { team: flipped, flippedSlot };
+    return { team: flipped, flippedSlots };
   }
   return null;
 }
 
 /**
- * Shadow rivalry: among teams sharing a `shadowBlindSignature` (identical
- * species and lead, differing only in members' shadow state) exactly one --
- * the fittest this generation, ties to the lower index -- may live. Returns
- * the indices of the losers, worst-fitness first. This is what stops a
- * population (and the final ranking) filling up with near-copies of one trio
- * when shadow-ness barely moves its win rate: a shadow-flip mutant gets one
- * generation measured against the same opponents as its parent, then the two
- * fight for the single slot.
- */
-function shadowRivalryLosers(population, fitness, matrix) {
-  const bestByShadowBlind = new Map();
-  population.forEach((team, i) => {
-    const signature = shadowBlindSignature(team, matrix);
-    const cur = bestByShadowBlind.get(signature);
-    if (cur === undefined || fitness[i] > fitness[cur]) bestByShadowBlind.set(signature, i);
-  });
-  const winners = new Set(bestByShadowBlind.values());
-  return population
-    .map((_, i) => i)
-    .filter((i) => !winners.has(i))
-    .sort((a, b) => fitness[a] - fitness[b] || a - b);
-}
-
-/**
  * Advance one generation: rank by this generation's fitness, kill the bottom
- * `deathRate` fraction (after first settling every shadow rivalry -- see
- * `shadowRivalryLosers`; those deaths come ON TOP of the `deathRate` cull, so
- * a loser never protects a genuinely bad team from dying), roll each
+ * `deathRate` fraction (ranked on the core-rivalry-penalised fitness, under
+ * which a shadow twin of a better team pays 2.8 steps; exact duplicates, if
+ * a caller ever supplies any, die outright ON TOP of the cull), roll each
  * survivor's fitness-percentile-scaled
  * mutation chance, fill the freed slots with the resulting mutants (capped,
  * oversubscription favors higher-percentile parents) plus fresh immigrants
@@ -391,12 +383,12 @@ function shadowRivalryLosers(population, fitness, matrix) {
  *   population: string[][],
  *   lineage: {
  *     died: number[],
- *     shadowRivalryDied: number[],
+ *     coreRivalryDied: number[],
  *     entries: Array<
  *       {origin:'survived', parentIndex:number} |
  *       {origin:'mutant', parentIndex:number, mutationType:'memberSwap', swappedSlot:number} |
  *       {origin:'mutant', parentIndex:number, mutationType:'leadRotation', promotedSlot:number} |
- *       {origin:'mutant', parentIndex:number, mutationType:'shadowFlip', flippedSlot:number} |
+ *       {origin:'mutant', parentIndex:number, mutationType:'shadowFlip', flippedSlots:number[]} |
  *       {origin:'immigrant'}
  *     >,
  *   },
@@ -405,9 +397,9 @@ function shadowRivalryLosers(population, fitness, matrix) {
  *   the pool is too small to supply enough distinct new teams, in which case
  *   it gracefully falls short (mirrors sampleCandidateTeams' own cap
  *   behavior) rather than throwing or looping forever. `lineage.died` lists
- *   the OLD population's dead indices, worst-fitness first;
- *   `lineage.shadowRivalryDied` is the subset of those that died for losing a
- *   shadow rivalry rather than for ranking in the bottom `deathRate`;
+ *   the OLD population's dead indices, worst-fitness first (shadow twins are
+ *   handled by the rivalry penalty and show up in `coreRivalryDied` when it
+ *   costs them their seat);
  *   `lineage.coreRivalryDied` the subset that died only because better teams
  *   sharing a two-species core -- or a similar core by pvpoke's similarity
  *   (`opts.similarity`, a src/engine/similarity.js createSimilarity scorer,
@@ -419,13 +411,13 @@ function shadowRivalryLosers(population, fitness, matrix) {
  *   entry says whether that slot is an unchanged survivor (with its index in
  *   the OLD population), a mutant (with its OLD-population parent index and
  *   which mutation it got -- a member-swap's changed slot, or a lead
- *   -rotation's promoted slot, a shadow-flip's flipped slot), or a fresh
+ *   -rotation's promoted slot, a shadow-flip's flipped slots), or a fresh
  *   immigrant. Every returned team
  *   still has `team[0]` as its designated lead.
  */
 export function nextGeneration({ population, fitness, pool, matrix, weights, seed, opts = {} }) {
   const P = population.length;
-  if (P === 0) return { population: [], lineage: { died: [], shadowRivalryDied: [], coreRivalryDied: [], entries: [] } };
+  if (P === 0) return { population: [], lineage: { died: [], coreRivalryDied: [], entries: [] } };
 
   const targetSize = Math.max(0, opts.targetSize ?? P);
   const deathRate = opts.deathRate ?? DEFAULT_DEATH_RATE;
@@ -442,19 +434,28 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const similarity = coreRivalry > 0 && similarRivalry > 0 ? opts.similarity ?? createSimilarity() : null;
   const rng = rngFromSeed(seed, 'nextGeneration');
 
-  // Shadow rivalries settle first: the losers are dead regardless of rank.
-  const shadowRivalryDied = shadowRivalryLosers(population, fitness, matrix);
-  const rivalryLoserSet = new Set(shadowRivalryDied);
-  // Core rivalries (src/meta/archetypes.js coreRivalryFitness): the cull and
-  // the mutation ranking below use a fitness penalised per better team
-  // sharing a two-species core. `fitness` itself is untouched -- the
-  // checkpoint, analytics and trailing history all keep the raw number.
-  const { shared: rankFitness, rivalsAbove } = coreRivalryFitness(
+  // Rivalries (src/meta/archetypes.js coreRivalryFitness): the cull and the
+  // mutation roll below rank on a fitness penalised per better team sharing
+  // a two-species (or similar) core, plus a heavy twin load for a team that
+  // is a better team's shadow variant (whole-team similarity 0.9: 2.8 steps
+  // against a plain same-core variant's 1). That is what stops a population
+  // (and the final ranking) filling up with near-copies of one trio when
+  // shadow-ness barely moves its win rate -- a shadow-flip mutant gets one
+  // generation measured against the same opponents as its parent, then the
+  // weaker of the two is pushed toward the cull -- while a shadow variant
+  // that genuinely fights better than the field's tail keeps its seat. Exact
+  // duplicates (whole-team similarity 1) would die outright; teamSignature
+  // makes them impossible here, so `twinLosers` is empty in practice and is
+  // folded into `died` without its own lineage field. `fitness` itself is
+  // untouched -- the checkpoint, analytics and trailing history all keep the
+  // raw number.
+  const { shared: rankFitness, rivalsAbove, twinLosers } = coreRivalryFitness(
     population.map((team) => candidateProfiles(matrix, team)),
     fitness,
     coreRivalry,
-    { similar: similarRivalry, floor: similarFloor, similarity }
+    { similar: similarRivalry, floor: similarFloor, similarity, twins: 'lead' }
   );
+  const rivalryLoserSet = new Set(twinLosers);
   // Worst-fitness-first ranking of everyone else (ties broken by original index for determinism).
   const rankedWorstFirst = population
     .map((_, i) => i)
@@ -474,7 +475,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   // (P - survivorsWanted), taken off the worst contenders -- so rivalry losers
   // add to the death toll rather than shielding the bottom of the ranking.
   const deathCount = Math.max(0, Math.min(contenders, P - survivorsWanted));
-  const died = [...shadowRivalryDied, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
+  const died = [...twinLosers, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
   const survivorIndicesAsc = rankedWorstFirst.slice(deathCount); // still worst-to-best among survivors
   // Deaths the core rivalry caused: culled here, but inside the raw-fitness
   // survivor cut (so they would have lived under a plain ranking).
@@ -528,7 +529,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
     if (type === 'shadowFlip') {
       const built = buildShadowFlip(population[idx], shadowTwins, usedSignatures, rng, mutantMaxAttempts);
       if (built) {
-        mutantEntries.push({ team: built.team, parentIndex: idx, mutationType: 'shadowFlip', flippedSlot: built.flippedSlot });
+        mutantEntries.push({ team: built.team, parentIndex: idx, mutationType: 'shadowFlip', flippedSlots: built.flippedSlots });
         continue;
       }
       // No flippable member (or both states already present): fall through to
@@ -585,13 +586,13 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
       .map((idx) => ({ origin: 'survived', parentIndex: idx })),
     ...mutantEntries.map((m) => {
       if (m.mutationType === 'leadRotation') return { origin: 'mutant', parentIndex: m.parentIndex, mutationType: 'leadRotation', promotedSlot: m.promotedSlot };
-      if (m.mutationType === 'shadowFlip') return { origin: 'mutant', parentIndex: m.parentIndex, mutationType: 'shadowFlip', flippedSlot: m.flippedSlot };
+      if (m.mutationType === 'shadowFlip') return { origin: 'mutant', parentIndex: m.parentIndex, mutationType: 'shadowFlip', flippedSlots: m.flippedSlots };
       return { origin: 'mutant', parentIndex: m.parentIndex, mutationType: 'memberSwap', swappedSlot: m.swappedSlot };
     }),
     ...immigrantEntries.map(() => ({ origin: 'immigrant' })),
   ];
 
-  return { population: nextPopulation, lineage: { died, shadowRivalryDied, coreRivalryDied, entries } };
+  return { population: nextPopulation, lineage: { died, coreRivalryDied, entries } };
 }
 
 /**
@@ -629,33 +630,6 @@ function smoothedScores(history, end, trailing) {
 }
 
 /**
- * Recency-weighted analog of `smoothedScores` for SELECTION (trailingFitness)
- * rather than convergence: each generation `age` steps back from `end`
- * contributes `decay ** age` of weight instead of an equal 1, so the newest
- * generation dominates a team's score and older ones fade out rather than
- * counting the same as yesterday's draw.
- */
-function recencyWeightedScores(history, end, trailing, decay) {
-  const start = Math.max(0, end - trailing + 1);
-  const sums = new Map();
-  const weights = new Map();
-  const alive = new Set(history[end].population.map(teamSignature));
-  for (let g = start; g <= end; g++) {
-    const weight = decay ** (end - g);
-    const { population, fitness } = history[g];
-    for (let i = 0; i < population.length; i++) {
-      const signature = teamSignature(population[i]);
-      if (!alive.has(signature)) continue;
-      sums.set(signature, (sums.get(signature) ?? 0) + fitness[i] * weight);
-      weights.set(signature, (weights.get(signature) ?? 0) + weight);
-    }
-  }
-  const scores = new Map();
-  for (const [signature, sum] of sums) scores.set(signature, sum / weights.get(signature));
-  return scores;
-}
-
-/**
  * Per-individual trailing fitness for the NEWEST generation in `history`: for
  * each team in `history[last].population`, a recency-weighted mean of its
  * fitness over the last `trailing` generations it appeared in (matched by
@@ -683,10 +657,7 @@ function recencyWeightedScores(history, end, trailing, decay) {
  * @returns {number[]} parallel to `history[last].population`.
  */
 export function trailingFitness(history, trailing = DEFAULT_SELECTION_TRAILING, decay = DEFAULT_SELECTION_RECENCY_DECAY) {
-  if (!Array.isArray(history) || history.length === 0) return [];
-  const end = history.length - 1;
-  const scores = recencyWeightedScores(history, end, Math.max(1, trailing), decay);
-  return history[end].population.map((team, i) => scores.get(teamSignature(team)) ?? history[end].fitness[i]);
+  return trailingFitnessGeneric(history, teamSignature, trailing, decay);
 }
 
 /**

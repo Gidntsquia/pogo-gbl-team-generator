@@ -273,7 +273,9 @@ function mutantOrigin(parent) {
  *   coreRivalryFitness), so a bred counter core keeps only the variants
  *   that out-fight the rest of the pool on their own merits.
  * @returns {{pool: OpponentEntry[], lineage: {died: number[], coreRivalryDied: number[], originCounts: object}}}
- *   `lineage.died` lists indices into the INPUT `pool`, worst-fitness first;
+ *   `lineage.died` lists indices into the INPUT `pool`, worst-fitness first
+ *   (an exact positional duplicate of a fitter evolvable entry is included
+ *   whatever its rank -- coreRivalryFitness's duplicate cull, curated exempt);
  *   `coreRivalryDied` the subset that only died because of the core penalty.
  *   The returned pool is held at `targetSize` unless the meta pool is too
  *   small to supply enough distinct teams, in which case it falls short
@@ -325,35 +327,50 @@ export function nextOpponentPool(ctx, params) {
   // topped-up (and therefore lowest-priority) end.
   const curatedOut = [...curatedKept, ...curatedAdded].slice(0, Math.max(0, targetSize));
 
-  // ---- (2) evolvable: rank worst-first, cull -------------------------------
+  // ---- (2) evolvable: twin-cull, rank worst-first, cull --------------------
   const evolvableIdx = pool.map((_, i) => i).filter((i) => !isProtectedOpponent(pool[i]));
-  // Core rivalry among the evolvable entries (curated ones are neither
-  // penalised nor count as rivals -- they are never culled anyway).
+  // Rivalries among the evolvable entries only (src/meta/archetypes.js
+  // coreRivalryFitness; curated entries are neither penalised nor count as
+  // rivals -- they are never culled anyway). Whole-team similarity is read
+  // slot for slot (`twins: 'positional'` -- an OpponentEntry's id is
+  // positional and a back's slot can matter to how the engine sequences a
+  // switch-in, so unlike the candidate side's sorted backs this must never
+  // treat two entries the pool itself distinguishes as one). An exact
+  // duplicate draw dies outright, only the fitter copy living; a shadow
+  // variant of a better entry pays the heavy twin load instead. There is no
+  // opponent-side shadowFlip mutation, so both only arise from chance draws.
   const similarity = coreRivalry > 0 && similarRivalry > 0 ? opts.similarity ?? createSimilarity() : null;
-  const { shared, rivalsAbove } = coreRivalryFitness(
+  const { shared, rivalsAbove, twinLosers } = coreRivalryFitness(
     evolvableIdx.map((i) => opponentProfiles(pool[i])),
     evolvableIdx.map((i) => fitness[i]),
     coreRivalry,
-    { similar: similarRivalry, floor: similarFloor, similarity }
+    { similar: similarRivalry, floor: similarFloor, similarity, twins: 'positional' }
   );
+  const duplicateDied = twinLosers.map((k) => evolvableIdx[k]);
+  const twinLoserSet = new Set(duplicateDied);
+  const contenderIdx = evolvableIdx.filter((i) => !twinLoserSet.has(i));
   const rankFitness = new Map(evolvableIdx.map((i, k) => [i, shared[k]]));
   const rivalsOf = new Map(evolvableIdx.map((i, k) => [i, rivalsAbove[k]]));
-  const rankedWorstFirst = evolvableIdx.slice().sort((a, b) => rankFitness.get(a) - rankFitness.get(b) || a - b);
+  const rankedWorstFirst = contenderIdx.slice().sort((a, b) => rankFitness.get(a) - rankFitness.get(b) || a - b);
   const evolvableTarget = Math.max(0, targetSize - curatedOut.length);
-  // The churn is a share of who is ALIVE NOW, not of the target -- the
-  // opponent pool grows over a run (scripts/evolve.mjs trades candidate slots
-  // for opponent slots), and taking the share of the target would make
-  // `survivorsKept` exceed the live population and clamp the cull to zero in
-  // every growing generation, i.e. never. On top of that, a target smaller
-  // than the survivors trims the extra: `deathCount` is whichever of the two
-  // pressures binds.
-  const churn = Math.round(deathRate * rankedWorstFirst.length);
-  const survivorsKept = Math.max(0, Math.min(rankedWorstFirst.length - churn, evolvableTarget));
-  const deathCount = rankedWorstFirst.length - survivorsKept;
-  const died = rankedWorstFirst.slice(0, deathCount);
+  // The churn is a share of who is ALIVE NOW (every evolvable entry, twins
+  // included), not of the target -- the opponent pool grows over a run
+  // (scripts/evolve.mjs trades candidate slots for opponent slots), and
+  // taking the share of the target would make `survivorsKept` exceed the
+  // live population and clamp the cull to zero in every growing generation,
+  // i.e. never. On top of that, a target smaller than the survivors trims
+  // the extra: `deathCount` is whichever of the two pressures binds.
+  // Twin-rivalry deaths add to the total death toll ON TOP of this cull --
+  // the cull is the same headcount it would be with no twins, taken off the
+  // worst contenders, same as the candidate side -- so a twin loser never
+  // shields the bottom of the ranking.
+  const churn = Math.round(deathRate * evolvableIdx.length);
+  const survivorsKept = Math.max(0, Math.min(evolvableIdx.length - churn, evolvableTarget));
+  const deathCount = Math.max(0, Math.min(rankedWorstFirst.length, evolvableIdx.length - survivorsKept));
+  const died = [...duplicateDied, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
   const survivorIdxAsc = rankedWorstFirst.slice(deathCount); // worst-to-best among survivors
-  const rawCut = new Set(evolvableIdx.slice().sort((a, b) => fitness[a] - fitness[b] || a - b).slice(deathCount));
-  const coreRivalryDied = died.filter((i) => rawCut.has(i) && rivalsOf.get(i) > 0);
+  const rawCut = new Set(contenderIdx.slice().sort((a, b) => fitness[a] - fitness[b] || a - b).slice(deathCount));
+  const coreRivalryDied = rankedWorstFirst.slice(0, deathCount).filter((i) => rawCut.has(i) && rivalsOf.get(i) > 0);
   const survivorsOut = survivorIdxAsc
     .slice()
     .sort((a, b) => a - b)

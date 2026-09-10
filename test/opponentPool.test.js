@@ -335,10 +335,16 @@ test('the same seed and inputs produce the same next pool', () => {
 test('coreRivalry: evolvable opponents sharing a core are ranked with a penalty per better rival; curated entries neither pay nor count', () => {
   // similarRivalry 0: a 12-species meta slice is full of same-role members, so only the exact core is under test here.
   const base = newPool(12, 'core-rival', 0);
-  // Force a shared core: give entries 1..3 the first two members of entry 0.
+  // Force a shared core: give entries 1..3 the first two members of entry 0,
+  // and an explicitly distinct third member each (guaranteed distinct from
+  // each other and from the shared core) so this test's forced duplication
+  // exercises ONLY core rivalry, not the unrelated shadow-blind twin-cull --
+  // a random third member drawn the same way as every other entry could
+  // otherwise coincidentally collide with another entry's third member.
+  const distinctThirds = [9, 10, 11].map((idx) => buildMetaMon(ctx, movesetPool[idx]));
   const pool = base.map((e, i) =>
     i >= 1 && i <= 3
-      ? { ...e, id: `${e.id}-core${i}`, members: [e.members[0] === base[0].members[0] ? e.members[0] : base[0].members[0], base[0].members[1], e.members[2]] }
+      ? { ...e, id: `${e.id}-core${i}`, members: [base[0].members[0], base[0].members[1], distinctThirds[i - 1]] }
       : e
   );
   const fitness = pool.map((_, i) => 1 - i * 0.01); // entry 0 best, then 1, 2, 3 ... 11
@@ -349,4 +355,32 @@ test('coreRivalry: evolvable opponents sharing a core are ranked with a penalty 
   assert.ok(!on.lineage.died.includes(0), 'the best of the core never pays');
   assert.ok(on.lineage.coreRivalryDied.some((i) => i >= 1 && i <= 3), 'a trailing core variant died to the penalty');
   assert.equal(on.pool.length, 12);
+});
+
+test('twin rivalry: an exact-species (shadow-blind) duplicate loses to its fitter twin, curated exempt', () => {
+  const base = newPool(8, 'twin-rival', 0.5);
+  const evolvable = base.findIndex((e) => !isProtectedOpponent(e));
+  // A worse-fitness exact duplicate of one evolvable entry (same 3 base
+  // species, same lead, same order).
+  const twinOf = base[evolvable];
+  const pool = [...base, { ...twinOf, id: `${twinOf.id}-twin` }];
+  const fitness = pool.map((_, i) => (i === pool.length - 1 ? -1 : i)); // the duplicate is the worst
+  const { lineage } = nextOpponentPool(ctx, {
+    pool,
+    fitness,
+    targetSize: pool.length,
+    weights,
+    curated,
+    curatedRatio: 0.5,
+    movesetPool,
+    seed: 'twin-rival-next',
+    opts: { ...NEVER, deathRate: 0, coreRivalry: 0 },
+  });
+  // deathRate 0 and coreRivalry 0: the only way onto `died` is the duplicate cull.
+  assert.deepEqual(lineage.died, [pool.length - 1], 'the worse-fitness twin dies to the rivalry, the fitter twin survives');
+
+  // Two curated entries can carry the same species by construction of this
+  // fixture's curated pool -- confirm curated members are never compared at all.
+  const curatedIdx = base.map((_, i) => i).filter((i) => isProtectedOpponent(base[i]));
+  for (const i of curatedIdx) assert.ok(!lineage.died.includes(i));
 });

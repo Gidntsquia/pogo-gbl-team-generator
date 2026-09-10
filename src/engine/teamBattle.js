@@ -221,10 +221,19 @@ export function initTeamBattle(ctx) {
   return ctx;
 }
 
-// Scenario memo ceiling per engine context (i.e. per worker thread). Past it
-// the memo is cleared wholesale rather than evicted piecemeal; see
-// createScenarioMemo.
-const DEFAULT_SCENARIO_MEMO_MAX = 200000;
+// Scenario memo ceiling per engine context (i.e. per worker thread); past it
+// the least-recently-used entry is evicted (see createScenarioMemo).
+//
+// Sized from measurement (2026-09-09, single context, 350 real battles): an
+// entry costs ~1.9 KB of heap (a ~277-char key plus the record), and a 20k
+// cap produced the IDENTICAL hit count as the old 200k cap -- hits are
+// overwhelmingly near in time (the same battle's repeated lookaheads and its
+// neighbours), so a deep memo buys nothing but memory. 200k x 8 workers was
+// ~3 GB of memo and the single biggest reason evolve-meta-vs-meta-v5 was
+// OOM-killed at 8.2 GB RSS on a 12 GB box; 20k is ~40 MB per worker.
+// Throughput cost of 20k vs 200k measured at ~7%, vs ~25% for no memo at all.
+// Override per context with ctx.scenarioMemoMax before initTeamBattle.
+const DEFAULT_SCENARIO_MEMO_MAX = 20000;
 
 /**
  * Memo for pvpoke's TrainingAI#runScenario -- the AI's internal 1v1 lookahead

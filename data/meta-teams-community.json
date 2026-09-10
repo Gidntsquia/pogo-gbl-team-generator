@@ -1,0 +1,904 @@
+{
+  "teams": [
+    {
+      "id": "v5gen18-candidate-1",
+      "name": "Melmetal / Swampert / Togekiss",
+      "members": [
+        "melmetal",
+        "swampert",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-2",
+      "name": "Forretress / Corsola_galarian / Quagsire",
+      "members": [
+        "forretress",
+        "corsola_galarian",
+        "quagsire"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-3",
+      "name": "Annihilape / Corviknight / Melmetal",
+      "members": [
+        "annihilape",
+        "corviknight",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-4",
+      "name": "Tinkaton / Dusclops / Jirachi",
+      "members": [
+        "tinkaton",
+        "dusclops",
+        "jirachi"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-5",
+      "name": "Thievul / Lapras / Carbink",
+      "members": [
+        "thievul",
+        "lapras",
+        "carbink"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-6",
+      "name": "Melmetal / Corviknight / Annihilape",
+      "members": [
+        "melmetal",
+        "corviknight",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-7",
+      "name": "Rapidash / Ampharos / Quagsire",
+      "members": [
+        "rapidash",
+        "ampharos",
+        "quagsire"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-8",
+      "name": "Melmetal / Corviknight / Turtonator",
+      "members": [
+        "melmetal",
+        "corviknight",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-9",
+      "name": "Charjabug / Dunsparce / Cradily",
+      "members": [
+        "charjabug",
+        "dunsparce",
+        "cradily"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-10",
+      "name": "Morgrem / Charjabug / Primarina",
+      "members": [
+        "morgrem",
+        "charjabug",
+        "primarina"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-11",
+      "name": "Fearow / Corviknight / Quagsire",
+      "members": [
+        "fearow",
+        "corviknight",
+        "quagsire"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-12",
+      "name": "Melmetal / Furret / Togekiss",
+      "members": [
+        "melmetal",
+        "furret",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-13",
+      "name": "Fearow / Corviknight / Thievul",
+      "members": [
+        "fearow",
+        "corviknight",
+        "thievul"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-14",
+      "name": "Thievul / Crobat / Carbink",
+      "members": [
+        "thievul",
+        "crobat",
+        "carbink"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-15",
+      "name": "Empoleon / Quaquaval / Annihilape",
+      "members": [
+        "empoleon",
+        "quaquaval",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-16",
+      "name": "Thievul / Corviknight / Fearow",
+      "members": [
+        "thievul",
+        "corviknight",
+        "fearow"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-17",
+      "name": "Fearow / Chesnaught / Castform_sunny",
+      "members": [
+        "fearow",
+        "chesnaught",
+        "castform_sunny"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-18",
+      "name": "Melmetal / Marshtomp / Togekiss",
+      "members": [
+        "melmetal",
+        "marshtomp",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-19",
+      "name": "Houndoom / Seaking / Tinkaton",
+      "members": [
+        "houndoom",
+        "seaking",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-20",
+      "name": "Corsola_galarian / Corviknight / Quagsire",
+      "members": [
+        "corsola_galarian",
+        "corviknight",
+        "quagsire"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-21",
+      "name": "Ninetales_alolan / Thievul / Kommo_o",
+      "members": [
+        "ninetales_alolan",
+        "thievul",
+        "kommo_o"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-22",
+      "name": "Clefable / Moltres_galarian / Ninetales",
+      "members": [
+        "clefable",
+        "moltres_galarian",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-23",
+      "name": "Sandslash_alolan / Stunfisk / Arctibax",
+      "members": [
+        "sandslash_alolan",
+        "stunfisk",
+        "arctibax"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-24",
+      "name": "Dusclops / Thievul / Jirachi",
+      "members": [
+        "dusclops",
+        "thievul",
+        "jirachi"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-25",
+      "name": "Houndoom / Shiinotic / Tinkaton",
+      "members": [
+        "houndoom",
+        "shiinotic",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-26",
+      "name": "Empoleon / Melmetal / Ninetales",
+      "members": [
+        "empoleon",
+        "melmetal",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-27",
+      "name": "Melmetal / Dusknoir / Muk_alolan",
+      "members": [
+        "melmetal",
+        "dusknoir",
+        "muk_alolan"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-28",
+      "name": "Machoke / Mandibuzz / Charjabug",
+      "members": [
+        "machoke",
+        "mandibuzz",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-29",
+      "name": "Giratina_altered / Snorlax / Charjabug",
+      "members": [
+        "giratina_altered",
+        "snorlax",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-30",
+      "name": "Empoleon / Mightyena / Ninetales",
+      "members": [
+        "empoleon",
+        "mightyena",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-31",
+      "name": "Camerupt / Bellibolt / Togekiss",
+      "members": [
+        "camerupt",
+        "bellibolt",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-32",
+      "name": "Sandslash_alolan / Tinkaton / Sealeo",
+      "members": [
+        "sandslash_alolan",
+        "tinkaton",
+        "sealeo"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-33",
+      "name": "Ninetales / Togekiss / Orthworm",
+      "members": [
+        "ninetales",
+        "togekiss",
+        "orthworm"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-34",
+      "name": "Galvantula / Cresselia / Ninetales_alolan",
+      "members": [
+        "galvantula",
+        "cresselia",
+        "ninetales_alolan"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-35",
+      "name": "Tinkaton / Florges / Magnezone",
+      "members": [
+        "tinkaton",
+        "florges",
+        "magnezone"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-36",
+      "name": "Cofagrigus / Carbink / Togekiss",
+      "members": [
+        "cofagrigus",
+        "carbink",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-37",
+      "name": "Charjabug / Mandibuzz / Corsola_galarian",
+      "members": [
+        "charjabug",
+        "mandibuzz",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-38",
+      "name": "Dusknoir / Rapidash / Empoleon",
+      "members": [
+        "dusknoir",
+        "rapidash",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-39",
+      "name": "Togekiss / Camerupt / Bellibolt",
+      "members": [
+        "togekiss",
+        "camerupt",
+        "bellibolt"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-40",
+      "name": "Rapidash / Clefable / Shelgon",
+      "members": [
+        "rapidash",
+        "clefable",
+        "shelgon"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-41",
+      "name": "Clefable / Moltres_galarian / Thievul",
+      "members": [
+        "clefable",
+        "moltres_galarian",
+        "thievul"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-42",
+      "name": "Togekiss / Carbink / Cofagrigus",
+      "members": [
+        "togekiss",
+        "carbink",
+        "cofagrigus"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-43",
+      "name": "Toucannon / Muk_alolan / Houndoom",
+      "members": [
+        "toucannon",
+        "muk_alolan",
+        "houndoom"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-44",
+      "name": "Dunsparce / Charjabug / Cradily",
+      "members": [
+        "dunsparce",
+        "charjabug",
+        "cradily"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-45",
+      "name": "Machoke / Weezing_galarian / Charjabug",
+      "members": [
+        "machoke",
+        "weezing_galarian",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-46",
+      "name": "Cramorant / Gastrodon / Oranguru",
+      "members": [
+        "cramorant",
+        "gastrodon",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-47",
+      "name": "Guzzlord / Annihilape / Jellicent",
+      "members": [
+        "guzzlord",
+        "annihilape",
+        "jellicent"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-48",
+      "name": "Cramorant / Ninetales / Mantine",
+      "members": [
+        "cramorant",
+        "ninetales",
+        "mantine"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-49",
+      "name": "Togekiss / Dewgong / Thievul",
+      "members": [
+        "togekiss",
+        "dewgong",
+        "thievul"
+      ]
+    },
+    {
+      "id": "v5gen18-candidate-50",
+      "name": "Swampert / Cradily / Shelgon",
+      "members": [
+        "swampert",
+        "cradily",
+        "shelgon"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-1",
+      "name": "Carbink / Stunfisk / Corsola (Galarian)",
+      "members": [
+        "carbink",
+        "stunfisk",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-2",
+      "name": "Charjabug (Shadow) / Cramorant / Umbreon",
+      "members": [
+        "charjabug_shadow",
+        "cramorant",
+        "umbreon"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-3",
+      "name": "Melmetal / Jumpluff / Umbreon",
+      "members": [
+        "melmetal",
+        "jumpluff",
+        "umbreon"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-4",
+      "name": "Melmetal / Quagsire (Shadow) / Charjabug",
+      "members": [
+        "melmetal",
+        "quagsire_shadow",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-5",
+      "name": "Ninetales (Shadow) / Charjabug / Blastoise",
+      "members": [
+        "ninetales_shadow",
+        "charjabug",
+        "blastoise"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-6",
+      "name": "Conkeldurr (Shadow) / Stunfisk / Charjabug",
+      "members": [
+        "conkeldurr_shadow",
+        "stunfisk",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-7",
+      "name": "Tinkaton / Quagsire (Shadow) / Cramorant",
+      "members": [
+        "tinkaton",
+        "quagsire_shadow",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-8",
+      "name": "Charjabug / Jumpluff / Quagsire",
+      "members": [
+        "charjabug",
+        "jumpluff",
+        "quagsire"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-9",
+      "name": "Tinkaton / Altaria (Shadow) / Annihilape (Shadow)",
+      "members": [
+        "tinkaton",
+        "altaria_shadow",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-10",
+      "name": "Melmetal / Annihilape / Mantine",
+      "members": [
+        "melmetal",
+        "annihilape",
+        "mantine"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-11",
+      "name": "Charjabug / Quagsire / Togekiss",
+      "members": [
+        "charjabug",
+        "quagsire",
+        "togekiss"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-12",
+      "name": "Charjabug / Carbink / Thievul",
+      "members": [
+        "charjabug",
+        "carbink",
+        "thievul"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-13",
+      "name": "Hawlucha / Stunfisk / Charjabug",
+      "members": [
+        "hawlucha",
+        "stunfisk",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-14",
+      "name": "Carbink / Thievul / Charjabug",
+      "members": [
+        "carbink",
+        "thievul",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-15",
+      "name": "Melmetal / Dondozo / Jumpluff",
+      "members": [
+        "melmetal",
+        "dondozo",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-16",
+      "name": "Melmetal / Piloswine (Shadow) / Medicham",
+      "members": [
+        "melmetal",
+        "piloswine_shadow",
+        "medicham"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-17",
+      "name": "Melmetal / Quagsire (Shadow) / Regidrago",
+      "members": [
+        "melmetal",
+        "quagsire_shadow",
+        "regidrago"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-18",
+      "name": "Carbink / Swanna / Linoone",
+      "members": [
+        "carbink",
+        "swanna",
+        "linoone"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-19",
+      "name": "Stunfisk / Sandslash (Alolan) / Fearow",
+      "members": [
+        "stunfisk",
+        "sandslash_alolan",
+        "fearow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-20",
+      "name": "Carbink / Jellicent / Ninetales",
+      "members": [
+        "carbink",
+        "jellicent",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-21",
+      "name": "Melmetal / Quagsire (Shadow) / Azumarill",
+      "members": [
+        "melmetal",
+        "quagsire_shadow",
+        "azumarill"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-22",
+      "name": "Stunfisk / Sealeo / Machamp",
+      "members": [
+        "stunfisk",
+        "sealeo",
+        "machamp"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-23",
+      "name": "Cramorant / Quagsire (Shadow) / Tinkaton",
+      "members": [
+        "cramorant",
+        "quagsire_shadow",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-24",
+      "name": "Thievul / Carbink / Charjabug",
+      "members": [
+        "thievul",
+        "carbink",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-25",
+      "name": "Tinkaton / Sandslash (Alolan) / Ninetales (Shadow)",
+      "members": [
+        "tinkaton",
+        "sandslash_alolan",
+        "ninetales_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-26",
+      "name": "Urshifu (Single Strike) / Stunfisk / Charjabug",
+      "members": [
+        "urshifu_single_strike",
+        "stunfisk",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-27",
+      "name": "Melmetal / Aromatisse / Thievul",
+      "members": [
+        "melmetal",
+        "aromatisse",
+        "thievul"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-28",
+      "name": "Kingdra (Shadow) / Quagsire / Ninetales (Shadow)",
+      "members": [
+        "kingdra_shadow",
+        "quagsire",
+        "ninetales_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-29",
+      "name": "Charjabug / Swanna (Shadow) / Annihilape",
+      "members": [
+        "charjabug",
+        "swanna_shadow",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-30",
+      "name": "Latias (Shadow) / Tinkaton / Melmetal",
+      "members": [
+        "latias_shadow",
+        "tinkaton",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-31",
+      "name": "Zweilous / Melmetal / Sableye (Shadow)",
+      "members": [
+        "zweilous",
+        "melmetal",
+        "sableye_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-32",
+      "name": "Clodsire / Altaria (Shadow) / Jellicent",
+      "members": [
+        "clodsire",
+        "altaria_shadow",
+        "jellicent"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-33",
+      "name": "Sableye (Shadow) / Ninetales / Charjabug",
+      "members": [
+        "sableye_shadow",
+        "ninetales",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-34",
+      "name": "Ninetales (Shadow) / Tinkaton / Sandslash (Alolan)",
+      "members": [
+        "ninetales_shadow",
+        "tinkaton",
+        "sandslash_alolan"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-35",
+      "name": "Stunfisk / Corsola (Galarian) / Carbink",
+      "members": [
+        "stunfisk",
+        "corsola_galarian",
+        "carbink"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-36",
+      "name": "Dusknoir (Shadow) / Cradily / Annihilape",
+      "members": [
+        "dusknoir_shadow",
+        "cradily",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-37",
+      "name": "Quagsire (Shadow) / Ninetales / Hakamo-o",
+      "members": [
+        "quagsire_shadow",
+        "ninetales",
+        "hakamo_o"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-38",
+      "name": "Dondozo / Jumpluff / Melmetal",
+      "members": [
+        "dondozo",
+        "jumpluff",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-39",
+      "name": "Melmetal / Lanturn / Medicham",
+      "members": [
+        "melmetal",
+        "lanturn",
+        "medicham"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-40",
+      "name": "Mimikyu / Carbink / Annihilape",
+      "members": [
+        "mimikyu",
+        "carbink",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-41",
+      "name": "Toucannon / Tinkaton / Dusclops (Shadow)",
+      "members": [
+        "toucannon",
+        "tinkaton",
+        "dusclops_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-42",
+      "name": "Stunfisk / Sableye (Shadow) / Ninetales (Alolan) (Shadow)",
+      "members": [
+        "stunfisk",
+        "sableye_shadow",
+        "ninetales_alolan_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-43",
+      "name": "Ampharos (Shadow) / Snorlax / Charjabug (Shadow)",
+      "members": [
+        "ampharos_shadow",
+        "snorlax",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-44",
+      "name": "Tinkaton / Stunfisk / Charjabug",
+      "members": [
+        "tinkaton",
+        "stunfisk",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-45",
+      "name": "Dragonair (Shadow) / Carbink / Annihilape",
+      "members": [
+        "dragonair_shadow",
+        "carbink",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-46",
+      "name": "Ninetales (Shadow) / Annihilape / Pawniard",
+      "members": [
+        "ninetales_shadow",
+        "annihilape",
+        "pawniard"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-47",
+      "name": "Empoleon (Shadow) / Annihilape / Jumpluff",
+      "members": [
+        "empoleon_shadow",
+        "annihilape",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-48",
+      "name": "Stunfisk / Carbink / Corsola (Galarian)",
+      "members": [
+        "stunfisk",
+        "carbink",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-49",
+      "name": "Corsola (Galarian) / Overqwil / Cramorant",
+      "members": [
+        "corsola_galarian",
+        "overqwil",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "v5gen18-opponent-50",
+      "name": "Quagsire (Shadow) / Corviknight / Ninetales (Alolan) (Shadow)",
+      "members": [
+        "quagsire_shadow",
+        "corviknight",
+        "ninetales_alolan_shadow"
+      ]
+    }
+  ]
+}

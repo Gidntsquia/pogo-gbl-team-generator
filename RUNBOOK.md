@@ -19,7 +19,7 @@ Everything else in this file supports the second row.
 
 ```bash
 cd /home/jaxon/files/pogo-gbl-team-generator
-test "$(git branch --show-current)" = "codex/twilight-trails-preview"
+test "$(git branch --show-current)" = "main"
 bash scripts/setup.sh          # materializes/repairs vendor/pvpoke (gitignored) at the pin
 test "$(git -C vendor/pvpoke rev-parse HEAD)" = "cc89274c1589574114cb3ba79c7fb24fb25b0468"
 ```
@@ -50,12 +50,26 @@ fastest count on this machine, not just the safe one.
 
 Memory over a long run: each worker caches every built Pokemon it has seen
 (`src/engine/parallelWorker.js`). Before 2026-09-07 that cache was unbounded,
-so RSS grew for the whole run (mutation keeps introducing new IVs/movesets)
--- that was the "leak" `scripts/mem-watchdog.sh` was written to contain. It is
-now an LRU capped at 5000 entries/side/worker (~120 MB per worker, ~1 GB at
-`--threads 8`), which still spans many generations of turnover and keeps every
-recurring mon hot. `POGO_GBL_WORKER_CACHE=N` raises or lowers the cap; the
-watchdog is still worth running as a backstop.
+so RSS grew for the whole run (mutation keeps introducing new IVs/movesets).
+It is now an LRU capped at 5000 entries/side/worker (~70 MB per side at ~14 KB per
+built mon), which still spans many generations of turnover and keeps every
+recurring mon hot. `POGO_GBL_WORKER_CACHE=N` raises or lowers the cap.
+
+The bigger consumer turned out to be the per-worker scenario memo
+(`src/engine/teamBattle.js`): at its old 200k-entry cap it held ~380 MB per
+worker (~3 GB at `--threads 8`) and, with LRU eviction, sat at cap for the
+whole run -- that plus unbounded V8 heap growth in 8 isolates is what got
+`evolve-meta-vs-meta-v5` killed at 8.2 GB RSS (2026-09-09). The memo is now
+20k entries (same hit count, measured) and each worker heap is capped at 512
+MB; see section 3's `--profile` notes for the numbers to expect.
+
+The safety net for a run that outgrows the box is this machine's `earlyoom`
+(configured `-m 10 -s 20 --prefer node`, so it targets node first once
+available memory is under 10% AND swap free under 20%). It SIGTERMs the run,
+leaving checkpoints intact; nothing lands in the run's own log, so a run that
+stopped without `evolve-DONE` should be checked against
+`journalctl -u earlyoom`, which records the killed cmdline (handy for the
+resume). The former `scripts/mem-watchdog.sh` was removed on 2026-09-09.
 
 ## 2. Inputs on disk
 
@@ -83,24 +97,33 @@ Test fixtures for dry runs without personal data: `fixtures/*.csv`.
 
 ### The recipe every recent real run used
 
-All runs since 2026-08-29 (`shared-24h-1`, `marisa-8h-1`, `marisa-2-1`) were
-launched with the `sim.sh` recipe **plus** two additions the user has said
-they like the results of. Treat this as the default unless told otherwise:
+Updated 2026-09-10 (`jaxon-standard-1`): opponent side no longer co-evolves by
+default -- it's a single fixed draw, and candidate fitness picks up a slight
+snowball term. Treat this as the default unless told otherwise:
 
 ```bash
-COLLECTION="marisa-gl-collection.csv"
-RUN_NAME="marisa-season-note-1"        # unique, shell-safe; doubles as the PRNG seed
+COLLECTION="jaxon-gl-collection.csv"
+RUN_NAME="jaxon-standard-1"        # unique, shell-safe; doubles as the PRNG seed
 
 bash scripts/setup.sh
 scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
-  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
-  --dry-run                            # inspect, then rerun without --dry-run
+  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 --elites 15 \
+  --dry-run -- \
+  --fixed-opponents \
+  --opponent-strength-gamma 0 \
+  --snowball-weight 0.1                # inspect, then rerun without --dry-run
 ```
 
 | Addition | Why |
 | --- | --- |
 | `--mutation-floor-start 0.15 --mutation-ceil-start 0.6` | hot-start mutation: 15-60% at generation 0, decreasing linearly to the standard 5-40% at the last generation (`mutationRatesAt` in `scripts/evolve.mjs`, covered by a unit test); user asked for this to widen early diversity |
 | `--threads 8` | what every recent run used; ~2 GB RSS on an 8 GB machine with headroom for the user's desktop. Re-measured 2026-09-04: 8 is fastest, 12 and 15 are slower (see "Why `--threads 8`" below) |
+| `--elites 15` | last-generation teams sent to the final pass (up from the launcher's default 12); user asked for this 2026-09-10 |
+| `--pool` left unset | no cap -- draws candidates from the whole deduped collection instead of the top 70 by 1v1 score; user asked for the entire collection to be eligible, 2026-09-10 |
+| `--fixed-opponents` | opponent pool is one draw, never evolved or resized -- opponent side does NOT co-evolve; user asked for candidate-only evolution, 2026-09-10. Makes `--curated-ratio`, `--opponent-death-rate`, `--opponent-mutation-*`, `--opponent-meta-pool`, `--final-archive`/`--final-fresh` all moot |
+| `--opponent-strength-gamma 0` | candidate fitness not weighted by how strong the opponent it beat was; user asked for fitness not weighted by opponent strength, 2026-09-10 |
+| `--snowball-weight 0.1` | candidate-only fitness weight (new flag, `scripts/evolve.mjs`) on `snowballScore` (own fraction of decided lead exchanges won), on top of `winRate: 1`; opponent-side fitness (`src/meta/opponentPool.js`) is a separate plain win-rate calc and is never touched by this flag; user asked for a slight snowball inclusion, candidate side only, 2026-09-10 |
+| `--core-rivalry` left unset | stays at the 0.1 default -- user explicitly asked to leave it there, 2026-09-10 |
 
 The dry run prints collection, seed, out dir, bans, budget, and the full
 `evolve.mjs` command. Confirm bans, anneal flags, and threads appear, then
@@ -203,6 +226,40 @@ grep "generation 0: done" out/evolve-shared-s2-gen-2.log
 | `--final-archive N` | final pass: strongest evolved opponents from the whole run, minus any fielded in the last `selection-trailing` generations; not in the fingerprint | 400 |
 | `--final-fresh N` | final pass: fresh meta-composed opponents never fought during the run -- these are essentially random legal teams, not opponent-GA-selected ones, so kept off by default; not in the fingerprint | 0 (20 at `--curated-ratio 0`) |
 
+### Meta vs. meta, 30 generations (both sides co-evolving)
+
+The recipe behind the recent `meta-vs-meta-*` runs: no curated/community
+opponents anywhere (all Pokemon vs. all Pokemon), both the candidate side and
+the opponent side evolving under the same mutation schedule. It's the
+"All-generated opponents with co-evolution" recipe above, but generations cut
+to 30 -- that's what those runs actually needed to converge, so it's the
+default for this recipe rather than the 75 used for the shared-s2 runs.
+Bare `evolve.mjs`, because `sim.sh` fixes opponents/elites.
+
+```bash
+COLLECTION="jaxon-gl-collection.csv"
+RUN_NAME="meta-vs-meta-vN"          # bump N each run
+
+nohup node scripts/evolve.mjs "$COLLECTION" \
+  --population 300 --opponents-per-gen 120 --generations 30 --pool 70 --elites 30 \
+  --threads 8 \
+  --curated-ratio 0 \
+  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
+  --opponent-death-rate 0.2 \
+  --opponent-mutation-floor 0.05 --opponent-mutation-ceil 0.4 \
+  --opponent-mutation-floor-start 0.15 --opponent-mutation-ceil-start 0.6 \
+  --seed "$RUN_NAME" --out-dir "out/evolve-$RUN_NAME" > "out/evolve-$RUN_NAME.log" 2>&1 &
+echo $! > "out/evolve-$RUN_NAME.pid"
+```
+
+Same "check gen 0 timing before walking away" rule as the shared-s2 recipe
+above applies -- the population schedule and both mutation anneals are indexed
+to `--generations`, so a deadline stop mid-schedule leaves them unfinished.
+`evolve-meta-vs-meta-v5-test` (2026-09-09/10) died mid-run (process killed,
+no `evolve-DONE`, stopped at generation 19) -- if a run under this recipe
+stops short, check `journalctl -u earlyoom` per section 1 before assuming it
+just finished.
+
 ### `sim.sh` reference
 
 Options (anything else is passed through to `evolve.mjs`):
@@ -215,13 +272,15 @@ Options (anything else is passed through to `evolve.mjs`):
 | `--population N` | candidate population at gen 0 | 300 |
 | `--hours H` | wall-clock budget → `--deadline-minutes` | none |
 | `--threads N` | battle worker threads | cpus-1 capped at 8 (use 8 or 12) |
-| `--profile` | per-worker CPU profile + scenario-memo + RSS stats → `out/evolve-NAME/` | off |
+| `--profile` | per-worker CPU profile + scenario-memo + heap stats → `out/evolve-NAME/` | off |
 | `--fg` | foreground instead of nohup | detached |
 | `--dry-run` | print command, exit | off |
 
-The launcher always adds `--opponents-per-gen 120 --pool 70 --elites 12
---seed NAME --out-dir out/evolve-NAME`. A bare `node scripts/evolve.mjs` uses
-much smaller defaults (pop 100, 20 opponents, 15 gens) and is not a standard run.
+The launcher always adds `--opponents-per-gen 120 --elites 12 --seed NAME
+--out-dir out/evolve-NAME` (`--pool` is left unset -- evolve.mjs's own
+default, no cap, whole deduped collection -- unless `--meta` sets it to
+`--meta-pool`). A bare `node scripts/evolve.mjs` uses much smaller defaults
+(pop 100, 20 opponents, 15 gens) and is not a standard run.
 
 ### Common variants
 
@@ -274,16 +333,23 @@ CPU profile for its whole life; on a clean stop (generation/deadline cap
 reached, not a kill) it writes `out/evolve-NAME/worker-<id>.cpuprofile`
 (load into Chrome DevTools' Performance tab) plus
 `out/evolve-NAME/profile-summary.json` with each worker's scenario-memo
-hit/miss counts, build-cache sizes, and RSS (current + 5s-sampled peak) at
-exit — the log line also prints the aggregate hit rate and worker RSS
-totals. A hard kill/Ctrl-C skips the flush, same as `--cpu-prof` elsewhere in
+hit/miss counts, build-cache sizes, and per-isolate heap (current +
+5s-sampled peak) at exit — the log line also prints the aggregate hit rate
+and worker heap totals. (Heap, not RSS: inside a worker_thread `rss` is the
+whole process's number, which is why older logs show "worker RSS 68 GB" on a
+12 GB box.) A hard kill/Ctrl-C skips the flush, same as `--cpu-prof` elsewhere in
 this repo. Full mechanics: `src/engine/parallel.js`'s `profileDir` option
 and `src/engine/parallelWorker.js`'s `shutdown()`.
 
-Main-thread RSS is logged every generation regardless of `--profile` (in
-each `generation N: done -- ...` log line), since the main process holds the
-full population/checkpoint state and its own growth is worth watching on a
-long run independent of worker profiling.
+Process RSS (main thread plus all workers) is logged every generation
+regardless of `--profile` (in each `generation N: done -- ...` log line).
+Memory ceilings: each worker's scenario memo is capped at 20k entries (~40
+MB) and its two build caches at 5000 mons each (~70 MB), and each worker
+isolate's old-generation heap is capped at 512 MB (`POGO_GBL_WORKER_HEAP_MB`
+to override) so V8 collects instead of ballooning -- a `--threads 8` run
+should hold roughly 2-3 GB of RSS. If a run still gets killed for memory,
+check what else is on the box first (earlyoom logs the culprit's cmdline in
+`journalctl -u earlyoom`).
 
 ## 4. Monitor, stop, resume, queue
 
@@ -508,7 +574,7 @@ Resolved settings for `scripts/sim.sh <csv> --name NAME --threads 12`:
 | Composed opponents | built from pvpoke's overall top 100 species |
 | Opponent archetype grouping | opponents are grouped by their dominant two-species core (the pair of base species most common across the pool; no transitive chaining, since 2026-09-09) (`--archetype-beta`, default 0.5); a group of size s counts for `s^(1-beta)` total votes, both as candidate-side opponent weight and as the divisor of each candidate's consistency score (since 2026-09-08, see `docs/plans/2026-09-08-fitness-restructure.md`) |
 | Opponent-strength weighting | each opponent's vote in a candidate's win rate (and inside its archetype for consistency) is scaled by (that opponent's own win rate against the population)^`--opponent-strength-gamma` (default 1; 0 = off), computed from the same generation's battles in a second pass -- beating a weak singleton earns little, beating a strong team earns most (since 2026-09-09) |
-| Core rivalry | `--core-rivalry R` (default 0.1; 0 = off): in both the candidate population and the opponent pool, every better team sharing any two base species costs a team R x (the field's max-min fitness) before the cull and mutation ranking -- the shadow-twin rule made soft, so trailing near-duplicates of a core are culled first while a second variant that fights well on its own survives; raw fitness in checkpoints is untouched (since 2026-09-09) |
+| Core rivalry | `--core-rivalry R` (default 0.1; 0 = off): in both the candidate population and the opponent pool, every better team sharing any two base species costs a team R x (the field's max-min fitness) before the cull and mutation ranking, so trailing near-duplicates of a core are culled first while a second variant that fights well on its own survives; raw fitness in checkpoints is untouched (since 2026-09-09). The same function scores shadow twins: a shadow and its base have member similarity 0.9 (the top of the scale short of identity), and a team that is a better team's shadow variant (candidate side: same lead, same backs; opponent side: same species slot for slot) pays a whole-team twin load of 2 x 0.9 on top of its core load -- 2.8 steps against a plain same-core variant's 1, so the weaker twin is pushed toward the cull but a twin that out-fights the field's tail survives. Only an exact duplicate (whole-team similarity 1, possible only from opponent-side draws) dies outright, whatever R is; it is counted in the plain death tolls, not tracked separately. Candidate shadow-flip mutations are 20% of mutation successes (since 2026-09-10; was 15%) and flip a uniformly random non-empty combination of the team's flippable members, so a two- or three-shadow variant is one mutation away, not a walk through intermediates that may each die |
 | Similar-core rivalry | `--similar-rivalry S` (default 1) / `--similar-floor F` (default 0.35; 0 similar-rivalry = exact cores only): a better team whose core is a *similar*, not identical, pair adds a fraction of an identical-core rival to the core-rivalry load, scored by pvpoke's own "Similar Pokemon" metric (`src/engine/similarity.js`, `calculateSimilarity` -- shared types, moves, and traits, normalised 0..1). Matches at or below the floor count as unrelated (0); above it the score scales linearly up to `similar` at 1.0 (Feraligatr/Empoleon ~0.55 loads ~0.3, Charizard/Blaziken ~0.62 loads ~0.4, Annihilape/Mimikyu ~0.33 loads nothing at the default floor). Each better team counts once, through its best-matching core, and a team is charged only for its single most crowded core, so carrying two or three popular cores does not stack the penalty (since 2026-09-09; pvpoke metric adopted 2026-09-09) |
 | Opponent fitness | frequency-normalised by default (`--no-opponent-fitness-normalised` to disable): each candidate's contribution to an opponent's win-rate ledger is weighted down by its most-common member's population share (clamped [0.2, 5]), so a crowded counter-bred core no longer collects N× the credit for beating it |
 | Fitness | `battle-reality` = 0.45 win rate + 0.20 consistency (25th-percentile per-archetype win rate) + 0.25 decided lead-exchange win rate + 0.10 mean closer prior of the back line |
