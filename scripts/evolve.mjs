@@ -223,6 +223,7 @@ import {
 } from '../src/teams/evolve.js';
 import { leagueForCp } from '../src/util/leagues.js';
 import { loadRoleScores } from '../src/meta/roles.js';
+import { buildTypeCoverageContext, computeSharedWeaknessScore } from '../src/teams/typeCoverage.js';
 import { buildTopTeamSeries, renderChartInner } from '../src/report/raceChart.js';
 import { LEAGUE_ACCENTS, championshipCss } from '../src/report/podiumTheme.js';
 
@@ -826,13 +827,20 @@ function leadExchangeLoser(summary) {
  * than being tacked on, since it is itself a transform of winRate data.
  */
 /** See buildRunConfig's `fitnessSemantics` comment. */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v6';
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v11';
+const TYPE_COVERAGE_META_SIZE = 200;
 // Closer/consistency disabled for now (weights zeroed rather than removed,
 // so they're a one-line revert away). Snowball is opt-in via
 // --snowball-weight (candidate side only -- the opponent side has its own,
 // separate win-rate fitness in src/meta/opponentPool.js, so this weight
 // never touches it).
-const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 1, consistency: 0, snowball: 0, closer: 0 });
+// `sharedWeakness` (added 2026-09-11) is likewise opt-in via
+// --shared-weakness-weight: it rewards teams whose back line can actually be
+// switched into when the lead's matchup goes bad (src/teams/typeCoverage.js).
+// Unlike the other three it is a pure TYPE-CHART property of the roster, not
+// a measurement of this generation's battles, so it stays off by default
+// rather than quietly reshaping every run's selection pressure.
+const DEFAULT_FITNESS_WEIGHTS = Object.freeze({ winRate: 1, consistency: 0, snowball: 0, closer: 0, sharedWeakness: 0 });
 
 /**
  * Per-team snowball score: this team's OWN fraction of DECIDED lead exchanges
@@ -869,14 +877,26 @@ function computeCloserScore(members, roleScores) {
   return sum / backs.length;
 }
 
-export function computeBlendFitness({ winRate, snowballScore, closerScore, consistencyScore }, weights = DEFAULT_FITNESS_WEIGHTS) {
+export function computeBlendFitness(
+  { winRate, snowballScore, closerScore, consistencyScore, sharedWeaknessScore },
+  weights = DEFAULT_FITNESS_WEIGHTS
+) {
   const consistency = consistencyScore ?? winRate;
-  return (
+  const consistencyWeight = weights.consistency ?? 0;
+  // A team whose shared-weakness score was never computed (an older
+  // checkpoint's entry replayed through this function) contributes its own
+  // winRate at that weight, the same neutral fallback computeSnowballScore
+  // uses -- not 0, which would read as "maximally locked" on no evidence.
+  const sharedWeakness = sharedWeaknessScore ?? winRate;
+  const sharedWeaknessWeight = weights.sharedWeakness ?? 0;
+  const totalWeight = weights.winRate + consistencyWeight + weights.snowball + weights.closer + sharedWeaknessWeight;
+  const blend =
     weights.winRate * winRate +
-    (weights.consistency ?? 0) * consistency +
-    weights.snowball * snowballScore +
-    weights.closer * closerScore
-  );
+    consistencyWeight * consistency +
+    weights.snowball * (snowballScore ?? winRate) +
+    weights.closer * (closerScore ?? winRate) +
+    sharedWeaknessWeight * sharedWeakness;
+  return totalWeight > 0 ? blend / totalWeight : 0;
 }
 
 /**
@@ -1284,6 +1304,11 @@ export function filterBannedMovesetPool(pool, banBaseIds) {
  * invalidate an existing checkpoint.
  */
 function buildRunConfig(csvPath, opts) {
+  for (const key of ['snowballWeight', 'closerWeight', 'consistencyWeight', 'sharedWeaknessWeight']) {
+    if (opts[key] !== undefined && (!Number.isFinite(opts[key]) || opts[key] < 0)) {
+      throw new Error(`evolve: opts.${key} must be a non-negative finite number`);
+    }
+  }
   return {
     csvPath: path.resolve(csvPath),
     scoreMeta: opts.scoreMeta ?? DEFAULTS.scoreMeta,
@@ -1337,12 +1362,37 @@ function buildRunConfig(csvPath, opts) {
     // single-generation fitness -- both change what a generation's numbers
     // MEAN, not just how they're computed, so a v5 checkpoint must not
     // resume under v6 semantics.
+    // Bumped to v7 2026-09-10 when computeBlendFitness stopped returning an
+    // unnormalized weighted sum (weights.winRate + consistency + snowball +
+    // closer summing above 1 inflated blendFitness well past true winRate,
+    // e.g. observed 90.5% blend vs 65.3% real winRate with
+    // --snowball-weight 0.2 --closer-weight 0.1 --consistency-weight 0.1) --
+    // now divides by the weight total, so a v6 checkpoint's elites were
+    // selected under the inflated scale and must not resume under v7. Bumped
+    // to v8 when shared weakness changed from an absolute severity-product
+    // load with a fixed cap to rank-weighted top-200 exposure with simulated
+    // lead counterplay; to v9 when the expensive matchup table was replaced
+    // by selected-move type coverage; to v10 when the double lead/back-average
+    // normalization (which structurally capped ordinary shared weaknesses
+    // near a 0.8-0.95 score, indistinguishable from clean teams) was replaced
+    // with per-shared-type risk terms normalized against a fixed global
+    // worst case (the worst defensive typing PvPoke's chart can produce at
+    // all, not each lead's own typing); to v11 when raw type prevalence (an
+    // 18x top-to-bottom range in real top-200 data, e.g. Water at 1 vs Rock
+    // at 0.055) was found to swamp the other three weights and was blended
+    // down via PREVALENCE_INFLUENCE so a rare attacking type still costs most
+    // of a common one's weight. Those scores are not resume-compatible.
     fitnessSemantics: FITNESS_SEMANTICS,
     opponentStrengthGamma: opts.opponentStrengthGamma ?? DEFAULTS.opponentStrengthGamma,
     snowballWeight: opts.snowballWeight ?? DEFAULT_FITNESS_WEIGHTS.snowball,
+    closerWeight: opts.closerWeight ?? DEFAULT_FITNESS_WEIGHTS.closer,
+    consistencyWeight: opts.consistencyWeight ?? DEFAULT_FITNESS_WEIGHTS.consistency,
     coreRivalry: opts.coreRivalry ?? DEFAULTS.coreRivalry,
     similarRivalry: opts.similarRivalry ?? DEFAULTS.similarRivalry,
     similarFloor: opts.similarFloor ?? DEFAULTS.similarFloor,
+    // Canonicalize omitted and explicit zero weights. v7 already rejects
+    // older scoring semantics; changing this weight must also reject resume.
+    sharedWeaknessWeight: opts.sharedWeaknessWeight ?? DEFAULT_FITNESS_WEIGHTS.sharedWeakness,
     // GA-rate / convergence overrides enter the fingerprint ONLY when set:
     // they change what every generation computes, but leaving them out when
     // absent keeps every pre-flag checkpoint dir resumable.
@@ -1842,6 +1892,8 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
       comebackIndex: r?.comebackIndex ?? null,
       designatedCloser: r?.designatedCloser ?? null,
       consistencyScore: r?.consistencyScore ?? null,
+      sharedWeaknessScore: r?.sharedWeaknessScore ?? null,
+      sharedWeaknessTypes: r?.sharedWeaknessTypes ?? [],
       archetypeCount: r?.archetypeCount ?? null,
     };
   });
@@ -1904,6 +1956,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   onLog?: (msg:string)=>void, roleScores?: Map<string, object>,
  *   cache?: object, opponentWeights?: number[], candidateWeights?: number[],
  *   opponentArchetypeGroups?: number[], opponentStrengthGamma?: number,
+ *   typeCoverageContext?: object,
  * }} params -- `opponentWeights[j]` (optional, parallel to `opponents`)
  *   weights opponent j's battles in each team's `winRate`; with
  *   `opponentStrengthGamma` > 0 (default 0 = off) that weight is further
@@ -1918,7 +1971,9 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   loop -- the elites pass does not evolve opponents). `opponentArchetypeGroups[j]`
  *   (optional, parallel to `opponents`, from src/meta/archetypes.js) tags
  *   each `perMeta` entry with its opponent's archetype group id, so
- *   consistencyScore can be computed below.
+ *   consistencyScore can be computed below. `sharedWeaknessWeight`
+ *   (default 0) is the blend weight on src/teams/typeCoverage.js's per-team
+ *   shared-weakness score, which is precomputed and reported when enabled.
  * @returns {Promise<{results:object[], opponentTally:Array<{winPoints:number, battles:number}>,
  *   opponentStrength:number[], battleCount:number, cachedCount:number, errorCount:number, elapsedMs:number,
  *   startedAt:number, finishedAt:number}>}
@@ -1952,6 +2007,10 @@ async function evaluateTeamsInOrder(ctx, params) {
     opponentArchetypeGroups = null,
     opponentStrengthGamma = 0,
     snowballWeight = 0,
+    closerWeight = 0,
+    consistencyWeight = 0,
+    sharedWeaknessWeight = 0,
+    typeCoverageContext = null,
   } = params;
   const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
@@ -2213,6 +2272,9 @@ async function evaluateTeamsInOrder(ctx, params) {
     const avgHpMargin = battles > 0 ? hpSum / battles : 0;
     const snowballScore = computeSnowballScore(exchangeWon, exchangeLost, winRate);
     const closerScore = computeCloserScore(members, roleScores);
+    const sharedWeakness = typeCoverageContext
+      ? computeSharedWeaknessScore(members, typeCoverageContext)
+      : { score: null, sharedTypes: [] };
     const { consistencyScore, archetypeWinRates } = computeConsistencyScore(perMeta, winRate);
     const entry = {
       members: members.map((m) => ({ key: m.key, speciesId: m.speciesId, name: m.name, ...reportMemberDetail(m) })),
@@ -2230,9 +2292,17 @@ async function evaluateTeamsInOrder(ctx, params) {
       exchangeLost,
       snowballScore,
       closerScore,
+      sharedWeaknessScore: sharedWeakness.score,
+      sharedWeaknessTypes: sharedWeakness.sharedTypes,
       blendFitness: computeBlendFitness(
-        { winRate, snowballScore, closerScore, consistencyScore },
-        { ...DEFAULT_FITNESS_WEIGHTS, snowball: snowballWeight }
+        { winRate, snowballScore, closerScore, consistencyScore, sharedWeaknessScore: sharedWeakness.score },
+        {
+          ...DEFAULT_FITNESS_WEIGHTS,
+          snowball: snowballWeight,
+          closer: closerWeight,
+          consistency: consistencyWeight,
+          sharedWeakness: sharedWeaknessWeight,
+        }
       ),
       // Report-facing metrics -- see the
       // comment above computeSnowballIndex for how these differ from
@@ -2346,6 +2416,11 @@ function renderEvolveReport(result) {
           (t.archetypeCount ? ` (25th percentile over ${t.archetypeCount} opponent archetypes)` : ' (fallback: overall win rate, too few archetypes)')
       );
     }
+    if (typeof t.sharedWeaknessScore === 'number') {
+      out.push(`- **Shared-weakness coverage:** ${pct(t.sharedWeaknessScore)}`);
+      const threats = sharedWeaknessLine(t.sharedWeaknessTypes);
+      if (threats) out.push(`- **Shared type pressure:** ${threats}`);
+    }
     if (typeof t.selectionFitness === 'number') {
       out.push(`- **Finalist on:** ${pct(t.selectionFitness)} mean fitness over its last ${rk.selectionTrailing ?? '?'} generation(s)`);
     }
@@ -2453,6 +2528,18 @@ function stratumLine(byStratum) {
   return keys.map((k) => `${k} ${pct(byStratum[k].winRate)} (${byStratum[k].battles})`).join(' · ');
 }
 
+function sharedWeaknessLine(sharedTypes) {
+  return [...(sharedTypes ?? [])]
+    .filter((entry) => entry.contribution > 0)
+    .sort((a, b) => b.contribution - a.contribution || a.type.localeCompare(b.type))
+    .map(
+      (entry) =>
+        `${entry.type} (${pct(entry.prevalence)} meta share, ${pct(entry.leadCoverage)} moveset coverage, ` +
+        `${pct(entry.resistanceOffset)} resistance offset)`
+    )
+    .join('; ');
+}
+
 /** Thousands-separate an integer without depending on the host locale. Mirrors src/report/index.js's own `num`. */
 function num(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -2555,6 +2642,11 @@ function renderTeamCardHtml(t, rank) {
         (t.archetypeCount ? ` (25th percentile over ${t.archetypeCount} opponent archetypes)` : ' (fallback: overall win rate, too few archetypes)') +
         '</p>'
     );
+  }
+  if (typeof t.sharedWeaknessScore === 'number') {
+    out.push(`<p class="factline">Shared-weakness coverage: ${pct(t.sharedWeaknessScore)}</p>`);
+    const threats = sharedWeaknessLine(t.sharedWeaknessTypes);
+    if (threats) out.push(`<p class="factline">Shared type pressure: ${escapeHtml(threats)}</p>`);
   }
   out.push('<div class="roster-wrap">');
   out.push('<table><tr><th>Pokémon</th><th>Moves (as simulated)</th><th>Build from your collection</th></tr>');
@@ -2972,6 +3064,17 @@ export async function runEvolution(csvPath, opts = {}) {
     loadMovesetPool(ctx, { metaPoolSize: config.opponentMetaPool }),
     banBaseIds
   );
+  // Shared weakness is opt-in, so its cheap top-200 type/moveset table is
+  // built only when it can affect selection. No additional battles run here.
+  let typeCoverageContext = null;
+  if (config.sharedWeaknessWeight > 0) {
+    const coverageEntries = loadMovesetPool(ctx, { metaPoolSize: TYPE_COVERAGE_META_SIZE });
+    log(
+      `evolve: building shared-weakness context -- ${Object.keys(deduped.builtMons).length} candidate movesets ` +
+        `against ${coverageEntries.length} PvPoke-ranked type profiles (no battles)`
+    );
+    typeCoverageContext = buildTypeCoverageContext(ctx, deduped.builtMons, coverageEntries, weights);
+  }
   const battleCache = opts.battleCache === false ? createNullBattleCache() : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
   log(
     `evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, ` +
@@ -3182,6 +3285,10 @@ export async function runEvolution(csvPath, opts = {}) {
         opponentArchetypeGroups: oppArchetypeGroups,
         opponentStrengthGamma: config.opponentStrengthGamma,
         snowballWeight: config.snowballWeight,
+        closerWeight: config.closerWeight,
+        consistencyWeight: config.consistencyWeight,
+        sharedWeaknessWeight: config.sharedWeaknessWeight,
+        typeCoverageContext,
       });
       // 'classic' (default) keeps today's plain win-rate
       // fitness; 'battle-reality' uses the blend (see computeBlendFitness) --
@@ -3525,6 +3632,10 @@ export async function runEvolution(csvPath, opts = {}) {
       difficulty,
       opponentStrengthGamma: config.opponentStrengthGamma,
       snowballWeight: config.snowballWeight,
+      closerWeight: config.closerWeight,
+      consistencyWeight: config.consistencyWeight,
+      sharedWeaknessWeight: config.sharedWeaknessWeight,
+      typeCoverageContext,
       trackLeads: true,
       executor,
       onLog: log,
@@ -3666,6 +3777,8 @@ export async function runEvolution(csvPath, opts = {}) {
           winRate: t.winRate,
           recentWinRate: t.recentWinRate,
           selectionFitness: t.selectionFitness,
+          sharedWeaknessScore: t.sharedWeaknessScore,
+          sharedWeaknessTypes: t.sharedWeaknessTypes,
           winRateByStratum: t.winRateByStratum,
         })),
         null,
@@ -3826,6 +3939,23 @@ Options:
                             (src/meta/opponentPool.js) is a separate, plain
                             win-rate calc and is never affected by this flag
                                                        (default ${DEFAULT_FITNESS_WEIGHTS.snowball})
+  --closer-weight R        candidate-side fitness weight on closerScore (mean
+                            role-prior closer score of the team's two back
+                            members), on top of winRate=1; disabled by
+                            default (see docs/plans/2026-09-08-fitness-restructure.md)
+                                                       (default ${DEFAULT_FITNESS_WEIGHTS.closer})
+  --consistency-weight R   candidate-side fitness weight on consistencyScore
+                            (worst-quartile per-archetype win rate), on top of
+                            winRate=1; disabled by default (same restructure
+                            doc as --closer-weight)   (default ${DEFAULT_FITNESS_WEIGHTS.consistency})
+  --shared-weakness-weight R  candidate-side fitness weight on
+                            sharedWeaknessScore: rank-weighted PvPoke top-200
+                            type exposure, softened double weaknesses, partial
+                            resistance credit, and selected-move type coverage;
+                            on top of winRate=1, battle-reality fitness only,
+                            disabled by default, try 0.10-0.20
+                            (see src/teams/typeCoverage.js)
+                                                       (default ${DEFAULT_FITNESS_WEIGHTS.sharedWeakness})
   --core-rivalry R         each better team sharing a two-species core costs
                             a team R x (field's fitness range) before the
                             cull ranks it, in the population and the opponent
@@ -3941,6 +4071,9 @@ async function main(argv) {
         'no-opponent-fitness-normalised': { type: 'boolean' },
         'opponent-strength-gamma': { type: 'string' },
         'snowball-weight': { type: 'string' },
+        'closer-weight': { type: 'string' },
+        'consistency-weight': { type: 'string' },
+        'shared-weakness-weight': { type: 'string' },
         'core-rivalry': { type: 'string' },
         'similar-rivalry': { type: 'string' },
         'similar-floor': { type: 'string' },
@@ -4016,6 +4149,12 @@ async function main(argv) {
     opponentFitnessNormalised: values['no-opponent-fitness-normalised'] ? false : undefined,
     opponentStrengthGamma: values['opponent-strength-gamma'] !== undefined ? numberFlag(values['opponent-strength-gamma'], 'opponent-strength-gamma') : undefined,
     snowballWeight: values['snowball-weight'] !== undefined ? numberFlag(values['snowball-weight'], 'snowball-weight') : undefined,
+    closerWeight: values['closer-weight'] !== undefined ? numberFlag(values['closer-weight'], 'closer-weight') : undefined,
+    consistencyWeight: values['consistency-weight'] !== undefined ? numberFlag(values['consistency-weight'], 'consistency-weight') : undefined,
+    sharedWeaknessWeight:
+      values['shared-weakness-weight'] !== undefined
+        ? numberFlag(values['shared-weakness-weight'], 'shared-weakness-weight')
+        : undefined,
     coreRivalry: values['core-rivalry'] !== undefined ? numberFlag(values['core-rivalry'], 'core-rivalry') : undefined,
     similarRivalry: values['similar-rivalry'] !== undefined ? numberFlag(values['similar-rivalry'], 'similar-rivalry') : undefined,
     similarFloor: values['similar-floor'] !== undefined ? numberFlag(values['similar-floor'], 'similar-floor') : undefined,

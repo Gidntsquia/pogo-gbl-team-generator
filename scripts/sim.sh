@@ -50,7 +50,8 @@
 #
 # Anything after `--` (or any flag not listed above) goes straight to
 # evolve.mjs. Defaults follow the established run recipe:
-#   --opponents-per-gen 120 --elites 12 --seed <name>
+#   --opponents-per-gen 120 --elites 15 --seed <name>
+#   --snowball-weight 0.2 --closer-weight 0.1 --consistency-weight 0.1 --shared-weakness-weight 0.2
 #   (--pool is left unset -- evolve.mjs's own default: no cap, whole deduped collection)
 # (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions)
 #
@@ -161,7 +162,8 @@ fi
 
 cmd=(node scripts/evolve.mjs "$csv"
   --population "$population" --opponents-per-gen 120 --generations "$generations"
-  --cp "$cp" --elites 12 --seed "$name" --out-dir "$outdir")
+  --cp "$cp" --elites 15 --seed "$name" --out-dir "$outdir"
+  --snowball-weight 0.2 --closer-weight 0.1 --consistency-weight 0.1 --shared-weakness-weight 0.2)
 if [ "$meta" = 1 ]; then
   # --meta widens BOTH species pools to metapool; --pool is otherwise left
   # unset so evolve.mjs's own default (no cap, whole deduped collection) applies.

@@ -42,6 +42,7 @@ import {
   computeBlendFitness,
   computeConsistencyScore,
   computeCandidateWeights,
+  runEvolution,
 } from '../scripts/evolve.mjs';
 
 /** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
@@ -896,6 +897,30 @@ test('computeBlendFitness folds in consistencyScore under the given weight key, 
 test('computeBlendFitness defaults to pure winRate (snowball/closer/consistency currently disabled)', () => {
   const parts = { winRate: 0.6, snowballScore: 0.5, closerScore: 0.4, consistencyScore: 0.2 };
   assert.strictEqual(computeBlendFitness(parts), 0.6);
+});
+
+test('shared weakness boosts complementary teams with a normalized candidate blend', () => {
+  const weights = { winRate: 1, snowball: 0.1, closer: 0, sharedWeakness: 0.2 };
+  const parts = { winRate: 0.6, snowballScore: 0.5 };
+  const clean = computeBlendFitness({ ...parts, sharedWeaknessScore: 1 }, weights);
+  const shared = computeBlendFitness({ ...parts, sharedWeaknessScore: 0 }, weights);
+  assert.ok(Math.abs(clean - (0.6 + 0.05 + 0.2) / 1.3) < 1e-12);
+  assert.ok(clean > shared);
+  assert.ok(Math.abs(computeBlendFitness(parts, weights) - (0.6 + 0.05 + 0.12) / 1.3) < 1e-12);
+  assert.equal(computeBlendFitness({ winRate: 0.6 }), 0.6);
+  const disabled = { ...weights, sharedWeakness: 0 };
+  assert.equal(
+    computeBlendFitness({ ...parts, sharedWeaknessScore: 1 }, disabled),
+    computeBlendFitness({ ...parts, sharedWeaknessScore: 0 }, disabled)
+  );
+});
+
+test('runEvolution rejects invalid blend weights before loading the collection', async () => {
+  for (const key of ['snowballWeight', 'closerWeight', 'consistencyWeight', 'sharedWeaknessWeight']) {
+    for (const value of [-0.2, NaN, Infinity]) {
+      await assert.rejects(runEvolution('does-not-exist.csv', { [key]: value }), /non-negative finite/);
+    }
+  }
 });
 
 test('computeConsistencyScore: 25th percentile of per-archetype mean win rate, with a <4-archetype fallback to winRate', () => {

@@ -78,7 +78,7 @@ Never commit, move, or rename them.
 
 | File | Owner | Rows |
 | --- | --- | ---: |
-| `jaxon-gl-collection.csv` | Jaxon, Great League | ~107 |
+| `jaxon-gl-collection.csv` | Jaxon, Great League | ~115 |
 | `jaxon-ultra-league.csv` | Jaxon, Ultra League (use `--cp 2500`) | ~15 |
 | `jet-gl-collection.csv` | Jet, Great League | ~395 |
 | `marisa-gl-collection.csv` | Marisa, Great League | ~429 |
@@ -97,33 +97,46 @@ Test fixtures for dry runs without personal data: `fixtures/*.csv`.
 
 ### The recipe every recent real run used
 
-Updated 2026-09-10 (`jaxon-standard-1`): opponent side no longer co-evolves by
-default -- it's a single fixed draw, and candidate fitness picks up a slight
-snowball term. Treat this as the default unless told otherwise:
+Updated 2026-09-12 (`jaxon-standard-2`, flags carried over from
+`shared-standard-3-fitness`): opponent side co-evolves again (curated-ratio
+0.66), candidate fitness blends snowball + closer + consistency, core-rivalry
+uses the similarity-aware terms, and shared-weakness-weight is on. Treat this
+as the default unless told otherwise:
 
 ```bash
 COLLECTION="jaxon-gl-collection.csv"
-RUN_NAME="jaxon-standard-1"        # unique, shell-safe; doubles as the PRNG seed
+RUN_NAME="jaxon-standard-2"        # unique, shell-safe; doubles as the PRNG seed
 
 bash scripts/setup.sh
 scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
-  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 --elites 15 \
+  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
   --dry-run -- \
-  --fixed-opponents \
-  --opponent-strength-gamma 0 \
-  --snowball-weight 0.1                # inspect, then rerun without --dry-run
+  --curated-ratio 0.66 \
+  --opponent-meta-pool 100 \
+  --archetype-beta 0.5 \
+  --opponent-strength-gamma 1 \
+  --population-final-ratio 0.4 \
+  --snowball-weight 0.2 \
+  --closer-weight 0.1 \
+  --consistency-weight 0.1 \
+  --core-rivalry 0.2 \
+  --similar-rivalry 1 \
+  --similar-floor 0.35 \
+  --shared-weakness-weight 0.2         # inspect, then rerun without --dry-run
 ```
 
 | Addition | Why |
 | --- | --- |
 | `--mutation-floor-start 0.15 --mutation-ceil-start 0.6` | hot-start mutation: 15-60% at generation 0, decreasing linearly to the standard 5-40% at the last generation (`mutationRatesAt` in `scripts/evolve.mjs`, covered by a unit test); user asked for this to widen early diversity |
 | `--threads 8` | what every recent run used; ~2 GB RSS on an 8 GB machine with headroom for the user's desktop. Re-measured 2026-09-04: 8 is fastest, 12 and 15 are slower (see "Why `--threads 8`" below) |
-| `--elites 15` | last-generation teams sent to the final pass (up from the launcher's default 12); user asked for this 2026-09-10 |
 | `--pool` left unset | no cap -- draws candidates from the whole deduped collection instead of the top 70 by 1v1 score; user asked for the entire collection to be eligible, 2026-09-10 |
-| `--fixed-opponents` | opponent pool is one draw, never evolved or resized -- opponent side does NOT co-evolve; user asked for candidate-only evolution, 2026-09-10. Makes `--curated-ratio`, `--opponent-death-rate`, `--opponent-mutation-*`, `--opponent-meta-pool`, `--final-archive`/`--final-fresh` all moot |
-| `--opponent-strength-gamma 0` | candidate fitness not weighted by how strong the opponent it beat was; user asked for fitness not weighted by opponent strength, 2026-09-10 |
-| `--snowball-weight 0.1` | candidate-only fitness weight (new flag, `scripts/evolve.mjs`) on `snowballScore` (own fraction of decided lead exchanges won), on top of `winRate: 1`; opponent-side fitness (`src/meta/opponentPool.js`) is a separate plain win-rate calc and is never touched by this flag; user asked for a slight snowball inclusion, candidate side only, 2026-09-10 |
-| `--core-rivalry` left unset | stays at the 0.1 default -- user explicitly asked to leave it there, 2026-09-10 |
+| `--curated-ratio 0.66`, `--opponent-meta-pool 100`, `--archetype-beta 0.5` | opponent side co-evolves (no `--fixed-opponents`) -- these are the config that `evolve-shared-standard-3-fitness` (the most recent completed real run, gen 99, DONE) actually used, carried over 2026-09-12 |
+| `--opponent-strength-gamma 1` | candidate fitness IS weighted by how strong the opponent it beat was (default weighting) -- reverted from the `jaxon-standard-1` recipe's `0`, per `shared-standard-3-fitness` |
+| `--population-final-ratio 0.4` | candidate population at the last generation is 40% of the starting population; per `shared-standard-3-fitness` |
+| `--snowball-weight 0.2` | candidate-only fitness weight on `snowballScore` (own fraction of decided lead exchanges won), on top of `winRate: 1`; opponent-side fitness (`src/meta/opponentPool.js`) is a separate plain win-rate calc and is never touched by this flag; raised from `0.1` to `0.2` per `shared-standard-3-fitness` |
+| `--closer-weight 0.1`, `--consistency-weight 0.1` | candidate-only fitness weights on `closerScore` (mean...) and `consistencyScore`; both newly added to the standard recipe, per `shared-standard-3-fitness` |
+| `--core-rivalry 0.2`, `--similar-rivalry 1`, `--similar-floor 0.35` | each better team sharing a two-species core (or a pvpoke-similar core, above the `similar-floor` similarity threshold, weighted `similar-rivalry` relative to an identical core) costs seats in fitness; raised from the earlier default of 0.1 to `0.2`, per `shared-standard-3-fitness` |
+| `--shared-weakness-weight 0.2` | candidate-only blend weight on `sharedWeaknessScore` (`src/teams/typeCoverage.js`). For each of the lead's weakness types that at least one back member also carries, one risk term: lead severity (a double weakness is 1.6x a single, the actual 2.56/1.6 ratio) × prevalence (that type's rank-weighted share of PvPoke's top 200, blended down by `PREVALENCE_INFLUENCE=0.3` so it costs `(1 - 0.3*(1-prevalence))` rather than raw prevalence -- real top-200 data spans an ~18x range (Water 1 vs Rock 0.055), and unblended it swamped the other three weights, e.g. it alone dragged a real double Rock + single Electric shared weakness on Talonflame/Tinkaton/Walrein up to a 0.98 score) × moveset-coverage relief (up to 80% off if the lead's own fast/charged moves hit that type super effectively) × the OTHER back's resistance offset (partial credit for its real damage reduction, none if both backs share the weakness). Terms sum to a raw load, then normalize against a fixed global worst case -- the single worst defensive typing PvPoke's own type chart can produce at all (Dark/Grass, exhaustively checked across all 171 mono/dual combos), fully shared with no coverage or resistance offset -- so every team is judged on the same scale rather than each lead's own typing setting its own ceiling. No extra battles are simulated. Off by default; active in `battle-reality` fitness only. The weight is part of the resume fingerprint (omitted and explicit 0 are equivalent). The v10 semantics reject older checkpoints -- bump to v11 when this prevalence-dampening change ships. Final report ranking still uses the existing win-rate blend; this term affects evolution and finalist selection. |
 
 The dry run prints collection, seed, out dir, bans, budget, and the full
 `evolve.mjs` command. Confirm bans, anneal flags, and threads appear, then
@@ -276,7 +289,7 @@ Options (anything else is passed through to `evolve.mjs`):
 | `--fg` | foreground instead of nohup | detached |
 | `--dry-run` | print command, exit | off |
 
-The launcher always adds `--opponents-per-gen 120 --elites 12 --seed NAME
+The launcher always adds `--opponents-per-gen 120 --elites 15 --seed NAME
 --out-dir out/evolve-NAME` (`--pool` is left unset -- evolve.mjs's own
 default, no cap, whole deduped collection -- unless `--meta` sets it to
 `--meta-pool`). A bare `node scripts/evolve.mjs` uses much smaller defaults
@@ -447,6 +460,48 @@ recentWinRate, selectionFitness, winRateByStratum: {curated|archive|fresh: {winR
 `winRateByStratum` the unweighted pass result per opponent stratum (runs
 re-rendered before 2026-09-05 lack both).
 Team names read `Lead (Lead) / back1 / back2`; `members[0]` is the lead everywhere.
+
+### Mid-run review (before `evolve-DONE` exists)
+
+For a status check on a run still in progress -- top teams, top species,
+speed, memory -- there's no ranking/report yet, so read the latest
+`evolve-genN.json` checkpoint directly:
+
+```bash
+scripts/sim.sh status                       # confirms it's running + latest checkpoint gen
+tail -50 out/evolve-RUN_NAME.log            # per-generation timing/RSS/battle counts
+```
+
+```bash
+node -e '
+const fs = require("fs");
+const dir = "out/evolve-RUN_NAME";
+const latest = fs.readdirSync(dir).filter(f => /^evolve-gen\d+\.json$/.test(f))
+  .sort((a,b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]).pop();
+const d = JSON.parse(fs.readFileSync(`${dir}/${latest}`));
+const {population: pop, fitness: fit} = d;
+const order = pop.map((_,i)=>i).sort((a,b)=>fit[b]-fit[a]);
+const seen = new Set(); let shown = 0;
+console.log(`--- top teams (${latest}) ---`);
+for (const i of order) {
+  const key = pop[i].map(s=>s.split("#")[0]).sort().join(",");
+  if (seen.has(key)) continue;
+  seen.add(key);
+  console.log((fit[i]*100).toFixed(1)+"%", pop[i].join(" / "));
+  if (++shown >= 12) break;
+}
+const counts = {};
+for (const t of pop) for (const s of t) { const b = s.split("#")[0]; counts[b] = (counts[b]||0)+1; }
+console.log(`--- top species by frequency across ${pop.length} teams ---`);
+for (const [s,c] of Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,15)) console.log(c, s);
+'
+```
+
+Population entries are `species#lineageIndex` strings, not objects -- split on
+`#` for the base species name. This is early-generation data and will churn
+as the run progresses; treat it as a snapshot, not a forecast of the final
+ranking. Speed/memory per generation (battle count, cache hits, elapsed,
+RSS) come straight from the log lines, not the checkpoint.
 
 Standalone chart file, if the HTML report is not enough:
 
