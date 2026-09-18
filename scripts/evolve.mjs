@@ -3561,6 +3561,7 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
     `evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, ` +
       `${curatedPool.length} curated opponent teams, opponent meta pool of ${movesetPool.length} species, league=${league.name}`
   );
+  log(`evolve: fitness semantics ${FITNESS_SEMANTICS}, meta mode ${config.metaMode ? 'on' : 'off'}`);
 
   return {
     config, outDir, reportPath, writeHtml, htmlPath, log, difficulty, threads, deadlineMs,
