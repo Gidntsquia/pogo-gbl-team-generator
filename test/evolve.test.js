@@ -1126,6 +1126,67 @@ test('evaluateTeamsInOrder two-direction tally: candidate always wins from eithe
   assert.equal(run.opponentTally[0].winRate, 0);
 });
 
+test('evaluateTeamsInOrder raw win rates (plans/WORKER_NOTES.md Item 1): 2x2 ledger with UNEQUAL per-opponent battle counts proves opponentRawWinRateMean is read from its own tally, not 1 - candidateRawWinRateMean', async () => {
+  // teamX beats both opponents; teamY loses to oppA and beats oppB.
+  // oppA gets 1 pairing (2 battles/team, both directions); oppB gets 3
+  // pairings (6 battles/team) -- the unequal weight the "Fails if" clause
+  // requires: with equal per-opponent weight the two means WOULD be
+  // complementary here, so a `1 - candidateRawWinRateMean` shortcut would
+  // pass a naive version of this test. They only diverge because oppA and
+  // oppB carry different battle volume.
+  const teamXKey = 'teamX';
+  const teamYKey = 'teamY';
+  const matrix = {
+    builtMons: {
+      [teamXKey]: { speciesId: 'teamx', name: 'TeamX', pokemon: {}, spec: { speciesId: 'teamx', ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false } },
+      [teamYKey]: { speciesId: 'teamy', name: 'TeamY', pokemon: {}, spec: { speciesId: 'teamy', ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false } },
+    },
+  };
+  const oppA = { id: 'oppA', name: 'OppA', leadIndex: 0, members: [{ speciesId: 'oppa', spec: { speciesId: 'oppa', ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false } }] };
+  const oppB = { id: 'oppB', name: 'OppB', leadIndex: 0, members: [{ speciesId: 'oppb', spec: { speciesId: 'oppb', ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false } }] };
+  const pairingsFor = (opp) => (opp.id === 'oppA' ? [{ leadA: 0, leadB: 0 }] : [{ leadA: 0, leadB: 0 }, { leadA: 0, leadB: 0 }, { leadA: 0, leadB: 0 }]);
+
+  const hasSpecies = (side, id) => side.some((m) => m.speciesId === id);
+  // Seat-independent outcome table: teamX beats both opponents; teamY loses
+  // to oppA and beats oppB. Resolved to whichever seat ('a'/'b') the
+  // candidate is sitting in for THIS spec (fwd: candidate is A; reversed:
+  // candidate is B) so the same true outcome holds from both seats.
+  const executor = stubExecutor((s) => {
+    const candIsA = hasSpecies(s.teamA, 'teamx') || hasSpecies(s.teamA, 'teamy');
+    const candSpec = candIsA ? s.teamA : s.teamB;
+    const oppSpec = candIsA ? s.teamB : s.teamA;
+    const candId = hasSpecies(candSpec, 'teamx') ? 'teamx' : 'teamy';
+    const oppId = hasSpecies(oppSpec, 'oppa') ? 'oppa' : 'oppb';
+    const candWins = candId === 'teamx' || (candId === 'teamy' && oppId === 'oppb');
+    return candWins === candIsA ? 'a' : 'b';
+  });
+
+  const run = await evaluateTeamsInOrder(
+    {},
+    { teams: [[teamXKey], [teamYKey]], matrix, opponents: [oppA, oppB], pairingsFor, executor }
+  );
+
+  assert.equal(run.results[0].rawWinRate, 1);
+  assert.equal(run.results[1].rawWinRate, 0.75);
+  const candidateRawWinRateMean = (run.results[0].rawWinRate + run.results[1].rawWinRate) / 2;
+  assert.equal(candidateRawWinRateMean, 0.875);
+
+  // oppA: 4 battles total (2 per team), candidate won 2 of them -> oppA's own win rate 1 - 2/4.
+  assert.equal(run.opponentTally[0].battles, 4);
+  assert.equal(run.opponentTally[0].winRate, 0.5);
+  // oppB: 12 battles total (6 per team), candidate won all 12 -> oppB's own win rate 0.
+  assert.equal(run.opponentTally[1].battles, 12);
+  assert.equal(run.opponentTally[1].winRate, 0);
+  const opponentRawWinRateMean = (run.opponentTally[0].winRate + run.opponentTally[1].winRate) / 2;
+  assert.equal(opponentRawWinRateMean, 0.25);
+
+  // The two means do NOT sum to 1 here -- proof the opponent mean must come
+  // from its own per-opponent tally, not `1 - candidateRawWinRateMean`
+  // (which would wrongly give 0.125).
+  assert.notEqual(candidateRawWinRateMean + opponentRawWinRateMean, 1);
+  assert.equal(Math.round((candidateRawWinRateMean + opponentRawWinRateMean) * 1000) / 1000, 1.125);
+});
+
 test('configsMatch rejects a v12 checkpoint against the current (v13) fitnessSemantics', () => {
   const v13 = { seed: 's', population: 200, curatedRatio: 0, fitnessSemantics: 'core-pair-archetypes-v13' };
   const v12 = { ...v13, fitnessSemantics: 'core-pair-archetypes-v12' };

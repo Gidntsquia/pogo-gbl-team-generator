@@ -1878,6 +1878,11 @@ function teamSignature(team) {
  * @returns {{opponentOriginCounts: object, opponentMeanFitness: number,
  *   opponentMaxFitness: number, toughestOpponents: Array<object>}}
  */
+/** Arithmetic mean, 0 for an empty array (never NaN into a checkpoint). */
+function mean(values) {
+  return values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
+}
+
 /** Share of total opponent vote weight (archetype weight x strength) held by archetypes of size 1. */
 function singletonVoteShare(groups, weights, strength) {
   const size = new Map();
@@ -2501,7 +2506,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
   });
   const results = [];
   for (const partial of partials) {
-    const { members, perMeta, hpSum, battles, candidateErrors, exchangeWon, exchangeLost,
+    const { members, perMeta, hpSum, battles, winPoints, candidateErrors, exchangeWon, exchangeLost,
       winsGivenExchangeWon, winsGivenExchangeLost, leadWins, leadBattles, swapHpSum, swapHpCount } = partial;
     let { weightedWinPoints, weightedBattles } = partial;
     if (opponentStrengthGamma > 0) {
@@ -2528,6 +2533,12 @@ export async function evaluateTeamsInOrder(ctx, params) {
 
     // With no opponentWeights every oppWeight is 1 and this IS winPoints/battles.
     const winRate = weightedBattles > 0 ? weightedWinPoints / weightedBattles : 0;
+    // Unweighted candidate win rate (plans/WORKER_NOTES.md Item 1): the same
+    // ledger's `winPoints`/`battles` before any archetype/strength weighting,
+    // parallel to `opponentTally[j].winRate` (also raw) below. Feeds
+    // `candidateRawWinRateMean` so the two sides' raw means can be compared
+    // like-for-like instead of one raw, one weighted.
+    const rawWinRate = battles > 0 ? winPoints / battles : 0;
     const avgHpMargin = battles > 0 ? hpSum / battles : 0;
     const snowballScore = computeSnowballScore(exchangeWon, exchangeLost, winRate);
     const closerScore = computeCloserScore(members, roleScores);
@@ -2539,6 +2550,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
       members: members.map((m) => ({ key: m.key, speciesId: m.speciesId, name: m.name, ...reportMemberDetail(m) })),
       buildCost: teamBuildCost(members),
       winRate,
+      rawWinRate,
       avgHpMargin,
       battles,
       errors: candidateErrors,
@@ -3676,6 +3688,11 @@ export async function runEvolution(csvPath, opts = {}) {
       // beating a majority-share core; falls back to the raw ledger when a
       // tally has no weighted battles (candidateWeights omitted, or --no-
       // opponent-fitness-normalised).
+      // Same array's own inputs, captured alongside opponentFitness so
+      // `opponentWeightedWinRateMean` (plans/WORKER_NOTES.md Item 1) reads the
+      // exact win rate this side's fitness/selection was built from, not a
+      // re-derivation.
+      const opponentWeightedWinRate = [];
       const opponentFitness = run.opponentTally.map((t) => {
         const oppWinRate =
           config.opponentFitnessNormalised && t.weightedBattles > 0
@@ -3683,6 +3700,7 @@ export async function runEvolution(csvPath, opts = {}) {
             : t.battles > 0
               ? 1 - t.winPoints / t.battles
               : 0.5;
+        opponentWeightedWinRate.push(oppWinRate);
         // Symmetric with the candidate blend above -- same computeBlendFitness,
         // same DEFAULT_FITNESS_WEIGHTS shape, opponent-only weight flags
         // (--opponent-snowball-weight etc, 0 by default so an unconfigured
@@ -3861,6 +3879,17 @@ export async function runEvolution(csvPath, opts = {}) {
           // held by singleton archetypes -- the number the 2026-09-09
           // strength weighting exists to bring down.
           singletonVoteShare: singletonVoteShare(oppArchetypeGroups, oppArchetypeWeights, run.opponentStrength),
+          // plans/WORKER_NOTES.md Item 1: same-kind numbers for both sides,
+          // additive only (FITNESS_SEMANTICS unchanged -- no fitness value
+          // here is new, these are just means of fields that already exist
+          // per team/opponent). "raw" = unweighted winPoints/battles off each
+          // side's own ledger; "weighted" = the win rate that side's own
+          // selection/fitness actually consumed this generation; blend means
+          // (meanFitness/opponentMeanFitness) already exist above.
+          candidateRawWinRateMean: mean(run.results.map((r) => r.rawWinRate)),
+          opponentRawWinRateMean: mean(run.opponentTally.map((t) => t.winRate)),
+          candidateWeightedWinRateMean: mean(run.results.map((r) => r.winRate)),
+          opponentWeightedWinRateMean: mean(opponentWeightedWinRate),
         },
         resumed: false,
       };
@@ -3910,6 +3939,7 @@ export async function runEvolution(csvPath, opts = {}) {
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
           `opponent mean fitness ${record.opponentFitness && record.opponentFitness.length ? (record.analytics.opponentMeanFitness * 100).toFixed(1) + "%" : "n/a"}, ` +
+          `raw win rate cand ${(record.analytics.candidateRawWinRateMean * 100).toFixed(1)}% / opp ${(record.analytics.opponentRawWinRateMean * 100).toFixed(1)}%, ` +
           `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (both directions; ${run.errorCount} errors), ` +
           `${formatDuration(run.elapsedMs)} elapsed, process RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
           workerStatsMsg
