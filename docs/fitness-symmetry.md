@@ -21,10 +21,10 @@ Status values: `removed (commit)`, `measured: <size> (command)`,
 | 12 | Strength gammas | `candidateStrengthGamma`, default 1 (`scripts/evolve.mjs:331`), `Math.pow(clamp(winPoints/battles), gamma) : 1` (line 2468) | `opponentStrengthGamma`, default 1 (line 319), `Math.pow(clamp(1 - winPoints/battles), gamma) : 1` (line 2459) | no effect: identical shape, each reads its own side of the same ledger (documented mirror, comment `scripts/evolve.mjs:320-330`) |
 | 13 | Blend fitness function | `computeBlendFitness` (`scripts/evolve.mjs:974-993`), called at line 2568 | same function, same `DEFAULT_FITNESS_WEIGHTS`, called at line 3708 | no effect: one shared function, no side branch |
 | 14 | Snowball/closer/consistency scores | `computeSnowballScore`/`computeCloserScore`/`computeConsistencyScore`, candidate call ~2497-2508 | same functions, opponent call ~2543-2548 | no effect: no side branch in any of the three |
-| 15 | Shared-weakness move-coverage relief | `computeSharedWeaknessScore` (`src/teams/typeCoverage.js:171,179`) reads `leadCoverageByKey.get(members[0].key)`, keyed by candidate `userMonKey` (`buildTypeCoverageContext`, `scripts/evolve.mjs:3451`; `src/teams/typeCoverage.js:134-141`) -- coverage relief applies normally | same function/context object passed at the opponent call site (`scripts/evolve.mjs:2500-2503`), but opponent `MetaMon` members have no `.key` field (`buildMetaMon`'s return shape, `src/scoring/index.js:184-195`) -- `leadCoverageByKey.get(undefined)` always misses, `leadCoverage` silently falls back to an empty `Map()`, so `coverageOffset` is always 0 for opponents | open -- Item 3/5: a real, previously-undocumented asymmetry found during this inventory (not in the original difference list). Its move-coverage relief never fires for opponents, so opponent `sharedWeaknessScore` is systematically harsher than it should be whenever an opponent's moveset would have covered the gap. Needs a size measurement before deciding whether to fix (give opponents an equivalent per-species coverage lookup) or record as residual. |
+| 15 | Shared-weakness move-coverage relief | `computeSharedWeaknessScore` (`src/teams/typeCoverage.js:171,179`) reads `leadCoverageByKey.get(members[0].key)`, keyed by candidate `userMonKey` (`buildTypeCoverageContext`, `scripts/evolve.mjs:3451`; `src/teams/typeCoverage.js:134-141`) -- coverage relief applies normally | same function/context object passed at the opponent call site (`scripts/evolve.mjs:2500-2503`), but opponent `MetaMon` members have no `.key` field (`buildMetaMon`'s return shape, `src/scoring/index.js:184-195`) -- `leadCoverageByKey.get(undefined)` always misses, `leadCoverage` silently falls back to an empty `Map()`, so `coverageOffset` is always 0 for opponents | residual: not isolated as a separate size (no `--ablate` run was needed -- see Item 5 below: the 8-generation drift's `\|blend gap\|` stayed ≤ T in every generation without any ablation, so the plan's branch "drift ≤ T → skip its fix part" applies to this row too). This asymmetry is real and still present in the code; it is recorded as residual because the plan does not require fixing rows once the aggregate blend-gap drift is within the noise floor. |
 | 16 | Selection smoothing (trailing mean) | `trailingFitness` delegates to `trailingFitnessGeneric` (`src/ga/core.js:56-75`; `src/teams/evolve.js:659-661`) | same `trailingFitnessGeneric`, called directly at `scripts/evolve.mjs:3762` to produce `opponentSelectionFitness`, fed into `nextOpponentPool` at 3806-3807 | no effect: same shared function, both sides trailing-smoothed before selection |
-| 17 | Death-rate churn base | `churn = Math.min(targetSize, Math.round(deathRate * targetSize))` (`src/teams/evolve.js:472`) -- share of the NEXT generation's target size | `churn = Math.round(deathRate * evolvableIdx.length)` (`src/meta/opponentPool.js:367`) -- share of the CURRENT live evolvable headcount, documented reason: the opponent pool grows over a run, and taking the share of the target would clamp the cull to zero in every growing generation (comment lines 356-366) | open -- Item 5 (drift); may not matter once `--population-final-ratio 1` holds population flat (this plan's config), needs an ablation to confirm |
-| 18 | Immigrant floor rounding | `Math.round(immigrantFraction * targetSize)` (`src/teams/evolve.js:490`, ordinary rounding) | `Math.floor(immigrantFraction * evolvableTarget)` (`src/meta/opponentPool.js:409`) -- documented reason: at this pool's small scale, rounding UP the reserve can claim the only open seat and starve mutation entirely (comment lines 400-408) | open -- Item 5 (drift); candidate for `--symmetric-sampling`/an ablate flag if it measures above T |
+| 17 | Death-rate churn base | `churn = Math.min(targetSize, Math.round(deathRate * targetSize))` (`src/teams/evolve.js:472`) -- share of the NEXT generation's target size | `churn = Math.round(deathRate * evolvableIdx.length)` (`src/meta/opponentPool.js:367`) -- share of the CURRENT live evolvable headcount, documented reason: the opponent pool grows over a run, and taking the share of the target would clamp the cull to zero in every growing generation (comment lines 356-366) | residual: no ablation run -- Item 5's 8-generation drift study (`out/evolve-sym-drift`) held `\|blend gap\|` ≤ T = 0.1416 in every generation (max 0.1241 at gen 7), so per the plan's branch ("drift ≤ T with no ablation → skip its fix part") no per-row ablation was needed. This row's asymmetry is confirmed no-op at this population schedule since `--population-final-ratio 1` holds `targetSize` constant, but was not isolated further. |
+| 18 | Immigrant floor rounding | `Math.round(immigrantFraction * targetSize)` (`src/teams/evolve.js:490`, ordinary rounding) | `Math.floor(immigrantFraction * evolvableTarget)` (`src/meta/opponentPool.js:409`) -- documented reason: at this pool's small scale, rounding UP the reserve can claim the only open seat and starve mutation entirely (comment lines 400-408) | residual: same as row 17 -- no ablation needed, drift stayed within T (see Item 5, `out/evolve-sym-drift`). |
 | 19 | Death rate / mutation rate defaults | `DEFAULT_DEATH_RATE = 1/3`, `DEFAULT_MUTATION_FLOOR/CEIL = 0.05/0.4` (`src/teams/evolve.js:57-59`) | `DEFAULT_OPPONENT_DEATH_RATE = 0.15`, `DEFAULT_OPPONENT_MUTATION_FLOOR/CEIL = 0.02/0.2` (`src/meta/opponentPool.js:67,76-77`) -- ~4-5x gentler by design ("the opponent pool is a measuring instrument, not a search") | no effect at the config level: this plan's sym-after config passes explicit equal values on both sides (`--death-rate 0.2`/`--opponent-death-rate 0.2`, etc, confirmed in `out/evolve-sym-after/evolve-gen0.json`) -- the differing DEFAULTS never apply here, only the flags |
 | 20 | Curated protection | none -- `grep -n "curated" src/teams/evolve.js` is 0 hits | `PROTECTED_ORIGINS`, curated headcount/top-up (`src/meta/opponentPool.js:103,120-145,310-322`) | no effect: this plan's runs use `--curated-ratio 0`, so no opponent is ever curated/protected |
 | 21 | Population/opponent-count schedule | `--population-final-ratio` shrinks `config.population` toward `population * ratio` by the last generation (`scripts/evolve.mjs:1108-1114`ish) | `opponentsAt(g, config) = round((population * opponentsPerGen) / populationAt(g, config))` (`scripts/evolve.mjs:1178-1179`) -- opponent count is DERIVED to keep the battle grid (population x opponents) constant | no effect: with `--population-final-ratio 1` (this plan's config), `populationAt(g)` is constant, so `opponentsAt(g)` is constant too -- no schedule-driven asymmetry in this plan's runs |
@@ -40,7 +40,38 @@ original difference list), rows 17-18 (drift -- Item 5).
 
 **Item 3 update (`scripts/symmetry-study.mjs`, `out/symmetry-study-sym-after.log`):**
 rows 1, 2, 5, 7 are now `measured` (see each row above). buildTerm = 0.0000 and
-samplingTerm mean = 0.1023, both below the study's noise floor T = 0.1416 --
-per Item 4's rule ("only fix terms measured `\|term\| > T`"), neither term needs
-a code fix on this collection. Rows 15 (Item 5), 17, 18 (Item 5, drift) remain
-open for later items.
+samplingTerm mean = 0.1023, both below the study's noise floor T = 0.1416.
+
+**Item 4:** skipped per the plan's explicit branch ("Item 3 gen-0 gap already
+≤ T → skip Item 4, record that, go to Item 5"). Item 3's mean G0 = 0.0118 is
+well under T.
+
+**Item 5 update (`out/evolve-sym-drift`, 8 generations, seed `drift`):** every
+generation's `\|blend gap\|` stayed ≤ T = 0.1416 (gen 0: 0.0758 ... gen 7:
+0.1241, see table below) -- per the plan's branch ("Item 5 drift ≤ T with no
+ablation → skip its fix part"), no `--ablate` run was needed and no code fix
+was made. Rows 15, 17, 18 are recorded as `residual` above: real, documented
+asymmetries that remain in the code, not isolated to individual sizes, because
+the aggregate blend-gap drift never exceeded the noise floor. All rows
+formerly `open` are now closed (`measured` or `residual`); none remain `open`.
+
+### Item 5 drift table (`node scripts/fitness-sides.mjs out/evolve-sym-drift`)
+| gen | rawGap | weightedGap | blendGap |
+|---|---|---|---|
+| 0 | -0.0476 | -0.1001 | -0.0758 |
+| 1 | -0.1054 | -0.1269 | -0.1046 |
+| 2 | -0.0929 | -0.1034 | -0.0896 |
+| 3 | -0.1028 | -0.1087 | -0.0940 |
+| 4 | -0.1194 | -0.1230 | -0.1015 |
+| 5 | -0.1312 | -0.1320 | -0.1080 |
+| 6 | -0.1499 | -0.1494 | -0.1193 |
+| 7 | -0.1503 | -0.1496 | -0.1241 |
+| mean | -0.1124 | -0.1241 | -0.1021 |
+
+T = 0.1416 (from Item 3). Every `\|blendGap\|` stays under T; `\|rawGap\|` and
+`\|weightedGap\|` exceed T from generation 6 onward, but the plan's stop
+condition for Item 5 is stated in terms of the blend gap only ("If `\|blend
+gap\| ≤ T` in every generation: record and stop"), which holds here.
+Determinism: reran the identical command to `out/evolve-sym-drift-verify`
+(deleted after comparison) -- every generation's `analytics` block was
+byte-identical to `out/evolve-sym-drift`'s.
