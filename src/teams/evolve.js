@@ -215,12 +215,16 @@ function assignLead(team, rng) {
  * no retry loop is needed here.
  *
  * @param {{matrix:object, pool:string[], weights?:Map<string,number>,
- *   count:number, seed?:number|string, excludeSpecies?:string[]}} params
+ *   count:number, seed?:number|string, excludeSpecies?:string[], alpha?:number}} params
+ *   `alpha` (plans/PLAN.md Item 4 test-only switch, `--candidate-sample-alpha`
+ *   in scripts/evolve.mjs): overrides `DEFAULT_BLEND_ALPHA` for gen-0
+ *   sampling too, so a kept-row-5 measurement run samples generation zero
+ *   with the same alpha `nextGeneration` uses for every later generation.
  * @returns {string[][]} up to `count` unique 3-userMonKey teams, each with
  *   `team[0]` as its designated lead.
  */
-export function initPopulation({ matrix, pool, weights, count, seed, excludeSpecies }) {
-  const teams = sampleCandidateTeams({ matrix, pool, weights, count, seed, excludeSpecies });
+export function initPopulation({ matrix, pool, weights, count, seed, excludeSpecies, alpha }) {
+  const teams = sampleCandidateTeams({ matrix, pool, weights, count, seed, excludeSpecies, alpha });
   const rng = rngFromSeed(seed, 'initPopulation-lead');
   return teams.map((team) => assignLead(team, rng));
 }

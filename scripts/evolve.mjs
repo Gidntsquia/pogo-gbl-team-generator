@@ -3649,6 +3649,7 @@ export async function runEvolution(csvPath, opts = {}) {
         count: populationAt(0, config),
         seed: `${config.seed}-gen0`,
         excludeSpecies: candidateExcludeSpecies,
+        alpha: config.candidateSampleAlpha,
       });
       opponentPool = initOpponentPool(ctx, {
         size: opponentsAt(0, config),
@@ -3835,6 +3836,7 @@ export async function runEvolution(csvPath, opts = {}) {
             excludeSpecies: candidateExcludeSpecies,
             targetSize: populationAt(generation + 1, config),
             deathRate: config.deathRate,
+            alpha: config.candidateSampleAlpha,
             // Annealed per generation (constant when no start value is set)
             // -- see mutationRatesAt.
             ...mutationRatesAt(generation, config),
@@ -4602,6 +4604,7 @@ export function parseEvolveArgs(argv) {
         'out-dir': { type: 'string' },
         fitness: { type: 'string' },
         'death-rate': { type: 'string' },
+        'candidate-sample-alpha': { type: 'string' },
         'mutation-floor': { type: 'string' },
         'mutation-ceil': { type: 'string' },
         'mutation-floor-start': { type: 'string' },
@@ -4704,6 +4707,18 @@ export function parseEvolveArgs(argv) {
     noHtml: !!values['no-html'],
     fitness: fitnessFlag(values.fitness),
     deathRate: fractionFlag(values['death-rate'], 'death-rate', undefined),
+    // plans/PLAN.md Item 4 test-only switch (row 5, sampling weights):
+    // overrides src/teams/sample.js's DEFAULT_BLEND_ALPHA on the candidate
+    // side only, for both gen-0 (initPopulation) and every later generation
+    // (nextGeneration) -- alpha=0 makes candidate sampling usage-weight-only,
+    // matching the opponent side's src/meta/sampleTeams.js weighting exactly,
+    // to measure how much of the fitness gap this one formula difference
+    // accounts for. undefined (flag omitted) is a no-op: DEFAULT_BLEND_ALPHA
+    // (0.5) applies exactly as before. Not part of any evolve recipe.
+    candidateSampleAlpha:
+      values['candidate-sample-alpha'] !== undefined
+        ? fractionFlag(values['candidate-sample-alpha'], 'candidate-sample-alpha', undefined)
+        : undefined,
     mutationFloor: fractionFlag(values['mutation-floor'], 'mutation-floor', undefined),
     mutationCeil: fractionFlag(values['mutation-ceil'], 'mutation-ceil', undefined),
     mutationFloorStart: fractionFlag(values['mutation-floor-start'], 'mutation-floor-start', undefined),
