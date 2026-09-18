@@ -1476,6 +1476,15 @@ function buildRunConfig(csvPath, opts) {
     // selected/mutated under the old one.
     archetypeBeta: opts.archetypeBeta ?? DEFAULTS.archetypeBeta,
     opponentFitnessNormalised: opts.opponentFitnessNormalised ?? DEFAULTS.opponentFitnessNormalised,
+    // plans/PLAN.md Item 4 test-only switch (row 5): buildRunConfig is a
+    // whitelist -- a field opts carries but this function never copies never
+    // reaches `config`, so it's a silent no-op everywhere `config.<field>` is
+    // read. candidateSampleAlpha was missing here (caught this session: a
+    // measurement run with --candidate-sample-alpha 0 produced byte-identical
+    // output to the unflagged run because config.candidateSampleAlpha stayed
+    // undefined the whole time despite the flag parsing correctly). undefined
+    // here still means "no override" (DEFAULT_BLEND_ALPHA applies).
+    candidateSampleAlpha: opts.candidateSampleAlpha,
     // Changes what a composed opponent's lead IS, not just a weighting --
     // resuming under a different value would silently regenerate every
     // future opponent with a different lead policy than the ones already in
@@ -4710,11 +4719,13 @@ export function parseEvolveArgs(argv) {
     // plans/PLAN.md Item 4 test-only switch (row 5, sampling weights):
     // overrides src/teams/sample.js's DEFAULT_BLEND_ALPHA on the candidate
     // side only, for both gen-0 (initPopulation) and every later generation
-    // (nextGeneration) -- alpha=0 makes candidate sampling usage-weight-only,
-    // matching the opponent side's src/meta/sampleTeams.js weighting exactly,
-    // to measure how much of the fitness gap this one formula difference
-    // accounts for. undefined (flag omitted) is a no-op: DEFAULT_BLEND_ALPHA
-    // (0.5) applies exactly as before. Not part of any evolve recipe.
+    // (nextGeneration). makeBlendedWeightFn's blend is
+    // (1-alpha)*normScore + alpha*normUsage, so alpha=1 (not 0) is
+    // usage-weight-only, matching the opponent side's
+    // src/meta/sampleTeams.js weighting exactly, to measure how much of the
+    // fitness gap this one formula difference accounts for. undefined (flag
+    // omitted) is a no-op: DEFAULT_BLEND_ALPHA (0.5) applies as before. Not
+    // part of any evolve recipe.
     candidateSampleAlpha:
       values['candidate-sample-alpha'] !== undefined
         ? fractionFlag(values['candidate-sample-alpha'], 'candidate-sample-alpha', undefined)
