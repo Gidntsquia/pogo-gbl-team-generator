@@ -25,6 +25,8 @@
 #   --meta-pool N     with --meta: --pool N --opponent-meta-pool N (default 400:
 #                     pvpoke overall score >= ~78 at cp 1500; 0 = full field)
 #   --cp N            CP cap (default 1500); with --meta also picks the collection
+#   --cup NAME        pvpoke cup id (e.g. willpower; default: all/Great League);
+#                     with --meta also picks the collection (meta-collection-CUP-CP.csv)
 #   --name NAME       run name -> out/evolve-NAME/ (default: <csv-stem>-<HHMM>)
 #   --ban a,b         species banned format-wide, both sides  (default: none)
 #   --generations G   generation cap                          (default 100)
@@ -49,10 +51,15 @@
 #     out/evolve-my-run/evolve-gen42.json my-collection.csv
 #
 # Anything after `--` (or any flag not listed above) goes straight to
-# evolve.mjs. Defaults follow the established run recipe:
-#   --opponents-per-gen 120 --elites 15 --seed <name>
-#   --snowball-weight 0.2 --closer-weight 0.1 --consistency-weight 0.1 --shared-weakness-weight 0.2
+# evolve.mjs. Defaults follow the established run recipe, baked into
+# recipes/standard.json (--config recipe, see evolve.mjs --help) and passed
+# as --config recipes/standard.json --seed <name>:
+#   opponents-per-gen 120, elites 15,
+#   snowball-weight 0.2, closer-weight 0.1, consistency-weight 0.1, shared-weakness-weight 0.2
 #   (--pool is left unset -- evolve.mjs's own default: no cap, whole deduped collection)
+# A passthrough --config overrides recipes/standard.json entirely (evolve.mjs
+# only accepts one --config), and any individual passthrough flag (e.g.
+# --snowball-weight 0) overrides that one key from the recipe file.
 # (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions)
 #
 # When a run finishes (evolve-DONE marker in its out dir), reports land in
@@ -63,7 +70,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
-usage() { sed -n '2,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 status() {
   shopt -s nullglob
@@ -93,6 +100,7 @@ ban=""
 meta=0
 metapool=400
 cp=1500
+cup=all
 generations=100
 population=300
 hours=""
@@ -106,6 +114,7 @@ while [ $# -gt 0 ]; do
     --meta) meta=1; shift ;;
     --meta-pool) metapool="$2"; shift 2 ;;
     --cp) cp="$2"; shift 2 ;;
+    --cup) cup="$2"; shift 2 ;;
     --name) name="$2"; shift 2 ;;
     --ban) ban="$2"; shift 2 ;;
     --generations) generations="$2"; shift 2 ;;
@@ -123,7 +132,11 @@ done
 
 if [ "$meta" = 1 ]; then
   if [ -n "$csv" ]; then echo "error: --meta takes no collection (it builds its own)" >&2; exit 2; fi
-  [ -z "$name" ] && name="meta-vs-meta-${cp}-$(date +%H%M)"
+  if [ -z "$name" ]; then
+    if [ "$cup" = all ]; then name="meta-vs-meta-${cp}-$(date +%H%M)"
+    else name="meta-vs-meta-${cup}-${cp}-$(date +%H%M)"
+    fi
+  fi
   # The collection is per run, never shared: candidate keys are speciesId#row,
   # so a run can only resume against the byte-identical CSV it started from,
   # and the rankings order (hence the rows) moves with every vendor pin bump.
@@ -134,7 +147,9 @@ if [ "$meta" = 1 ]; then
     csv="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).config.csvPath)' "out/evolve-${name}/evolve-gen0.json")"
     echo "[sim] resuming '$name': reusing its collection ($csv) instead of rebuilding"
   else
-    csv="out/evolve-${name}/meta-collection-${cp}.csv"
+    if [ "$cup" = all ]; then csv="out/evolve-${name}/meta-collection-${cp}.csv"
+    else csv="out/evolve-${name}/meta-collection-${cup}-${cp}.csv"
+    fi
   fi
 fi
 if [ -z "$csv" ]; then usage; exit 2; fi
@@ -145,7 +160,7 @@ if [ ! -d vendor/pvpoke ]; then
 fi
 if [ "$meta" = 1 ] && [ ! -f "$csv" ]; then
   mkdir -p "$(dirname "$csv")"
-  node scripts/build-meta-collection.mjs --cp "$cp" --out "$csv"
+  node scripts/build-meta-collection.mjs --cp "$cp" --cup "$cup" --out "$csv"
 fi
 if [ ! -f "$csv" ]; then echo "error: collection not found: $csv" >&2; exit 2; fi
 
@@ -161,13 +176,24 @@ if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
 fi
 
 cmd=(node scripts/evolve.mjs "$csv"
-  --population "$population" --opponents-per-gen 120 --generations "$generations"
-  --cp "$cp" --elites 15 --seed "$name" --out-dir "$outdir"
-  --snowball-weight 0.2 --closer-weight 0.1 --consistency-weight 0.1 --shared-weakness-weight 0.2)
+  --config "$repo/recipes/standard.json"
+  --population "$population" --generations "$generations"
+  --cp "$cp" --cup "$cup" --seed "$name" --out-dir "$outdir")
 if [ "$meta" = 1 ]; then
   # --meta widens BOTH species pools to metapool; --pool is otherwise left
   # unset so evolve.mjs's own default (no cap, whole deduped collection) applies.
-  cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions)
+  # --candidate-sample-alpha 1 (plans/PLAN.md Item 3/4, fitness-symmetry loop):
+  # under --meta the "collection" IS the meta (every species pvpoke ranks),
+  # so unlike a real player's collection there is no reason to prefer a mon's
+  # own 1v1-matrix score over the meta's usage weight when sampling candidate
+  # teams -- doing so just makes the two sides sample by different criteria
+  # over the same species universe. Real-collection runs (no --meta) keep
+  # DEFAULT_BLEND_ALPHA (0.5): there the user's own 1v1 performance SHOULD
+  # outweigh raw meta popularity. Measured: closes most of the candidate/
+  # opponent fitness gap (mean final blend gap -0.108 -> -0.027, mean final
+  # raw gap -0.137 -> -0.032, `ga` vs `sample-usage-only-v2` labels,
+  # plans/WORKER_NOTES.md).
+  cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --candidate-sample-alpha 1)
 fi
 [ -n "$ban" ] && cmd+=(--ban "$ban")
 [ -n "$threads" ] && cmd+=(--threads "$threads")
@@ -176,6 +202,7 @@ cmd+=(${passthrough[@]+"${passthrough[@]}"})
 
 echo "[sim] run:         $name"
 echo "[sim] collection:  $csv"
+echo "[sim] cup:         $cup"
 echo "[sim] generations: $generations, population: $population"
 echo "[sim] banned:      ${ban:-none}"
 [ "$meta" = 1 ] && echo "[sim] meta-vs-meta: cp $cp, both species pools = ${metapool} (0 = full field)"
