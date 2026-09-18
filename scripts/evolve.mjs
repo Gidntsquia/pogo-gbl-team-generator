@@ -91,25 +91,43 @@
 // `--no-battle-cache` opts out, and is a pure speed switch: a cached run and
 // an uncached one produce bit-identical results (see createBattleCache).
 //
-// Fixed-side convention (same as scripts/tournament.mjs / src/teams/
-// index.js): every population member is always battled as team A, so
-// pvpoke emulate mode's small residual player-1 edge is a constant offset
-// shared by every team and cancels in the RELATIVE ranking.
+// TWO-DIRECTION BATTLES (v13, Jaxon 2026-09-18, from plans/WORKER_NOTES.md's
+// Item 1 experiment): every pairing, in every generation AND the final elites
+// pass, is now fought BOTH ways -- candidate as team A vs opponent as team B,
+// and opponent as team A vs candidate as team B (mirrorBattleResult flips the
+// second result's labels back so it tallies as if the candidate had been team
+// A) -- and both results feed the same tally. The old convention (candidates
+// always as team A, described below as "cancels in the relative ranking")
+// undercounted: Item 1 measured pvpoke emulate mode's own team-A/team-B seat
+// bias as ONLY PART of the candidate/opponent fitness gap it was blamed for
+// -- see RUNBOOK.md "Known artifact" for the measured decomposition. Battling
+// both ways removes the seat bias structurally, at ~2x the battle count (see
+// BUDGET MATH below); it does not and cannot remove a genuine population-
+// strength difference between the two GAs' populations, which Item 1 also
+// measured as real and separate.
+//
+// (Superseded fixed-side convention, kept for context: same as scripts/
+// tournament.mjs / src/teams/index.js -- outside this file's two-direction
+// path, a population member is still always battled as team A, so pvpoke
+// emulate mode's small residual seat bias there is a constant offset shared
+// by every team and cancels in the RELATIVE ranking.)
 //
 // Usage:
 //   node scripts/evolve.mjs <collection.csv> [options]
 //   node scripts/evolve.mjs --help    (the authoritative flag list)
 //
-// BUDGET MATH: battles/generation = population x opponents-per-gen, held flat
-// across the run by the schedule above. At the flag defaults: 100 x 20 = 2,000
-// pairings/generation; 15 generations = 30,000, plus a final elites pass of
-// elites x (all curated + evolved) -- with the pinned data that is 10 x ~162 =
-// ~1,620. The memo cache means the number of pairings SIMULATED is far lower
-// than the number planned (the report prints both). Measured rates vary by
-// machine (~18ms/battle threaded on Jaxon's Mac) -- size --population/
-// --opponents-per-gen/--generations to your own time budget; --deadline-minutes
-// is a simple stop-before-the-next-generation safety net, not a self-tuning
-// scaler (unlike tournament.mjs's stage 2/3 tuning).
+// BUDGET MATH: battles/generation = 2 x population x opponents-per-gen (v13:
+// every pairing fought both directions, see TWO-DIRECTION BATTLES above),
+// held flat across the run by the schedule above. At the flag defaults:
+// 2 x 100 x 20 = 4,000 pairings/generation; 15 generations = 60,000, plus a
+// final elites pass of 2 x elites x (all curated + evolved) -- with the
+// pinned data that is 2 x 10 x ~162 = ~3,240. The memo cache means the
+// number of pairings SIMULATED is far lower than the number planned (the
+// report prints both). Measured rates vary by machine (~18ms/battle threaded
+// on Jaxon's Mac) -- size --population/--opponents-per-gen/--generations to
+// your own time budget; --deadline-minutes is a simple stop-before-the-next
+// -generation safety net, not a self-tuning scaler (unlike tournament.mjs's
+// stage 2/3 tuning).
 //
 // GA TUNABLES: the candidate side's rates (--death-rate / --mutation-floor /
 // --mutation-ceil / --immigrant-fraction) and the convergence shape
@@ -809,6 +827,53 @@ function ownLeadPairing(opp) {
   return [{ leadA: CANDIDATE_LEAD, leadB: opponentLeadIndex(opp) }];
 }
 
+/**
+ * Turn a `battleTeams` result fought with team A and team B swapped back into
+ * one that reads as if the CANDIDATE had been team A all along (plans/
+ * WORKER_NOTES.md Item 2 -- the fitness-symmetry fix). `winner` flips a<->b
+ * (a tie stays a tie); `survivorsHp.{a,b,aPerMon,bPerMon}` swap; every
+ * `summary` field whose name ends in `A` or `B` (both team-specific: leadA/
+ * leadB, remainingA/B, throwAndGoSwitchesA/B, shieldsDeclinedA/B,
+ * costlySwitchesA/B, freeSwitchesA/B, leadFaintTurnA/B, shieldsRemainingA/B)
+ * swaps with its `B`/`A` partner; everything else (turns, duration,
+ * difficulty, seed, endedBy, ...) is battle-wide and copied as-is. Throws if
+ * an `A`/`B`-suffixed key has no partner -- a silent one-sided swap would
+ * credit a battle to the wrong side rather than fail loudly. Pure: no battle
+ * math, just relabeling an already-fought result (never edits
+ * `vendor/pvpoke`, per AGENTS.md).
+ * @param {object} r - a `battleTeams` result
+ * @returns {object} the same battle, relabeled so its own team A is the side
+ *   that was actually team B when it was fought
+ */
+export function mirrorBattleResult(r) {
+  const winner = r.winner === 'tie' ? 'tie' : r.winner === 'a' ? 'b' : 'a';
+  const survivorsHp = {
+    a: r.survivorsHp.b,
+    b: r.survivorsHp.a,
+    aPerMon: r.survivorsHp.bPerMon,
+    bPerMon: r.survivorsHp.aPerMon,
+  };
+  const summary = {};
+  const done = new Set();
+  for (const key of Object.keys(r.summary)) {
+    if (done.has(key)) continue;
+    if (key.endsWith('A') || key.endsWith('B')) {
+      const otherSuffix = key.endsWith('A') ? 'B' : 'A';
+      const pairKey = `${key.slice(0, -1)}${otherSuffix}`;
+      if (!(pairKey in r.summary)) {
+        throw new Error(`mirrorBattleResult: summary key "${key}" has no "${pairKey}" partner to swap with`);
+      }
+      summary[key] = r.summary[pairKey];
+      summary[pairKey] = r.summary[key];
+      done.add(key);
+      done.add(pairKey);
+    } else {
+      summary[key] = r.summary[key];
+    }
+  }
+  return { winner, survivorsHp, summary };
+}
+
 // ---------------------------------------------------------------------------
 // Battle-reality fitness. `evaluateTeamsInOrder`
 // (below) already runs every generation's battles through `battleTeams`, whose
@@ -856,7 +921,7 @@ function leadExchangeLoser(summary) {
  * than being tacked on, since it is itself a transform of winRate data.
  */
 /** See buildRunConfig's `fitnessSemantics` comment. */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v12';
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v13';
 const TYPE_COVERAGE_META_SIZE = 200;
 // Closer/consistency disabled for now (weights zeroed rather than removed,
 // so they're a one-line revert away). Snowball is opt-in via
@@ -1160,7 +1225,15 @@ function monSpecKey(m) {
 function trimBattleResult(r) {
   return {
     winner: r.winner,
-    survivorsHp: { a: r.survivorsHp.a, b: r.survivorsHp.b, aPerMon: r.survivorsHp.aPerMon },
+    // bPerMon (added v13, alongside aPerMon) so mirrorBattleResult can turn a
+    // cached FORWARD hit into a valid reversed-direction result without a
+    // missing field -- the two-direction elites pass runs with trackLeads.
+    survivorsHp: {
+      a: r.survivorsHp.a,
+      b: r.survivorsHp.b,
+      aPerMon: r.survivorsHp.aPerMon,
+      bPerMon: r.survivorsHp.bPerMon,
+    },
     summary: { leadFaintTurnA: r.summary.leadFaintTurnA, leadFaintTurnB: r.summary.leadFaintTurnB },
   };
 }
@@ -1427,7 +1500,15 @@ function buildRunConfig(csvPath, opts) {
     // candidateStrengthGamma was added to weight each candidate's
     // contribution to an opponent's fitness by that candidate's own raw win
     // rate -- opponentFitness values under v11 are not comparable to v12's.
-    // Those scores are not resume-compatible.
+    // Bumped to v13 2026-09-18 (plans/WORKER_NOTES.md Item 2/3) when every
+    // pairing started battling BOTH directions (candidate-as-A and
+    // opponent-as-A, the latter mirrored back through mirrorBattleResult and
+    // tallied identically) instead of only candidate-as-A -- removes the
+    // measured ~1.9pt team-A seat bias structurally. battles/generation is
+    // now 2 x population x opponents-per-gen, and the final elites pass
+    // battles both directions too. v12 checkpoints have half as many battles
+    // per pairing and a seat-biased fitness scale; they are not
+    // resume-compatible.
     fitnessSemantics: FITNESS_SEMANTICS,
     opponentStrengthGamma: opts.opponentStrengthGamma ?? DEFAULTS.opponentStrengthGamma,
     candidateStrengthGamma: opts.candidateStrengthGamma ?? DEFAULTS.candidateStrengthGamma,
@@ -2048,7 +2129,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   pairings served from the memo (both are reported, so a run's speedup is
  *   visible rather than implied).
  */
-async function evaluateTeamsInOrder(ctx, params) {
+export async function evaluateTeamsInOrder(ctx, params) {
   // trackLeads' bestLead computation (below) predates the locked
   // leads and still iterates all 3 of the team's OWN lead slots -- left
   // as-is rather than redesigned. It still resolves correctly without any
@@ -2109,25 +2190,33 @@ async function evaluateTeamsInOrder(ctx, params) {
     return { members, teamASpec, oppPlans };
   });
 
-  // ---- (1) plan: one cache key per pairing, in flat battle order ----------
+  // ---- (1) plan: TWO cache keys per pairing (forward + reversed seats), in
+  // flat battle order -- v13's fitness-symmetry fix (plans/WORKER_NOTES.md
+  // Item 2). `planKeys[i]` is `{fwdKey, revKey}`; accumulate (step 3) walks
+  // this same array in the same order so the two loops stay in lockstep.
   const planKeys = [];
   const pendingKeys = [];
   const pendingSpecs = [];
   const pendingBattles = []; // serial-mode inputs, parallel to pendingSpecs
   const queued = new Set();
+  function enqueue(key, teamASpec, leadA, teamBSpec, leadB, teamAPokemon, teamBPokemon) {
+    if (cache.get(key) !== undefined || queued.has(key)) return;
+    queued.add(key);
+    pendingKeys.push(key);
+    pendingSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
+    pendingBattles.push({ teamA: teamAPokemon, teamB: teamBPokemon, leadA, leadB });
+  }
   for (const { members, teamASpec, oppPlans } of prepared) {
     const teamA = members.map((m) => m.pokemon);
     for (const { opp, pairings } of oppPlans) {
       const teamBSpec = opp.members.map((m) => m.spec);
       const teamB = opp.members.map((m) => m.pokemon);
       for (const { leadA, leadB } of pairings) {
-        const key = cache.keyFor(teamASpec, leadA, teamBSpec, leadB, difficulty);
-        planKeys.push(key);
-        if (cache.get(key) !== undefined || queued.has(key)) continue;
-        queued.add(key);
-        pendingKeys.push(key);
-        pendingSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
-        pendingBattles.push({ teamA, teamB, leadA, leadB });
+        const fwdKey = cache.keyFor(teamASpec, leadA, teamBSpec, leadB, difficulty);
+        const revKey = cache.keyFor(teamBSpec, leadB, teamASpec, leadA, difficulty);
+        planKeys.push({ fwdKey, revKey });
+        enqueue(fwdKey, teamASpec, leadA, teamBSpec, leadB, teamA, teamB);
+        enqueue(revKey, teamBSpec, leadB, teamASpec, leadA, teamB, teamA);
       }
     }
   }
@@ -2217,21 +2306,15 @@ async function evaluateTeamsInOrder(ctx, params) {
       let oppExchangeWon = 0; // this opponent's lead fainted the candidate's lead first
       let oppExchangeLost = 0; // ...candidate's lead fainted this opponent's lead first
 
-      for (const { leadA, leadB } of pairings) {
-        const outcome = outcomeFor(planKeys[cursor++]);
-        if (!outcome.ok) {
-          errorCount += 1;
-          candidateErrors += 1;
-          onLog?.(
-            `battle error (skipped): team=[${members.map((m) => m.name).join('/')}] ` +
-              `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${outcome.message}`
-          );
-          continue;
-        }
-        const r = outcome.value;
-        if (outcome.cached) cachedCount += 1;
-        else battleCount += 1;
-
+      // Tally ONE battle result that already reads as "candidate is team A" --
+      // called once for the forward result and once for the MIRRORED reversed
+      // result (mirrorBattleResult above), so both directions run through
+      // identical bookkeeping (v13 fitness-symmetry fix, plans/WORKER_NOTES.md
+      // Item 2). Closes over this opp-loop iteration's oppWeight/oppWinPoints/
+      // etc and the team-loop's members/winPoints/etc. Counts battles (no /2):
+      // a pairing now contributes 2 to `battles`/`oppBattles`, which is what
+      // makes battleCount per generation exactly 2 x population x opponents.
+      function tallyBattle(r, leadA, leadB) {
         battles += 1;
         weightedBattles += oppWeight;
         oppBattles += 1;
@@ -2281,6 +2364,43 @@ async function evaluateTeamsInOrder(ctx, params) {
             swapHpCount[memberIdx] += 1;
           });
         }
+      }
+
+      for (const { leadA, leadB } of pairings) {
+        const { fwdKey, revKey } = planKeys[cursor++];
+        const fwdOutcome = outcomeFor(fwdKey);
+        const revOutcome = outcomeFor(revKey);
+        if (!fwdOutcome.ok && !revOutcome.ok) {
+          errorCount += 1;
+          candidateErrors += 1;
+          onLog?.(
+            `battle error (skipped, both directions failed): team=[${members.map((m) => m.name).join('/')}] ` +
+              `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${fwdOutcome.message}`
+          );
+          continue;
+        }
+        if (!fwdOutcome.ok || !revOutcome.ok) {
+          // Exactly one direction errored: drop the whole pairing (a
+          // half-counted pairing would reintroduce the side bias this fix
+          // removes) and log once.
+          errorCount += 1;
+          candidateErrors += 1;
+          const failed = fwdOutcome.ok ? 'reversed' : 'forward';
+          const message = fwdOutcome.ok ? revOutcome.message : fwdOutcome.message;
+          onLog?.(
+            `battle error (${failed} direction failed, pairing dropped): team=[${members.map((m) => m.name).join('/')}] ` +
+              `opponent="${opp.name}" leadA=${leadA} leadB=${leadB}: ${message}`
+          );
+          continue;
+        }
+
+        if (fwdOutcome.cached) cachedCount += 1;
+        else battleCount += 1;
+        if (revOutcome.cached) cachedCount += 1;
+        else battleCount += 1;
+
+        tallyBattle(fwdOutcome.value, leadA, leadB);
+        tallyBattle(mirrorBattleResult(revOutcome.value), leadA, leadB);
       }
 
       if (oppBattles > 0) {
@@ -2700,8 +2820,9 @@ function finalPassDescription(eo, rk) {
       ? ` Finalists are the last generation's top teams by their mean fitness over their last ${rk.selectionTrailing} generation(s).`
       : '';
   return (
-    `Win% is a weighted mean over one battle against each of the ${eo.total} elites-pass opponents (${mix}), both ` +
-    `sides at their designated leads. ${weighting}${holdout}${finalists} **Score** (the sort key) = ` +
+    `Win% is a weighted mean over battles against each of the ${eo.total} elites-pass opponents (${mix}), each ` +
+    `opponent battled from both seats (both directions) at their designated leads and the mirrored result tallied ` +
+    `identically. ${weighting}${holdout}${finalists} **Score** (the sort key) = ` +
     `${rk.weights.elitePass} x that win% + ${rk.weights.recent} x the team's mean win% over the last ` +
     `${rk.recentWindow} generation(s). Absolute win% carries pvpoke emulate mode's small constant team-A offset; ` +
     'the ranking is relative, so it cancels.'
@@ -3789,7 +3910,7 @@ export async function runEvolution(csvPath, opts = {}) {
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
           `opponent mean fitness ${record.opponentFitness && record.opponentFitness.length ? (record.analytics.opponentMeanFitness * 100).toFixed(1) + "%" : "n/a"}, ` +
-          `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
+          `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (both directions; ${run.errorCount} errors), ` +
           `${formatDuration(run.elapsedMs)} elapsed, process RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
           workerStatsMsg
       );
@@ -4105,6 +4226,9 @@ Options:
                                                                        (default: none)
   --population N         GA population size                        (default ${DEFAULTS.population})
   --opponents-per-gen M   opponent teams sampled each generation     (default ${DEFAULTS.opponentsPerGen})
+                            every pairing battles both directions (candidate-
+                            as-A and opponent-as-A, mirrored), so battles per
+                            generation = 2 x population x opponents-per-gen
   --generations G         generation cap                            (default ${DEFAULTS.generations})
   --seed S                PRNG seed                                 (default "${DEFAULTS.seed}")
   --threads N             battle via ONE persistent worker-pool executor
