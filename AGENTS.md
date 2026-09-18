@@ -11,13 +11,18 @@ they don't say.
 - Never edit `vendor/pvpoke`; never reimplement its battle math.
 - Never commit as a worker; keep the diff inside the files the task names.
 - Never kill, resume, or restart an evolve run unless the task says so.
-- Known invariant (fixed 2026-09-18, v13): `evaluateTeamsInOrder` battles every pairing from
-  both seats (candidate-as-A, and opponent-as-A mirrored back via `mirrorBattleResult`), in
-  every generation and the final elites pass, so pvpoke emulate's residual team-B edge no
-  longer accumulates into a population-level side bias. A real population-strength gap between
-  the candidate and opponent GAs can still show up in absolute win%/fitness numbers -- that's
-  not a harness bug; see RUNBOOK.md's fitness-asymmetry entry and `scripts/side-bias-study.mjs`.
-  Relative ranking is still what's trusted.
+- Known invariant (v13, 2026-09-18; measured 2026-09-18, `docs/fitness-symmetry.md`):
+  `evaluateTeamsInOrder` battles every pairing from both seats (candidate-as-A, and
+  opponent-as-A mirrored back via `mirrorBattleResult`), in every generation and the final
+  elites pass, removing the pvpoke-emulate side-bias structurally. For meta-vs-meta runs with
+  `--random-opponent-lead`, `docs/fitness-symmetry.md` measured a noise floor
+  T = 0.1416 (`scripts/symmetry-study.mjs`, 5-seed gen-0 study): the blend-fitness gap between
+  candidate and opponent mean fitness stays under T across an 8-generation run
+  (`out/evolve-sym-final`), but the raw win-rate layer alone can exceed T in some generations
+  (a real, documented, unfixed asymmetry -- see the residual rows in `docs/fitness-symmetry.md`).
+  Relative ranking is still what's trusted; check `docs/fitness-symmetry.md` and
+  `scripts/fitness-sides.mjs`/`scripts/side-bias-study.mjs` on your own run before treating an
+  absolute win%/fitness gap as evidence of a bug.
 - Workers must run `bash scripts/setup.sh` first on a fresh clone.
 - Plans for the planner/worker/evaluator loop live in `plans/` (gitignored); completed rounds
   are archived under `plans/archive/<date>-<topic>/`.

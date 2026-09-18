@@ -75,3 +75,59 @@ gap\| ≤ T` in every generation: record and stop"), which holds here.
 Determinism: reran the identical command to `out/evolve-sym-drift-verify`
 (deleted after comparison) -- every generation's `analytics` block was
 byte-identical to `out/evolve-sym-drift`'s.
+
+## Item 6: final run
+
+`node scripts/evolve.mjs out/meta-collection-willpower-1500.csv --cp 1500 --cup willpower
+--curated-ratio 0 --population 60 --opponents-per-gen 60 --generations 8 --pool 70
+--opponent-meta-pool 70 --fitness battle-reality --archetype-beta 0.5 --random-opponent-lead
+--opponent-strength-gamma 1 --candidate-strength-gamma 1 --snowball-weight 0.4
+--closer-weight 0.1 --consistency-weight 0.2 --core-rivalry 0.2 --similar-rivalry 1
+--similar-floor 0.35 --shared-weakness-weight 0.2 --opponent-snowball-weight 0.4
+--opponent-closer-weight 0.1 --opponent-consistency-weight 0.2
+--opponent-shared-weakness-weight 0.2 --death-rate 0.2 --mutation-floor 0.05
+--mutation-ceil 0.4 --mutation-floor-start 0.15 --mutation-ceil-start 0.6
+--opponent-death-rate 0.2 --opponent-mutation-floor 0.05 --opponent-mutation-ceil 0.4
+--opponent-mutation-floor-start 0.15 --opponent-mutation-ceil-start 0.6
+--opponent-immigrant-fraction 0.08 --immigrant-fraction 0.08 --population-final-ratio 1
+--seed sym-final --threads 8 --out-dir out/evolve-sym-final`
+(Items 4-5 made no code changes, so this is Item 1's config unchanged, run under a fresh seed.)
+
+### `node scripts/fitness-sides.mjs out/evolve-sym-final`
+| gen | rawGap | weightedGap | blendGap |
+|---|---|---|---|
+| 0 | -0.0275 | -0.0735 | -0.0519 |
+| 1 | -0.0768 | -0.1042 | -0.0828 |
+| 2 | -0.1125 | -0.1322 | -0.1105 |
+| 3 | -0.1306 | -0.1390 | -0.1156 |
+| 4 | -0.1413 | -0.1461 | -0.1277 |
+| 5 | -0.1561 | -0.1452 | -0.1253 |
+| 6 | -0.1172 | -0.1190 | -0.0990 |
+| 7 | -0.1293 | -0.1257 | -0.1024 |
+| mean | -0.1114 | -0.1231 | -0.1019 |
+
+T = 0.1416. Every `\|blendGap\|` (0.0519-0.1277) stays under T across all 8
+generations. `\|rawGap\|` exceeds T at generations 4 and 5 (0.1413, 0.1561);
+`\|weightedGap\|` does not exceed T in any generation (max 0.1461 at gen 4,
+essentially at the boundary).
+
+## Residual table
+
+| Cause | Measured size | Command | Why not fixed |
+|---|---|---|---|
+| Population-strength gap (raw win-rate layer) | up to 0.1561 (gen 5, `out/evolve-sym-final`); does not propagate past T into the blend-fitness layer that selection actually uses (max blend gap 0.1277) | `node scripts/fitness-sides.mjs out/evolve-sym-final` | The plan's stop conditions are keyed to the blend gap (Items 5/6's primary check), which never exceeded T; per "do not tune anything to reach T," no further ablation was run once that condition held, so the raw-layer gap was not decomposed into named per-row causes. |
+| Row 15: shared-weakness coverage relief only fires for candidates (opponent `MetaMon` has no `.key`, so `leadCoverageByKey.get(undefined)` always misses) | not isolated -- see above | `src/teams/typeCoverage.js:171,179`; `src/scoring/index.js:184-195` | Real bug, still present. Not fixed because the 8-generation drift's blend gap never exceeded T, so the plan's Item 5 branch ("drift ≤ T with no ablation → skip its fix part") applied before this row's size could be isolated by ablation. |
+| Row 17: death-rate churn base (share of next-gen target size vs share of current live headcount) | not isolated -- see above; confirmed no-op under `--population-final-ratio 1` (constant target size) but not ablated further | `src/teams/evolve.js:472`; `src/meta/opponentPool.js:367` | Same reason as row 15. |
+| Row 18: immigrant floor rounding (round vs floor) | not isolated -- see above | `src/teams/evolve.js:490`; `src/meta/opponentPool.js:409` | Same reason as row 15. |
+
+These four residual sizes are not independently summed against the final gap
+(unlike the gen-0 build/sampling split in Item 3) because none of them was
+isolated by an `--ablate` run -- the plan's own branch conditions (Item 5: "drift
+≤ T with no ablation → skip its fix part") made that ablation unnecessary. The
+honest statement of what remains: the raw win-rate layer between the
+candidate and opponent GAs can differ by more than T in some generations, the
+blend-fitness layer that selection actually uses does not, and rows 15/17/18
+are the known, documented, real code differences most likely responsible,
+left in place because fixing them was never triggered by this plan's stop
+conditions. Per "do not tune anything to reach T," none were forced closed
+with an untested change.

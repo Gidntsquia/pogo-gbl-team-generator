@@ -86,10 +86,10 @@ as-A, and opponent-as-A with the result mirrored back through
 per-battle team-A/B offset averages out of the population-level fitness
 numbers instead of accumulating into one. This is a harness fix, not an
 engine change -- the underlying per-battle 5-4 mirror-match split above is
-untouched (and untouchable; vendor battle math). See RUNBOOK.md "Fixed
-2026-09-18: candidates used to read ~5-8pts low on fitness (side bias); every
-pairing now battles both directions" for the measured before/after and the
-population-strength gap this fix does not address.
+untouched (and untouchable; vendor battle math). See RUNBOOK.md's
+meta-vs-meta fitness-symmetry section and `docs/fitness-symmetry.md` for the
+measured before/after, the noise floor T, and the population-strength gap
+this fix does not address.
 
 **Instance rules.** As with `simBattle`, `teamA` and `teamB` must be distinct
 Pokemon instances from each other (pvpoke mutates `.index`/battle state on the

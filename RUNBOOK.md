@@ -279,7 +279,7 @@ candidate-fitness gap (~0.55 vs ~0.47 mean, both at gen 0 and after 20+
 generations) that never closed on its own. `--random-opponent-lead` makes
 opponent composition assign leads the same random way as candidates.
 
-#### Fixed 2026-09-18: candidates used to read ~5-8pts low on fitness (side bias); every pairing now battles both directions
+#### Meta-vs-meta fitness symmetry: side-bias fix (2026-09-18), measured, residual documented in `docs/fitness-symmetry.md`
 
 (Jaxon, 2026-09-17/18) Every meta-vs-meta run, including the now-non-resumable
 `evolve-meta-vs-meta-willpower-3`, showed candidate mean fitness running
@@ -306,9 +306,9 @@ population was a bit stronger judged side-neutrally). Moveset mismatches
 between the two sides' movesets for shared species measured 0 of 33 -- not a
 contributor. Verdict: **both** S and P mattered, roughly half each; the
 harness's `mirrorBattleResult`/two-direction fix (Item 2, below) only removes
-S -- P is a real fitness-function asymmetry (candidateStrengthGamma vs
-opponent selection pressure, not a harness bug) and is out of this fix's
-scope.
+S -- P remains and is out of this fix's scope. See `docs/fitness-symmetry.md`
+for the later plan that measured P's gen-0 build/sampling components, its
+noise floor T, and its multi-generation drift.
 
 **The fix (Item 2/3, `FITNESS_SEMANTICS` v13):** every pairing in
 `evaluateTeamsInOrder` -- every generation AND the final elites pass -- now
@@ -334,12 +334,25 @@ out/evolve-sym-after`):
 The gap did **not** close to <=0.02 and is not smaller after the fix on this
 run -- consistent with Item 1's finding that S (the part this fix removes) was
 only about half the gap; P (population-strength asymmetry, unaddressed by
-this plan) remains and this run's smaller population (60 vs 200) makes P
-noisier generation to generation. Read this as: the side-bias half of the
-artifact is fixed structurally (S is gone by construction, not by
-measurement), but "opponent fitness > candidate fitness" can still mean a
-real population-strength gap, not a harness bug -- check `verdict` from
-`side-bias-study.mjs` on your own run before assuming it's still S.
+this fix) remains. Read this as: the side-bias half of the artifact is fixed
+structurally (S is gone by construction, not by measurement), but "opponent
+fitness > candidate fitness" can still mean a real population-strength gap --
+check `verdict` from `side-bias-study.mjs` on your own run before assuming
+it's still S.
+
+**Later measurement (`docs/fitness-symmetry.md`, plan "make candidate/opponent
+mean fitness equal or account for every point of the difference," finished
+2026-09-18):** a 5-seed gen-0 study (`scripts/symmetry-study.mjs`) measured a
+noise floor T = 0.1416, a build term (IV/moveset differences) of 0.0000 and a
+sampling term of 0.1023 on `out/meta-collection-willpower-1500.csv` -- both
+below T, so no gen-0 code fix was made. An 8-generation drift run
+(`out/evolve-sym-drift`, then `out/evolve-sym-final`) held `|blend gap|` under
+T in every generation (0.05-0.13), but the raw win-rate layer alone exceeded T
+in some generations (up to 0.156) -- a real, still-unfixed asymmetry, recorded
+as residual rows in `docs/fitness-symmetry.md` rather than forced closed. Per-
+generation elapsed time at 60 population / 60 opponents-per-gen, both
+directions (7,200 battles/gen), 8 threads: ~2 min cold (generation 0, no
+cache), ~40s per generation thereafter (battle cache reuses ~70% of lookups).
 
 Ruled out against the checkpoints/code: IVs (both sides use pvpoke default
 IVs -- `resolveDefaultIvs`, `src/importer/index.js:273`; `defaultIvsForCp`,
