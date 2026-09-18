@@ -77,10 +77,19 @@ across all 9 lead pairings of a top-meta team against itself the split is
 6 of 9 pairings (win rate inside `[2/9, 7/9]`), not a hard 50/50. A blatantly
 dominant team (3 top-meta mons vs 3 joke mons) wins **all 9** pairings.
 Across a 200x200 co-evolving population (willpower-3, 45 generations) this
-same fixed-side offset shows up at population scale: team A (candidates)
-wins ~45-47% of battles overall -- a harness side bias, not a skill gap
-between the populations. See RUNBOOK.md "Known artifact: candidates read
-~5-8pts low on fitness (side bias, not population skill)".
+same fixed-side offset used to show up at population scale: team A
+(candidates) won ~45-47% of battles overall. Fixed 2026-09-18
+(`scripts/evolve.mjs` `FITNESS_SEMANTICS` v13, plans/WORKER_NOTES.md Item 2):
+`evaluateTeamsInOrder` now battles every pairing from both seats (candidate-
+as-A, and opponent-as-A with the result mirrored back through
+`mirrorBattleResult`), in every generation and the final elites pass, so this
+per-battle team-A/B offset averages out of the population-level fitness
+numbers instead of accumulating into one. This is a harness fix, not an
+engine change -- the underlying per-battle 5-4 mirror-match split above is
+untouched (and untouchable; vendor battle math). See RUNBOOK.md "Fixed
+2026-09-18: candidates used to read ~5-8pts low on fitness (side bias); every
+pairing now battles both directions" for the measured before/after and the
+population-strength gap this fix does not address.
 
 **Instance rules.** As with `simBattle`, `teamA` and `teamB` must be distinct
 Pokemon instances from each other (pvpoke mutates `.index`/battle state on the

@@ -279,46 +279,77 @@ candidate-fitness gap (~0.55 vs ~0.47 mean, both at gen 0 and after 20+
 generations) that never closed on its own. `--random-opponent-lead` makes
 opponent composition assign leads the same random way as candidates.
 
-#### Known artifact: candidates read ~5-8pts low on fitness (side bias, not population skill)
+#### Fixed 2026-09-18: candidates used to read ~5-8pts low on fitness (side bias); every pairing now battles both directions
 
-(Jaxon, 2026-09-17) Every meta-vs-meta run, including the paused
-`evolve-meta-vs-meta-willpower-3`, shows candidate mean fitness running
+(Jaxon, 2026-09-17/18) Every meta-vs-meta run, including the now-non-resumable
+`evolve-meta-vs-meta-willpower-3`, showed candidate mean fitness running
 several points below opponent mean fitness every generation, even with
 `--random-opponent-lead` on and the symmetry rule fully satisfied.
 `node scripts/fitness-sides.mjs out/evolve-meta-vs-meta-willpower-3` prints
 the numbers: over generations 0-44, candidate fitness averages 0.476, raw
 candidate win rate (mean of `winRateBySignature`) averages 0.460, opponent
 fitness averages 0.542 -- at gen 44 alone raw win rate (0.450) plus opponent
-fitness (0.551) sum to 1.001. That sum holding near 1.00 every generation is
-the tell: the two numbers are not independent strength measurements, they
-are the same ~40,000 battles per generation read from opposite sides of one
-scoreboard -- when candidates win 45%, opponents "win" the other 55% by
-definition, and that 55% is what's stored as opponent fitness.
+fitness (0.551) sum to 1.001. That sum holding near 1.00 every generation was
+the tell: the two numbers were not independent strength measurements, they
+were the same ~40,000 battles per generation read from opposite sides of one
+scoreboard -- when candidates won 45%, opponents "won" the other 55% by
+definition, and that 55% was what got stored as opponent fitness.
 
-Cause: candidates always battle as team A, opponents always as team B
-(`scripts/evolve.mjs` lines 94-98, `src/teams/index.js` lines 17-23), and
-pvpoke emulate mode carries a residual team-B edge even in a mirror match --
-a top-meta team against itself splits 5-4 across 9 lead pairings, 55.6% for
-team B (`src/engine/README.md` "Balance / tolerance"). A 200x200 co-evolving
-population run for 45 generations turns that single-pairing bias into a
-population-scale ~5-8pt offset. This is a harness side-assignment bias, not
-a skill gap: the symmetry rule still holds (identical size and GA flags both
-sides), the offset cancels for ranking teams within one side, and it does
-not cancel in the absolute mean-fitness number.
+**Root-cause experiment (`scripts/side-bias-study.mjs`, plans/WORKER_NOTES.md
+Item 1, gen 44 of willpower-3, K=60 sampled teams/side, 7200 battles, run
+twice, byte-identical):** the ~4.3pt gap (F-0.5 = -0.0433) decomposed as
+side bias S = -0.0192 (candidate-as-A read ~1.9pts worse than opponent-as-A
+for the SAME teams -- pvpoke emulate's residual team-B edge,
+`src/engine/README.md` "Balance / tolerance") plus population gap
+P = -0.0242 (a real ~2.4pt population-strength difference: the opponent GA's
+population was a bit stronger judged side-neutrally). Moveset mismatches
+between the two sides' movesets for shared species measured 0 of 33 -- not a
+contributor. Verdict: **both** S and P mattered, roughly half each; the
+harness's `mirrorBattleResult`/two-direction fix (Item 2, below) only removes
+S -- P is a real fitness-function asymmetry (candidateStrengthGamma vs
+opponent selection pressure, not a harness bug) and is out of this fix's
+scope.
+
+**The fix (Item 2/3, `FITNESS_SEMANTICS` v13):** every pairing in
+`evaluateTeamsInOrder` -- every generation AND the final elites pass -- now
+battles both directions (candidate-as-A, and opponent-as-A with the result
+mirrored back through `mirrorBattleResult` and tallied through the identical
+accumulate code). Battles per generation is now exactly
+`2 x population x opponents-per-gen`. This removes S structurally, with no
+calibration constant and no vendor-code change. v12 checkpoints (including
+`evolve-meta-vs-meta-willpower-3`) have half the per-pairing battle count and
+a seat-biased scale; resuming them under v13 is refused (fingerprint
+mismatch), by design.
+
+**After measurement** (`out/evolve-sym-after`, a fresh 3-generation run under
+v13, pop 60 / opponents-per-gen 60, `node scripts/fitness-sides.mjs
+out/evolve-sym-after`):
+
+| | before (willpower-3, v12, gen 0-4) | after (sym-after, v13, gen 0-2) |
+|---|---|---|
+| candRawWinrateMean | 0.4659-0.4719 | 0.4359-0.4448 |
+| oppFitMean | 0.5295-0.5387 | 0.5057-0.5501 |
+| \|gap\| | ~0.063-0.068 | ~0.062-0.114 |
+
+The gap did **not** close to <=0.02 and is not smaller after the fix on this
+run -- consistent with Item 1's finding that S (the part this fix removes) was
+only about half the gap; P (population-strength asymmetry, unaddressed by
+this plan) remains and this run's smaller population (60 vs 200) makes P
+noisier generation to generation. Read this as: the side-bias half of the
+artifact is fixed structurally (S is gone by construction, not by
+measurement), but "opponent fitness > candidate fitness" can still mean a
+real population-strength gap, not a harness bug -- check `verdict` from
+`side-bias-study.mjs` on your own run before assuming it's still S.
 
 Ruled out against the checkpoints/code: IVs (both sides use pvpoke default
 IVs -- `resolveDefaultIvs`, `src/importer/index.js:273`; `defaultIvsForCp`,
 `src/scoring/index.js:175-195`); shadows (present both sides); pool size and
 GA flags (identical per the symmetry-rule table, checked in each
-checkpoint's `config`). Still open: candidates get pvpoke's recommended
-moveset (`src/scoring/index.js:148-150`) vs. opponents' explicit
-`loadMovesetPool` moveset (`scripts/evolve.mjs:3306`) -- usually equal, not
-verified species-by-species, so a residual <=1pt contribution isn't ruled
-out. Unsettled: a side-swap re-battle of the gen-44 populations, not run.
+checkpoint's `config`); moveset parity (0 of 33 mismatches, Item 1).
 
-So "opponent fitness > candidate fitness" means the opponent side won more
-battles as team B, not that the opponent population is winning an arms race.
-Check your own run: `node scripts/fitness-sides.mjs out/evolve-<name>`.
+Check your own run: `node scripts/fitness-sides.mjs out/evolve-<name>` for the
+raw numbers, `node scripts/side-bias-study.mjs out/evolve-<name> --gen N` for
+the S/P decomposition.
 
 Pass every one of these explicitly even where it matches a default, so the
 checkpoint `config` shows the symmetry rather than relying on two modules'
