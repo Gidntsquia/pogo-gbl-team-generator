@@ -7,8 +7,10 @@ import {
   computeTypePrevalence,
   computeLeadCoverageScores,
   computeSharedWeaknessScore,
+  buildTypeCoverageContext,
 } from '../src/teams/typeCoverage.js';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
+import { buildMetaMon } from '../src/scoring/index.js';
 
 // pvpoke's own typeEffectiveness values carry float noise, so the fixtures
 // use the exact numbers a built Pokemon reports rather than clean 1.6/2.56.
@@ -151,4 +153,36 @@ test('a team with no back line, or a weakness-free lead, scores 1', () => {
   assert.equal(computeSharedWeaknessScore([mon({ rock: SE })]).score, 1);
   assert.equal(computeSharedWeaknessScore([]).score, 1);
   assert.equal(computeSharedWeaknessScore([mon({}), mon({ rock: SE })]).score, 1);
+});
+
+// plans/PLAN.md Item 2's coverage-bug test: an opponent lead's build coverage
+// lookup used matrix.builtMons' per-collection-row key (`members[0].key`),
+// which opponent members never have -- so an opponent lead ALWAYS got an
+// empty coverage map (no relief) while a candidate lead with the identical
+// build got its real move-coverage relief. The fix keys the lookup by the
+// lead's exact build (species + moveset) instead, which both a candidate
+// matrix entry and an opponent's buildMetaMon() entry carry.
+test('an opponent lead and a candidate lead with the same build get the same shared-weakness score', async () => {
+  const ctx = await initEngine({ cp: 1500 });
+  const leadEntry = { speciesId: 'swampert', fastMove: 'MUD_SHOT', chargedMoves: ['HYDRO_CANNON', 'EARTHQUAKE'] };
+  const candidateLead = buildMetaMon(ctx, leadEntry); // e.g. matrix.builtMons[someKey]
+  const opponentLead = buildMetaMon(ctx, leadEntry); // opponent pool entry's members[0], no .key
+  const backs = [
+    buildMetaMon(ctx, { speciesId: 'azumarill', fastMove: 'BUBBLE', chargedMoves: ['ICE_BEAM', 'HYDRO_PUMP'] }),
+    buildMetaMon(ctx, { speciesId: 'skarmory', fastMove: 'AIR_SLASH', chargedMoves: ['SKY_ATTACK', 'FLASH_CANNON'] }),
+  ];
+
+  const rankedEntries = [
+    { speciesId: 'venusaur', fastMove: 'VINE_WHIP', chargedMoves: ['FRENZY_PLANT'] },
+  ];
+  const speciesWeights = new Map([['venusaur', 1]]);
+  const context = buildTypeCoverageContext(ctx, { candidateKey: candidateLead }, rankedEntries, speciesWeights);
+
+  const candidateScore = computeSharedWeaknessScore([candidateLead, ...backs], context);
+  const opponentScore = computeSharedWeaknessScore([opponentLead, ...backs], context);
+  assert.deepEqual(opponentScore, candidateScore);
+  // Confirm the lookup actually found the build (real coverage present, not
+  // both sides sharing the empty-map fallback for different reasons).
+  const key = [...context.leadCoverageByKey.keys()][0];
+  assert.ok(context.leadCoverageByKey.get(key).size > 0);
 });

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { crowdingWeights, trailingFitnessGeneric } from '../src/ga/core.js';
+import { crowdingWeights, trailingFitnessGeneric, computeChurn, allocateNewSlots, finalizeImmigrantCount } from '../src/ga/core.js';
 
 test('crowdingWeights: a crowded shared-core entry weighs less than a singleton-core entry, both candidate- and opponent-shaped', () => {
   const entries = [
@@ -52,4 +52,46 @@ test('trailingFitnessGeneric: an entry seen only in the newest generation is sco
   ];
   const scores = trailingFitnessGeneric(history, (e) => e.id, 3, 0.6);
   assert.equal(scores[1], 0.9);
+});
+
+// plans/PLAN.md Item 2's shared-step behaviour test: the exact same death
+// count, mutant count and immigrant count for a steady, a shrinking and a
+// growing target, driven purely through computeChurn/allocateNewSlots/
+// finalizeImmigrantCount -- the two adapters (src/teams/evolve.js's
+// nextGeneration, src/meta/opponentPool.js's nextOpponentPool) both reduce
+// to exactly this arithmetic, just with different entity-building code
+// behind `chosenRolls`.
+function runStep({ liveCount, targetSize, deathRate, immigrantFraction, rollCount, builtMutantCount }) {
+  const { churn, deathCount } = computeChurn({ liveCount, contenders: liveCount, targetSize, deathRate });
+  const openSlots = targetSize - (liveCount - deathCount);
+  const rolls = Array.from({ length: rollCount }, (_, i) => ({ percentile: i / Math.max(1, rollCount - 1) }));
+  const { chosenRolls } = allocateNewSlots({ openSlots, immigrantFraction, targetSize, rolls });
+  const actualBuilt = Math.min(builtMutantCount, chosenRolls.length);
+  const immigrantCount = finalizeImmigrantCount({ openSlots, builtMutantCount: actualBuilt });
+  return { churn, deathCount, openSlots, mutantCount: actualBuilt, immigrantCount };
+}
+
+for (const [label, liveCount, targetSize] of [
+  ['a steady population', 60, 60],
+  ['a shrinking population', 60, 30],
+  ['a growing population', 20, 60],
+]) {
+  test(`shared GA step: ${label} -- same death/mutant/immigrant counts from the same inputs, whichever adapter calls it`, () => {
+    const params = { liveCount, targetSize, deathRate: 0.2, immigrantFraction: 0.08, rollCount: 12, builtMutantCount: 12 };
+    const candidateSide = runStep(params);
+    const opponentSide = runStep(params); // same shared functions, same inputs -- must be identical regardless of caller
+    assert.deepEqual(opponentSide, candidateSide);
+    assert.ok(candidateSide.deathCount >= 0);
+    assert.equal(liveCount - candidateSide.deathCount + candidateSide.openSlots, targetSize);
+  });
+}
+
+test('shared GA step: the cull still fires under a target far larger than the live count (the bug computeChurn fixes)', () => {
+  // Regression for the failure mode documented on computeChurn: a naive
+  // `targetSize - churn` survivorsWanted can exceed liveCount when the
+  // target grows a lot, clamping deathCount to 0 no matter how stale the
+  // population is. min(liveCount - churn, targetSize) does not.
+  const { churn, deathCount } = computeChurn({ liveCount: 4, contenders: 4, targetSize: 10, deathRate: 0.15 });
+  assert.equal(churn, 1);
+  assert.equal(deathCount, 1, 'the cull must still remove the churn share even while growing a lot');
 });

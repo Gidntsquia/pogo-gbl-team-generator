@@ -925,8 +925,19 @@ function leadExchangeLoser(summary) {
  * everything else; it takes its share out of `winRate` and `snowball` rather
  * than being tacked on, since it is itself a transform of winRate data.
  */
-/** See buildRunConfig's `fitnessSemantics` comment. */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v13';
+/**
+ * See buildRunConfig's `fitnessSemantics` comment. Bumped to v14
+ * (plans/PLAN.md Item 2, fitness-symmetry loop): the candidate and opponent
+ * GAs now share src/ga/core.js's churn/slot-allocation accounting (churn
+ * based on live population, floored immigrant reserve, post-build immigrant
+ * backfill on both sides -- previously only the opponent pool had the
+ * latter two), the opponent pool gained a shadowFlip mutation type for
+ * parity with the candidate side, and the shared-weakness coverage lookup
+ * (src/teams/typeCoverage.js) now keys by build (species+moveset) instead
+ * of matrix key, so an opponent lead gets real coverage relief for the
+ * first time instead of always reading the empty-map fallback.
+ */
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v14';
 const TYPE_COVERAGE_META_SIZE = 200;
 // Closer/consistency disabled for now (weights zeroed rather than removed,
 // so they're a one-line revert away). Snowball is opt-in via

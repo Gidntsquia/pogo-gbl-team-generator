@@ -45,6 +45,7 @@ import { buildMetaMon } from '../scoring/index.js';
 import { curatedTierWeight } from './teams.js';
 import { coreRivalryFitness, opponentProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from './archetypes.js';
 import { createSimilarity } from '../engine/similarity.js';
+import { computeChurn, allocateNewSlots, finalizeImmigrantCount } from '../ga/core.js';
 import {
   baseIdOf,
   composeSampledOpponent,
@@ -90,6 +91,18 @@ export const DEFAULT_CURATED_MUTATION_RATE = 0.03;
 
 /** Of the mutations that fire, this share are lead rotations (promote a back to lead) rather than member swaps -- same split and same rationale as src/teams/evolve.js's DEFAULT_LEAD_ROTATION_RATE. */
 export const DEFAULT_OPPONENT_LEAD_ROTATION_RATE = 0.3;
+
+/**
+ * Of the mutations that fire (after the lead-rotation roll), this share
+ * become a SHADOW-FLIP instead of a member-swap -- same mutation type,
+ * same all-non-empty-combinations-equally-likely rule, as
+ * src/teams/evolve.js's DEFAULT_SHADOW_FLIP_RATE (added here for mutation-
+ * vocabulary parity, plans/PLAN.md Item 2: the opponent pool previously had
+ * no shadow-flip mutation at all, so a shadow-boosted variant of an
+ * opponent could only ever arise from a fresh sampled/immigrant draw, never
+ * from mutating an already-successful build the way a candidate can).
+ */
+export const DEFAULT_OPPONENT_SHADOW_FLIP_RATE = 0.2;
 
 /** Share of the evolvable portion always reserved for fresh immigrants, so the gene pool never closes even if nothing mutates. */
 export const DEFAULT_OPPONENT_IMMIGRANT_FRACTION = 0.08;
@@ -229,6 +242,76 @@ function buildLeadRotation(ctx, parent, usedIds, rng, maxAttempts) {
   return null;
 }
 
+/**
+ * For every base speciesId the movesetPool holds in BOTH shadow and
+ * non-shadow form, the two speciesIds paired -- the opponent-side twin
+ * lookup for the shadowFlip mutation, parallel to evolve.js's
+ * `buildShadowTwins` (which pairs matrix KEYS; the opponent pool has no
+ * matrix, so this pairs speciesIds directly out of the movesetPool that
+ * already composes every opponent).
+ */
+function buildOpponentShadowTwins(movesetPool) {
+  const bySpecies = new Map();
+  for (const entry of movesetPool) {
+    const shadow = entry.speciesId.endsWith('_shadow');
+    const base = baseIdOf(entry.speciesId);
+    const group = bySpecies.get(base) ?? { shadow: null, plain: null };
+    group[shadow ? 'shadow' : 'plain'] ??= entry.speciesId;
+    bySpecies.set(base, group);
+  }
+  const twins = new Map();
+  for (const { shadow, plain } of bySpecies.values()) {
+    if (shadow && plain) {
+      twins.set(shadow, plain);
+      twins.set(plain, shadow);
+    }
+  }
+  return twins;
+}
+
+/**
+ * Build one shadow-flip mutant of `parent`: among slots whose species has an
+ * opposite-shadow twin in the pool (`shadowTwins`), pick a uniform-random
+ * non-empty subset (every combination equally likely, same rule as
+ * evolve.js's `buildShadowFlip`) and rebuild each chosen member at its twin
+ * speciesId with the SAME moveset (only the shadow state changes). Returns
+ * `null` if no member is flippable, a rebuild throws (rare gamemaster edge
+ * case), or every attempted combination collides with a used id.
+ */
+function buildOpponentShadowFlip(ctx, parent, shadowTwins, usedIds, rng, maxAttempts) {
+  const flippable = [];
+  parent.members.forEach((m, slot) => {
+    if (shadowTwins.has(m.speciesId)) flippable.push(slot);
+  });
+  if (flippable.length === 0) return null;
+  const combos = 2 ** flippable.length - 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const mask = 1 + (Math.floor(rng() * combos) % combos); // 1..combos, never the empty set
+    const flippedSlots = flippable.filter((_, bit) => mask & (1 << bit));
+    const members = parent.members.slice();
+    let ok = true;
+    for (const slot of flippedSlots) {
+      const twinSpeciesId = shadowTwins.get(parent.members[slot].speciesId);
+      try {
+        members[slot] = buildMetaMon(ctx, {
+          speciesId: twinSpeciesId,
+          fastMove: parent.members[slot].fastMove,
+          chargedMoves: parent.members[slot].chargedMoves,
+        });
+      } catch {
+        ok = false;
+        break; // rare gamemaster edge case -- retry a different combination
+      }
+    }
+    if (!ok) continue;
+    const { id, name } = describeSampledTeam(ctx, members);
+    if (usedIds.has(id)) continue;
+    usedIds.add(id);
+    return { id, name, members, leadIndex: 0, parentId: parent.id, flippedSlots };
+  }
+  return null;
+}
+
 /** A mutant's origin: curated parents produce a distinctly-labeled lineage so the report can tell "a real team, tweaked" from "a composed team, tweaked". */
 function mutantOrigin(parent) {
   return parent.origin === 'curated' || parent.origin === 'curated-mutant' ? 'curated-mutant' : 'mutant';
@@ -258,7 +341,7 @@ function mutantOrigin(parent) {
  *   seed?: number|string,
  *   opts?: {
  *     deathRate?: number, mutationFloor?: number, mutationCeil?: number,
- *     curatedMutationRate?: number, leadRotationRate?: number,
+ *     curatedMutationRate?: number, leadRotationRate?: number, shadowFlipRate?: number,
  *     immigrantFraction?: number, coreRivalry?: number, similarRivalry?: number,
  *     similarFloor?: number, similarity?: (a: object, b: object) => number,
  *   },
@@ -299,6 +382,7 @@ export function nextOpponentPool(ctx, params) {
   const mutationCeil = opts.mutationCeil ?? DEFAULT_OPPONENT_MUTATION_CEIL;
   const curatedMutationRate = opts.curatedMutationRate ?? DEFAULT_CURATED_MUTATION_RATE;
   const leadRotationRate = opts.leadRotationRate ?? DEFAULT_OPPONENT_LEAD_ROTATION_RATE;
+  const shadowFlipRate = opts.shadowFlipRate ?? DEFAULT_OPPONENT_SHADOW_FLIP_RATE;
   const immigrantFraction = opts.immigrantFraction ?? DEFAULT_OPPONENT_IMMIGRANT_FRACTION;
   const coreRivalry = opts.coreRivalry ?? DEFAULT_CORE_RIVALRY;
   const similarRivalry = opts.similarRivalry ?? DEFAULT_SIMILAR_RIVALRY;
@@ -306,6 +390,7 @@ export function nextOpponentPool(ctx, params) {
 
   const rng = rngFromSeed(seed, 'nextOpponentPool');
   const movesetPool = params.movesetPool ?? loadMovesetPool(ctx, { metaPoolSize });
+  const shadowTwins = buildOpponentShadowTwins(movesetPool);
 
   // ---- (1) curated: never culled, topped up to the ratio ------------------
   const curatedKept = pool.filter(isProtectedOpponent);
@@ -337,8 +422,11 @@ export function nextOpponentPool(ctx, params) {
   // switch-in, so unlike the candidate side's sorted backs this must never
   // treat two entries the pool itself distinguishes as one). An exact
   // duplicate draw dies outright, only the fitter copy living; a shadow
-  // variant of a better entry pays the heavy twin load instead. There is no
-  // opponent-side shadowFlip mutation, so both only arise from chance draws.
+  // variant of a better entry pays the heavy twin load instead. An exact
+  // duplicate can arise from a chance draw or from a shadowFlip mutation
+  // that happens to land on a build already in the pool (see
+  // buildOpponentShadowFlip); a shadow variant of a better entry can arise
+  // either way too.
   const similarity = coreRivalry > 0 && similarRivalry > 0 ? opts.similarity ?? createSimilarity() : null;
   const { shared, rivalsAbove, twinLosers } = coreRivalryFitness(
     evolvableIdx.map((i) => opponentProfiles(pool[i])),
@@ -353,20 +441,18 @@ export function nextOpponentPool(ctx, params) {
   const rivalsOf = new Map(evolvableIdx.map((i, k) => [i, rivalsAbove[k]]));
   const rankedWorstFirst = contenderIdx.slice().sort((a, b) => rankFitness.get(a) - rankFitness.get(b) || a - b);
   const evolvableTarget = Math.max(0, targetSize - curatedOut.length);
-  // The churn is a share of who is ALIVE NOW (every evolvable entry, twins
-  // included), not of the target -- the opponent pool grows over a run
-  // (scripts/evolve.mjs trades candidate slots for opponent slots), and
-  // taking the share of the target would make `survivorsKept` exceed the
-  // live population and clamp the cull to zero in every growing generation,
-  // i.e. never. On top of that, a target smaller than the survivors trims
-  // the extra: `deathCount` is whichever of the two pressures binds.
-  // Twin-rivalry deaths add to the total death toll ON TOP of this cull --
-  // the cull is the same headcount it would be with no twins, taken off the
-  // worst contenders, same as the candidate side -- so a twin loser never
-  // shields the bottom of the ranking.
-  const churn = Math.round(deathRate * evolvableIdx.length);
-  const survivorsKept = Math.max(0, Math.min(evolvableIdx.length - churn, evolvableTarget));
-  const deathCount = Math.max(0, Math.min(rankedWorstFirst.length, evolvableIdx.length - survivorsKept));
+  // Shared churn/cull accounting (src/ga/core.js computeChurn -- churn is a
+  // share of who is ALIVE NOW, `evolvableIdx.length`, not of the target;
+  // see that function's doc). Twin-rivalry deaths add to the total death
+  // toll ON TOP of this cull -- the cull is the same headcount it would be
+  // with no twins, taken off the worst contenders, same as the candidate
+  // side -- so a twin loser never shields the bottom of the ranking.
+  const { deathCount } = computeChurn({
+    liveCount: evolvableIdx.length,
+    contenders: rankedWorstFirst.length,
+    targetSize: evolvableTarget,
+    deathRate,
+  });
   const died = [...duplicateDied, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
   const survivorIdxAsc = rankedWorstFirst.slice(deathCount); // worst-to-best among survivors
   const rawCut = new Set(contenderIdx.slice().sort((a, b) => fitness[a] - fitness[b] || a - b).slice(deathCount));
@@ -384,21 +470,31 @@ export function nextOpponentPool(ctx, params) {
 
   // ---- (3) mutation: evolvable survivors ramp with fitness percentile,
   //          curated parents roll a flat (much lower) rate ------------------
+  // Type roll matches evolve.js's rollMutations: leadRotationRate share are
+  // lead rotations, the next shadowFlipRate share are shadow flips, the rest
+  // member swaps -- one typeRoll per success, same as before shadowFlip
+  // existed here (it only splits the existing memberSwap share, doesn't add
+  // an extra rng() draw).
+  const rollType = () => {
+    const typeRoll = rng();
+    return typeRoll < leadRotationRate ? 'leadRotation' : typeRoll < leadRotationRate + shadowFlipRate ? 'shadowFlip' : 'memberSwap';
+  };
   const rolls = [];
   const n = survivorIdxAsc.length;
   survivorIdxAsc.forEach((idx, rank) => {
     const percentile = n <= 1 ? 1 : rank / (n - 1);
     const chance = mutationFloor + (mutationCeil - mutationFloor) * percentile;
-    if (rng() < chance) rolls.push({ parent: pool[idx], percentile, type: rng() < leadRotationRate ? 'leadRotation' : 'memberSwap' });
+    if (rng() < chance) rolls.push({ parent: pool[idx], percentile, type: rollType() });
   });
   for (const parent of curatedOut) {
     if (rng() < curatedMutationRate) {
-      rolls.push({ parent, percentile: 0, type: rng() < leadRotationRate ? 'leadRotation' : 'memberSwap' });
+      rolls.push({ parent, percentile: 0, type: rollType() });
     }
   }
 
-  // Immigrants get a reserved share of the open slots so fresh blood keeps
-  // arriving whatever else happens; mutants take the rest. `Math.floor`, not
+  // Shared slot allocation (src/ga/core.js allocateNewSlots): immigrants get
+  // a reserved share of the open slots so fresh blood keeps arriving
+  // whatever else happens; mutants take the rest. `Math.floor`, not
   // `Math.round`, because at this pool's scale rounding the reserve UP is what
   // starves mutation outright: a default run's evolvable half is ~7 entries,
   // the 15% cull opens exactly 1 seat, and a rounded 8% reserve claims it --
@@ -406,28 +502,30 @@ export function nextOpponentPool(ctx, params) {
   // does fire with no seat left for it, it borrows one from the reserve:
   // immigrants are the fallback filler at step (4) and refill whatever the
   // mutants don't use, so the reserve only ever needs to bind the other way.
-  const immigrantFloor = Math.min(openSlots, Math.floor(immigrantFraction * evolvableTarget));
-  let mutantSlots = Math.max(0, openSlots - immigrantFloor);
-  if (mutantSlots === 0 && openSlots > 0 && rolls.length > 0) mutantSlots = 1;
-  const chosenRolls =
-    rolls.length > mutantSlots
-      ? rolls.slice().sort((a, b) => b.percentile - a.percentile).slice(0, mutantSlots)
-      : rolls;
+  const { chosenRolls } = allocateNewSlots({ openSlots, immigrantFraction, targetSize: evolvableTarget, rolls });
 
   const maxAttempts = Math.max(chosenRolls.length, 1) * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
   const mutants = [];
   for (const { parent, type } of chosenRolls) {
-    const built =
-      type === 'leadRotation'
-        ? buildLeadRotation(ctx, parent, usedIds, rng, maxAttempts)
-        : buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAttempts);
+    let built;
+    if (type === 'leadRotation') {
+      built = buildLeadRotation(ctx, parent, usedIds, rng, maxAttempts);
+    } else if (type === 'shadowFlip') {
+      built = buildOpponentShadowFlip(ctx, parent, shadowTwins, usedIds, rng, maxAttempts);
+      // No flippable member (or every combination already taken): fall
+      // through to a member-swap so the parent's roll still yields a
+      // mutant, same rule as evolve.js's buildShadowFlip fallback.
+      if (!built) built = buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAttempts);
+    } else {
+      built = buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAttempts);
+    }
     if (!built) continue; // bounded retries exhausted -- graceful shortfall
     const origin = mutantOrigin(parent);
     mutants.push({ ...built, origin, label: origin });
   }
 
   // ---- (4) immigrants fill whatever is left --------------------------------
-  const immigrantTarget = Math.max(0, openSlots - mutants.length);
+  const immigrantTarget = finalizeImmigrantCount({ openSlots, builtMutantCount: mutants.length });
   const immigrants = [];
   const immigrantAttempts = immigrantTarget * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
   let attempts = 0;

@@ -16,6 +16,116 @@
 
 import { archetypeGroups, archetypeWeights } from '../meta/archetypes.js';
 
+// Bounded retries when a mutant/immigrant collides with an already-used
+// identity -- one constant shared by both sides instead of two copies.
+export const MAX_ATTEMPTS_MULTIPLIER = 20;
+export const MAX_ATTEMPTS_FLOOR = 50;
+
+/**
+ * Shared churn/cull accounting (plans/PLAN.md Item 2/3): how many of the
+ * current LIVE population die this generation, how many survive, and how
+ * many slots in the NEXT generation are open for mutants/immigrants.
+ *
+ * `deathRate` always means "fraction of what's alive now" -- `churn` is
+ * based on `liveCount`, never on `targetSize`. `survivorsWanted` is
+ * `min(liveCount - churn, targetSize)`: at least `churn` always die (this is
+ * what makes the cull fire even while the population is growing hard --
+ * `targetSize` alone can't cap `survivorsWanted` below `liveCount - churn`),
+ * and no more survive than `targetSize` allows (a deep shrink trims further,
+ * on top of the ordinary churn death).
+ *
+ * This is the opponent pool's pre-existing formula (its population only
+ * ever grows, so this was always exercised correctly there); the candidate
+ * side previously computed `survivorsWanted` as `targetSize - churn`
+ * directly, which is what a HOLD-STEADY or a mild-shrink generation reduces
+ * to as well (`churn` slots stay open regardless of direction) but breaks
+ * under a large target increase: `targetSize - churn` can exceed
+ * `liveCount`, giving a negative `liveCount - survivorsWanted` that clamps
+ * `deathCount` to 0 -- no one dies no matter how stale the population is,
+ * simply because the target grew a lot. `min(liveCount - churn, targetSize)`
+ * has no such failure mode (verified against
+ * test/opponentPool.test.js's "the cull still fires while the pool is
+ * growing" case, which a `targetSize - churn` version fails: churn=1 on a
+ * live count of 4 growing to a target of 10 zeroes deathCount out).
+ * The one real behavior change from this unification is on a DEEP shrink
+ * (`targetSize < liveCount - churn`): previously the candidate side still
+ * reserved `churn` slots of new blood even then; under the shared rule it
+ * does not (`survivorsWanted` clamps to `targetSize`, `openSlots` is 0)
+ * unless `targetSize` already leaves room. Inert under BASE
+ * (`--population-final-ratio 1` never shrinks the candidate side, and a
+ * fixed `--opponents-per-gen` never shrinks the opponent side either).
+ *
+ * @param {{liveCount: number, contenders: number, targetSize: number, deathRate: number}} params
+ *   `contenders` is `liveCount` minus any duplicate/twin-cull losses already
+ *   removed before ranking (both sides fold twin losses into `died`
+ *   separately, on top of this cull); those losses are never survivors, so
+ *   the caller's own survivor count is `contenders - deathCount` and its
+ *   `openSlots` is `targetSize - (contenders - deathCount)`.
+ * @returns {{churn: number, survivorsWanted: number, deathCount: number}}
+ */
+export function computeChurn({ liveCount, contenders, targetSize, deathRate }) {
+  const churn = Math.min(liveCount, Math.round(deathRate * liveCount));
+  const survivorsWanted = Math.max(0, Math.min(liveCount - churn, targetSize));
+  const deathCount = Math.max(0, Math.min(contenders, liveCount - survivorsWanted));
+  return { churn, survivorsWanted, deathCount };
+}
+
+/**
+ * Shared new-slot allocation (plans/PLAN.md Item 2/3): given `openSlots` in
+ * the next generation and a list of successful mutation rolls (each
+ * `{percentile}`, highest-fitness-parent rolls win when oversubscribed),
+ * decide how many slots are reserved for immigrants vs offered to mutation,
+ * then (after the caller actually attempts to BUILD the chosen mutants,
+ * since a bounded-retry build can fail) how many immigrants are needed to
+ * fill whatever is still open.
+ *
+ * `Math.floor` on the immigrant reserve (not `Math.round`) on BOTH sides --
+ * previously only the opponent pool floored (documented reason: rounding UP
+ * at its small evolvable scale, ~7 entries, could claim every open seat and
+ * starve mutation outright); the candidate side rounded. Flooring never
+ * over-claims the budget at any scale, so it is the one rule that is safe
+ * for both a small pool and a large one -- the candidate side loses at most
+ * one slot's worth of immigrant reservation from this (e.g. `floor(0.08*60)
+ * = 4` vs the old `round(0.08*60) = 5`).
+ *
+ * The BORROW-ONE-SEAT rule (if flooring leaves zero mutant seats but a roll
+ * fired and slots are open, take one seat from the immigrant reserve) was
+ * previously opponent-only; both sides now apply it, since it is the same
+ * "don't let a rounding artifact silently discard a real roll" fix on
+ * either side.
+ *
+ * Immigrant count is computed AFTER mutant building (`builtMutantCount`,
+ * passed in by the caller once it knows how many of `chosenRolls` actually
+ * produced a team) rather than from the roll count alone -- previously only
+ * the opponent pool backfilled a failed mutant build with an extra
+ * immigrant; the candidate side left the slot empty. Backfilling is the
+ * correct rule for both: a bounded-retry build failure is pool exhaustion,
+ * not evidence the slot shouldn't exist.
+ *
+ * @param {{openSlots: number, immigrantFraction: number, targetSize: number, rolls: Array<{percentile: number}>}} params
+ * @returns {{chosenRolls: Array<{percentile: number}>, immigrantReserve: number}}
+ *   `immigrantReserve` is the planned reserve; call {@link finalizeImmigrantCount}
+ *   once mutants are actually built to get the real immigrant draw count.
+ */
+export function allocateNewSlots({ openSlots, immigrantFraction, targetSize, rolls }) {
+  const immigrantReserve = Math.min(openSlots, Math.floor(immigrantFraction * targetSize));
+  let mutantSlots = Math.max(0, openSlots - immigrantReserve);
+  if (mutantSlots === 0 && openSlots > 0 && rolls.length > 0) mutantSlots = 1;
+  const chosenRolls =
+    rolls.length > mutantSlots
+      ? rolls.slice().sort((a, b) => b.percentile - a.percentile).slice(0, mutantSlots)
+      : rolls;
+  return { chosenRolls, immigrantReserve };
+}
+
+/**
+ * See {@link allocateNewSlots}: the immigrant draw target once the caller
+ * knows how many of `chosenRolls` actually built successfully.
+ */
+export function finalizeImmigrantCount({ openSlots, builtMutantCount }) {
+  return Math.max(0, openSlots - builtMutantCount);
+}
+
 /**
  * Archetype-pair crowding weight per entry (src/meta/archetypes.js
  * archetypeGroups/archetypeWeights), generalised over WHAT an entry is via

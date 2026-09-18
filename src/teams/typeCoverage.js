@@ -130,13 +130,27 @@ export function computeLeadCoverageScores(leadPokemon, rankedMons, speciesWeight
   return new Map([...totals].map(([type, value]) => [type, value.coveredWeight / value.weight]));
 }
 
+/**
+ * A built mon's coverage lookup key: its exact build (species + fast +
+ * charged moves), NOT the matrix's per-collection-row userMonKey. Two builds
+ * with the same moveset hit the same threats regardless of which side (or
+ * which collection row) produced them, so this is the one key both
+ * `leadCoverageByKey` and `computeSharedWeaknessScore`'s lookup use --
+ * candidate members (`matrix.builtMons[key]`) and opponent members
+ * (`buildMetaMon`'s return) are both shaped `{speciesId, fastMove,
+ * chargedMoves}`, so the same function keys both sides identically.
+ */
+export function coverageBuildKey(built) {
+  return `${built.speciesId}|${built.fastMove}|${[...(built.chargedMoves ?? [])].sort().join(',')}`;
+}
+
 /** Build the run-wide top-meta prevalence and exact-build move-coverage maps. */
 export function buildTypeCoverageContext(ctx, builtMons, rankedEntries, speciesWeights) {
   const rankedMons = rankedEntries.map((entry) => buildMetaMon(ctx, entry));
   const typeWeights = computeTypePrevalence(rankedMons, speciesWeights);
   const leadCoverageByKey = new Map();
-  for (const [key, built] of Object.entries(builtMons)) {
-    leadCoverageByKey.set(key, computeLeadCoverageScores(built.pokemon, rankedMons, speciesWeights));
+  for (const built of Object.values(builtMons)) {
+    leadCoverageByKey.set(coverageBuildKey(built), computeLeadCoverageScores(built.pokemon, rankedMons, speciesWeights));
   }
   return { metaSize: rankedMons.length, typeWeights, leadCoverageByKey };
 }
@@ -176,7 +190,7 @@ export function computeSharedWeaknessScore(members, context = {}) {
   if (leadProfile.size === 0) return empty;
   const backs = members.slice(1);
   const suppliedTypeWeights = context.typeWeights instanceof Map && context.typeWeights.size > 0;
-  const leadCoverage = context.leadCoverage ?? context.leadCoverageByKey?.get(members[0].key) ?? new Map();
+  const leadCoverage = context.leadCoverage ?? context.leadCoverageByKey?.get(coverageBuildKey(members[0])) ?? new Map();
   const sharedTypes = [];
   let load = 0;
 

@@ -45,7 +45,7 @@ import {
 } from './sample.js';
 import { coreRivalryFitness, candidateProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../meta/archetypes.js';
 import { createSimilarity } from '../engine/similarity.js';
-import { trailingFitnessGeneric } from '../ga/core.js';
+import { trailingFitnessGeneric, computeChurn, allocateNewSlots, finalizeImmigrantCount } from '../ga/core.js';
 
 const TEAM_SIZE = 3;
 const BACK_SLOTS = [1, 2];
@@ -365,18 +365,13 @@ function buildShadowFlip(parentTeam, shadowTwins, usedSignatures, rng, maxAttemp
  *     immigrantFraction?: number, alpha?: number,
  *     excludeSpecies?: string[],
  *     targetSize?: number, - size of the RETURNED population (default: the
- *       input population's length, i.e. hold steady). A smaller value shrinks
- *       the population by killing the extra individuals off the
- *       worst-performing end IN ADDITION to the normal `deathRate` churn, so
- *       a long run can concentrate its battle budget on progressively fewer,
- *       progressively better teams. Larger values are honored too, filled
- *       with mutants/immigrants, subject to the same pool-exhaustion cap --
- *       though growth only ADDS slots, it does not deepen the cull, so a
- *       target above P can leave the whole input population alive. That
- *       asymmetry is fine here because scripts/evolve.mjs's schedule only ever
- *       shrinks the candidate side; the opponent GA, which only ever grows,
- *       takes its churn off the live headcount instead (see
- *       src/meta/opponentPool.js).
+ *       input population's length, i.e. hold steady). Cull/growth accounting
+ *       is shared with the opponent GA (src/ga/core.js computeChurn): at
+ *       least `deathRate * P` always die (so the cull still fires even while
+ *       `targetSize` is growing a lot), and a smaller `targetSize` trims
+ *       survivors further, down to `targetSize` itself, off the
+ *       worst-performing end. Growth fills the extra slots with
+ *       mutants/immigrants, subject to the same pool-exhaustion cap.
  *   },
  * }} params
  * @returns {{
@@ -462,19 +457,10 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
     .filter((i) => !rivalryLoserSet.has(i))
     .sort((a, b) => rankFitness[a] - rankFitness[b] || a - b);
   const contenders = rankedWorstFirst.length;
-  // `churn` is the share of the NEXT generation that is newly created
-  // (mutants + immigrants); everything else is a survivor carried over. When
-  // `targetSize` equals P this is exactly the historical `round(deathRate*P)`
-  // death count -- the shrink path only adds the extra `P - targetSize`
-  // individuals on top, taken from the worst-performing end, so a shrinking
-  // run keeps the same PROPORTIONAL churn as a fixed-size one rather than
-  // spending its whole death budget on the shrink.
-  const churn = Math.min(targetSize, Math.round(deathRate * targetSize));
-  const survivorsWanted = Math.max(0, targetSize - churn);
-  // The deathRate cull is the same headcount it would be with no rivalries
-  // (P - survivorsWanted), taken off the worst contenders -- so rivalry losers
-  // add to the death toll rather than shielding the bottom of the ranking.
-  const deathCount = Math.max(0, Math.min(contenders, P - survivorsWanted));
+  // Shared churn/cull accounting (src/ga/core.js computeChurn -- see its
+  // doc for why churn is based on the LIVE count P, not targetSize, and why
+  // that is a no-op here whenever a run holds population steady).
+  const { deathCount } = computeChurn({ liveCount: P, contenders, targetSize, deathRate });
   const died = [...twinLosers, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
   const survivorIndicesAsc = rankedWorstFirst.slice(deathCount); // still worst-to-best among survivors
   // Deaths the core rivalry caused: culled here, but inside the raw-fitness
@@ -487,24 +473,17 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const mutationSuccesses = rollMutations(survivorIndicesAsc, rankFitness, mutationFloor, mutationCeil, leadRotationRate, shadowFlipRate, rng);
 
   const deadSlots = Math.max(0, targetSize - survivorIndicesAsc.length);
-  const immigrantFloor = Math.min(deadSlots, Math.round(immigrantFraction * targetSize));
-  const mutantSlotsAvailable = Math.max(deadSlots - immigrantFloor, 0);
-
-  let chosenMutants;
-  let immigrantCount;
-  if (mutationSuccesses.length > mutantSlotsAvailable) {
-    // Oversubscription: keep the highest-percentile parents' rolls.
-    chosenMutants = mutationSuccesses
-      .slice()
-      .sort((a, b) => b.percentile - a.percentile || a.idx - b.idx)
-      .slice(0, mutantSlotsAvailable);
-    immigrantCount = immigrantFloor;
-  } else {
-    // Undersubscription (or exact fit): every successful roll gets a slot,
-    // and the immigrant share grows to fill whatever's left over.
-    chosenMutants = mutationSuccesses;
-    immigrantCount = deadSlots - chosenMutants.length;
-  }
+  // Shared slot allocation (src/ga/core.js allocateNewSlots/
+  // finalizeImmigrantCount) -- floors the immigrant reserve and backfills a
+  // failed mutant build with an extra immigrant, both previously opponent-
+  // pool-only rules; see that function's doc for why they're safe on both
+  // sides.
+  const { chosenRolls: chosenMutants } = allocateNewSlots({
+    openSlots: deadSlots,
+    immigrantFraction,
+    targetSize,
+    rolls: mutationSuccesses,
+  });
 
   const survivorsOut = survivorIndicesAsc
     .slice()
@@ -541,6 +520,11 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
       mutantEntries.push({ team: built.team, parentIndex: idx, mutationType: 'memberSwap', swappedSlot: built.swappedSlot });
     }
   }
+
+  // Post-build backfill (src/ga/core.js finalizeImmigrantCount): a chosen
+  // roll that failed every bounded retry (pool exhaustion, not a deliberate
+  // "don't fill this slot") still gets its seat filled by an immigrant.
+  const immigrantCount = finalizeImmigrantCount({ openSlots: deadSlots, builtMutantCount: mutantEntries.length });
 
   // Immigrants: fresh sampleCandidateTeams draw, over-requested so post-dedupe
   // filtering still has a shot at hitting the target count, seeded from this
