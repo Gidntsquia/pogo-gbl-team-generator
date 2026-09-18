@@ -31,6 +31,7 @@ import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { runBattles } from '../src/engine/parallel.js';
 import { loadCommunityTeams } from '../src/meta/teams.js';
 import { hasConverged, DEFAULT_CONVERGENCE_TRAILING, DEFAULT_CONVERGENCE_WINDOW } from '../src/teams/evolve.js';
+import { mirrorBattleResult } from '../scripts/evolve.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
@@ -332,6 +333,25 @@ describe('battleTeams: the 3v3 driver', () => {
     assert.equal(sA.winner, sB.winner);
     assert.deepEqual(sA.survivorsHp, sB.survivorsHp);
     assert.equal(sA.summary.seed, 42);
+  });
+
+  // plans/WORKER_NOTES.md Item 5: mirrorBattleResult on a REAL battleTeams
+  // result, so the unpaired-key guard sees the real summary shape (not a
+  // hand-built stub that could drift from what battleTeams actually returns).
+  test('mirrorBattleResult relabels a reversed-seat battle back to "candidate is A"', () => {
+    // STRONG always wins as team A vs WEAK (see the 9/9 test above), so
+    // fighting it reversed (WEAK as team A, STRONG as team B) and mirroring
+    // the result back should read as an "a" win again.
+    const reversed = battleTeams(ctx, { teamA: team(WEAK_IDS), teamB: team(STRONG_IDS), leadA: 0, leadB: 0 });
+    assert.equal(reversed.winner, 'b', 'sanity: STRONG (team B here) actually won');
+    const mirrored = mirrorBattleResult(reversed);
+    assert.equal(mirrored.winner, 'a');
+    assert.equal(mirrored.survivorsHp.a, reversed.survivorsHp.b);
+    assert.equal(mirrored.survivorsHp.b, reversed.survivorsHp.a);
+    assert.deepEqual(mirrored.survivorsHp.aPerMon, reversed.survivorsHp.bPerMon);
+    assert.deepEqual(mirrored.survivorsHp.bPerMon, reversed.survivorsHp.aPerMon);
+    assert.equal(mirrored.summary.leadFaintTurnA, reversed.summary.leadFaintTurnB);
+    assert.equal(mirrored.summary.leadFaintTurnB, reversed.summary.leadFaintTurnA);
   });
 });
 

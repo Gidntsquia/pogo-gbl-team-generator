@@ -43,6 +43,8 @@ import {
   computeConsistencyScore,
   computeCandidateWeights,
   runEvolution,
+  mirrorBattleResult,
+  evaluateTeamsInOrder,
 } from '../scripts/evolve.mjs';
 
 /** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
@@ -1008,4 +1010,124 @@ test('assertCollectionMatchesCheckpoint: passes on an identical collection, name
     () => assertCollectionMatchesCheckpoint({ ...same, checkpointHash: undefined, builtMons: shifted }),
     /1 candidate key\(s\).*furret#21/
   );
+});
+
+// ---------------------------------------------------------------------------
+// plans/WORKER_NOTES.md Item 2/5: mirrorBattleResult + the two-direction
+// tally inside evaluateTeamsInOrder (the fitness-symmetry fix).
+// ---------------------------------------------------------------------------
+
+test('mirrorBattleResult: winner flips a<->b, tie stays, survivorsHp and every A/B summary field swap, mirror(mirror(r)) is identity, unpaired key throws', () => {
+  const sample = {
+    winner: 'a',
+    survivorsHp: { a: 120, b: 40, aPerMon: [50, 40, 30], bPerMon: [10, 20, 10] },
+    summary: {
+      remainingA: 2, remainingB: 1, turns: 30, duration: 12000,
+      leadA: 0, leadB: 1, difficulty: 3, seed: 42,
+      reactionTimeMs: 500, throwAndGoMoves: true, bankShields: true,
+      throwAndGoSwitchesA: 1, throwAndGoSwitchesB: 0,
+      shieldsDeclinedA: 0, shieldsDeclinedB: 2,
+      switchTurnCost: true,
+      costlySwitchesA: 1, costlySwitchesB: 0,
+      freeSwitchesA: 0, freeSwitchesB: 1,
+      endedBy: 'ko',
+      leadFaintTurnA: 3, leadFaintTurnB: 5,
+      shieldsRemainingA: 1, shieldsRemainingB: 0,
+    },
+  };
+  const m = mirrorBattleResult(sample);
+  assert.equal(m.winner, 'b');
+  assert.deepEqual(m.survivorsHp, { a: 40, b: 120, aPerMon: [10, 20, 10], bPerMon: [50, 40, 30] });
+  assert.equal(m.summary.remainingA, 1);
+  assert.equal(m.summary.remainingB, 2);
+  assert.equal(m.summary.leadA, 1);
+  assert.equal(m.summary.leadB, 0);
+  assert.equal(m.summary.leadFaintTurnA, 5);
+  assert.equal(m.summary.leadFaintTurnB, 3);
+  assert.equal(m.summary.shieldsDeclinedA, 2);
+  assert.equal(m.summary.shieldsDeclinedB, 0);
+  // Battle-wide (non-suffixed) fields are copied unchanged.
+  assert.equal(m.summary.turns, 30);
+  assert.equal(m.summary.endedBy, 'ko');
+  assert.equal(m.summary.difficulty, 3);
+
+  assert.deepEqual(mirrorBattleResult(m), sample, 'mirror is its own inverse');
+
+  assert.equal(mirrorBattleResult({ ...sample, winner: 'tie' }).winner, 'tie');
+
+  const unpaired = { winner: 'a', survivorsHp: sample.survivorsHp, summary: { ...sample.summary, oddFieldA: 1 } };
+  assert.throws(() => mirrorBattleResult(unpaired), /no "oddFieldB" partner/);
+});
+
+/** Stub threaded executor for evaluateTeamsInOrder: no real battles, `pickWinner(spec)` decides each result's winner. */
+function stubExecutor(pickWinner) {
+  return {
+    async run(specs) {
+      return specs.map((s) => {
+        const winner = pickWinner(s);
+        return {
+          ok: true,
+          value: {
+            winner,
+            survivorsHp: {
+              a: winner === 'a' ? 100 : 0,
+              b: winner === 'b' ? 100 : 0,
+              aPerMon: [100, 0, 0],
+              bPerMon: [0, 0, 0],
+            },
+            summary: { leadFaintTurnA: null, leadFaintTurnB: null },
+          },
+        };
+      });
+    },
+  };
+}
+
+const STUB_CAND_KEY = 'cand1';
+const stubCandidateMatrix = {
+  builtMons: {
+    [STUB_CAND_KEY]: {
+      speciesId: 'candmon',
+      name: 'CandMon',
+      pokemon: {},
+      spec: { speciesId: 'candmon', ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false },
+      currentLevel: null,
+      purified: false,
+      lucky: false,
+      evolution: null,
+    },
+  },
+};
+const stubOpponent = {
+  id: 'opp1',
+  name: 'Opp1',
+  leadIndex: 0,
+  members: [{ speciesId: 'oppmon', spec: { speciesId: 'oppmon', ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false } }],
+};
+const stubPairingsFor = () => [{ leadA: 0, leadB: 0 }];
+
+test('evaluateTeamsInOrder two-direction tally: team A always wins -> every candidate winRate and opponent fitness is exactly 0.5', async () => {
+  const executor = stubExecutor(() => 'a');
+  const run = await evaluateTeamsInOrder(
+    {},
+    { teams: [[STUB_CAND_KEY]], matrix: stubCandidateMatrix, opponents: [stubOpponent], pairingsFor: stubPairingsFor, executor }
+  );
+  assert.equal(run.results[0].winRate, 0.5);
+  assert.equal(run.opponentTally[0].winRate, 0.5);
+});
+
+test('evaluateTeamsInOrder two-direction tally: candidate always wins from either seat -> candidate 1.0, opponent 0.0 (catches un-mirrored tallying)', async () => {
+  const executor = stubExecutor((s) => (s.teamA.some((m) => m.speciesId === 'candmon') ? 'a' : 'b'));
+  const run = await evaluateTeamsInOrder(
+    {},
+    { teams: [[STUB_CAND_KEY]], matrix: stubCandidateMatrix, opponents: [stubOpponent], pairingsFor: stubPairingsFor, executor }
+  );
+  assert.equal(run.results[0].winRate, 1);
+  assert.equal(run.opponentTally[0].winRate, 0);
+});
+
+test('configsMatch rejects a v12 checkpoint against the current (v13) fitnessSemantics', () => {
+  const v13 = { seed: 's', population: 200, curatedRatio: 0, fitnessSemantics: 'core-pair-archetypes-v13' };
+  const v12 = { ...v13, fitnessSemantics: 'core-pair-archetypes-v12' };
+  assert.ok(!configsMatch(v12, v13));
 });
