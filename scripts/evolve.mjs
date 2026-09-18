@@ -185,6 +185,7 @@ import { parseArgs } from 'node:util';
 
 import { importCollection } from '../src/importer/index.js';
 import { expandEvolutions } from '../src/evolution/index.js';
+import { filterEligibleMons } from '../src/util/eligibility.js';
 import { teamBuildCost } from '../src/cost/powerup.js';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
@@ -221,7 +222,7 @@ import {
   DEFAULT_CONVERGENCE_TRAILING,
   DEFAULT_CONVERGENCE_WINDOW,
 } from '../src/teams/evolve.js';
-import { leagueForCp } from '../src/util/leagues.js';
+import { resolveFormat } from '../src/util/leagues.js';
 import { loadRoleScores } from '../src/meta/roles.js';
 import { buildTypeCoverageContext, computeSharedWeaknessScore } from '../src/teams/typeCoverage.js';
 import { buildTopTeamSeries, renderChartInner } from '../src/report/raceChart.js';
@@ -233,6 +234,7 @@ const DEFAULTS = Object.freeze({
   generations: 15,
   seed: 'pogo-gbl-team-generator-evolve',
   cp: 1500,
+  cup: 'all',
   elites: 10,
   scoreMeta: 20,
   // 0.66 (Jaxon 2026-08-26, down from the 0.70 his real runs were passing).
@@ -297,6 +299,18 @@ const DEFAULTS = Object.freeze({
   // singleton that barely wins anything itself earns little and beating a
   // strong team earns the most. 0 = off (every opponent votes equally).
   opponentStrengthGamma: 1,
+  // Symmetric candidate-strength weighting of each opponent's fitness
+  // (2026-09-17, see evaluateTeamsInOrder): mirrors opponentStrengthGamma on
+  // the other side of the same ledger -- a candidate's vote toward an
+  // opponent's fitness is scaled by (that candidate's own raw win rate
+  // across the whole generation)^gamma, so an opponent that only ever beats
+  // weak candidates doesn't outscore one that had to earn its wins. Without
+  // this, opponentStrengthGamma alone discounted candidates' wins over weak
+  // opponents but gave opponents no equivalent discount for beating weak
+  // candidates, which pulled candidate fitness systematically below
+  // opponent fitness on the same battles. 0 = off (every candidate votes
+  // equally, the old behaviour).
+  candidateStrengthGamma: 1,
   // Core rivalry on both GAs (src/meta/archetypes.js coreRivalryFitness):
   // each better team sharing a two-species core costs a team this fraction
   // of the field's fitness range before the cull ranks it -- a penalty
@@ -317,6 +331,20 @@ const DEFAULTS = Object.freeze({
   // three at once. similarRivalry 0 = exact cores only.
   similarRivalry: DEFAULT_SIMILAR_RIVALRY,
   similarFloor: DEFAULT_SIMILAR_FLOOR,
+  // Opponent composition normally rotates pvpoke's own published lead-prior
+  // winner into slot 0 (composeSampledOpponent -> pickLeadIndex), while the
+  // candidate side always assigns a uniform-random lead (assignLead /
+  // buildLeadRotation) and only converges on a good one through selection.
+  // For a meta-vs-meta run -- both sides drawing from the same pool, meant to
+  // be symmetrical (see RUNBOOK's Symmetry rule) -- that gives the opponent
+  // side a lead-quality head start the candidate side never gets, which
+  // showed up as a persistent opponent-fitness-over-candidate-fitness gap
+  // from generation 0 onward (2026-09-17, Jaxon). `--random-opponent-lead`
+  // makes opponent composition assign a random lead too (roleScores omitted
+  // from every composeSampledOpponent call), matching the candidate side
+  // exactly. Off by default -- the standard recipe (real collection vs a
+  // co-evolving meta) wants the opponent side's leads realistic, not random.
+  randomOpponentLead: false,
 });
 
 const FITNESS_MODES = ['classic', 'battle-reality'];
@@ -485,6 +513,7 @@ const SPECIES_STATS_CAP = 25; // report/analytics-JSON cap on how many species r
 const TOP_CORES_CAP = 15;
 const TRAJECTORY_SPECIES_CAP = 15;
 const TOUGHEST_OPPONENTS_CAP = 15; // report/analytics-JSON cap on how many opponent rows are kept (same documented-not-silent rule as SPECIES_STATS_CAP).
+const FINAL_OPPONENT_POOL_REPORT_CAP = 20; // final-report-only cap (summarizeOpponentPool's `toughest`), separate from the smaller per-generation TOUGHEST_OPPONENTS_CAP.
 // Core-break exposure (REPORT ONLY -- never part of any score or fitness;
 // Jaxon 2026-08-27: the ranking stays pure win rate, "a hard loss and a
 // slight loss cost the same"). Groups each elite's elites-pass results by
@@ -827,7 +856,7 @@ function leadExchangeLoser(summary) {
  * than being tacked on, since it is itself a transform of winRate data.
  */
 /** See buildRunConfig's `fitnessSemantics` comment. */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v11';
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v12';
 const TYPE_COVERAGE_META_SIZE = 200;
 // Closer/consistency disabled for now (weights zeroed rather than removed,
 // so they're a one-line revert away). Snowball is opt-in via
@@ -1304,7 +1333,10 @@ export function filterBannedMovesetPool(pool, banBaseIds) {
  * invalidate an existing checkpoint.
  */
 function buildRunConfig(csvPath, opts) {
-  for (const key of ['snowballWeight', 'closerWeight', 'consistencyWeight', 'sharedWeaknessWeight']) {
+  for (const key of [
+    'snowballWeight', 'closerWeight', 'consistencyWeight', 'sharedWeaknessWeight',
+    'opponentSnowballWeight', 'opponentCloserWeight', 'opponentConsistencyWeight', 'opponentSharedWeaknessWeight',
+  ]) {
     if (opts[key] !== undefined && (!Number.isFinite(opts[key]) || opts[key] < 0)) {
       throw new Error(`evolve: opts.${key} must be a non-negative finite number`);
     }
@@ -1317,6 +1349,11 @@ function buildRunConfig(csvPath, opts) {
     pool: opts.pool ?? undefined,
     seed: String(opts.seed ?? DEFAULTS.seed),
     cp: opts.cp ?? DEFAULTS.cp,
+    // Part of the fingerprint: a resume with a different cup must start
+    // fresh rather than reuse a population bred from a different candidate/
+    // opponent pool (and rankings/format that would make the memo's cached
+    // battle outcomes meaningless for the new format).
+    cup: opts.cup ?? DEFAULTS.cup,
     curatedRatio: opts.curatedRatio ?? DEFAULTS.curatedRatio,
     excludeSpecies: [...(opts.excludeSpecies ?? [])].sort(),
     // Format-wide ban ("no Mimikyu, no Cramorant"), normalized to BASE
@@ -1350,6 +1387,11 @@ function buildRunConfig(csvPath, opts) {
     // selected/mutated under the old one.
     archetypeBeta: opts.archetypeBeta ?? DEFAULTS.archetypeBeta,
     opponentFitnessNormalised: opts.opponentFitnessNormalised ?? DEFAULTS.opponentFitnessNormalised,
+    // Changes what a composed opponent's lead IS, not just a weighting --
+    // resuming under a different value would silently regenerate every
+    // future opponent with a different lead policy than the ones already in
+    // the pool. Part of the fingerprint for the same reason as the two above.
+    randomOpponentLead: opts.randomOpponentLead ?? DEFAULTS.randomOpponentLead,
     // Fingerprint of the grouping/weighting semantics themselves (not a
     // knob): bumped 2026-09-09 when archetypeGroups moved from transitive
     // union-find to dominant-core-pair grouping and computeCandidateWeights
@@ -1381,9 +1423,14 @@ function buildRunConfig(csvPath, opts) {
     // 18x top-to-bottom range in real top-200 data, e.g. Water at 1 vs Rock
     // at 0.055) was found to swamp the other three weights and was blended
     // down via PREVALENCE_INFLUENCE so a rare attacking type still costs most
-    // of a common one's weight. Those scores are not resume-compatible.
+    // of a common one's weight. Bumped to v12 2026-09-17 when
+    // candidateStrengthGamma was added to weight each candidate's
+    // contribution to an opponent's fitness by that candidate's own raw win
+    // rate -- opponentFitness values under v11 are not comparable to v12's.
+    // Those scores are not resume-compatible.
     fitnessSemantics: FITNESS_SEMANTICS,
     opponentStrengthGamma: opts.opponentStrengthGamma ?? DEFAULTS.opponentStrengthGamma,
+    candidateStrengthGamma: opts.candidateStrengthGamma ?? DEFAULTS.candidateStrengthGamma,
     snowballWeight: opts.snowballWeight ?? DEFAULT_FITNESS_WEIGHTS.snowball,
     closerWeight: opts.closerWeight ?? DEFAULT_FITNESS_WEIGHTS.closer,
     consistencyWeight: opts.consistencyWeight ?? DEFAULT_FITNESS_WEIGHTS.consistency,
@@ -1393,6 +1440,16 @@ function buildRunConfig(csvPath, opts) {
     // Canonicalize omitted and explicit zero weights. v7 already rejects
     // older scoring semantics; changing this weight must also reject resume.
     sharedWeaknessWeight: opts.sharedWeaknessWeight ?? DEFAULT_FITNESS_WEIGHTS.sharedWeakness,
+    // Opponent-side equivalents of the four weights above (Jaxon 2026-09-17:
+    // "add opponent side versions of the candidate side flags so that we can
+    // have a symmetrical sim"). Same computeBlendFitness, same zero default
+    // (an unconfigured run's opponent fitness is unchanged plain win rate),
+    // fed the opponent's OWN ledger (see evaluateTeamsInOrder's opponentTally
+    // extension) instead of a candidate's.
+    opponentSnowballWeight: opts.opponentSnowballWeight ?? DEFAULT_FITNESS_WEIGHTS.snowball,
+    opponentCloserWeight: opts.opponentCloserWeight ?? DEFAULT_FITNESS_WEIGHTS.closer,
+    opponentConsistencyWeight: opts.opponentConsistencyWeight ?? DEFAULT_FITNESS_WEIGHTS.consistency,
+    opponentSharedWeaknessWeight: opts.opponentSharedWeaknessWeight ?? DEFAULT_FITNESS_WEIGHTS.sharedWeakness,
     // GA-rate / convergence overrides enter the fingerprint ONLY when set:
     // they change what every generation computes, but leaving them out when
     // absent keeps every pre-flag checkpoint dir resumable.
@@ -1406,6 +1463,7 @@ function buildRunConfig(csvPath, opts) {
     ...(opts.opponentMutationCeil !== undefined ? { opponentMutationCeil: opts.opponentMutationCeil } : {}),
     ...(opts.opponentMutationFloorStart !== undefined ? { opponentMutationFloorStart: opts.opponentMutationFloorStart } : {}),
     ...(opts.opponentMutationCeilStart !== undefined ? { opponentMutationCeilStart: opts.opponentMutationCeilStart } : {}),
+    ...(opts.opponentImmigrantFraction !== undefined ? { opponentImmigrantFraction: opts.opponentImmigrantFraction } : {}),
     ...(opts.immigrantFraction !== undefined ? { immigrantFraction: opts.immigrantFraction } : {}),
     // Selection smoothing window (see the header note). Only-when-set, like
     // the rates above, so every pre-2026-09-05 checkpoint dir still resumes --
@@ -1796,7 +1854,7 @@ function summarizeOpponentPool(pool, fitness) {
   return {
     size: pool.length,
     originCounts,
-    toughest: ranked.slice(0, TOUGHEST_OPPONENTS_CAP),
+    toughest: ranked.slice(0, FINAL_OPPONENT_POOL_REPORT_CAP),
   };
 }
 
@@ -1956,7 +2014,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   onLog?: (msg:string)=>void, roleScores?: Map<string, object>,
  *   cache?: object, opponentWeights?: number[], candidateWeights?: number[],
  *   opponentArchetypeGroups?: number[], opponentStrengthGamma?: number,
- *   typeCoverageContext?: object,
+ *   candidateStrengthGamma?: number, typeCoverageContext?: object,
  * }} params -- `opponentWeights[j]` (optional, parallel to `opponents`)
  *   weights opponent j's battles in each team's `winRate`; with
  *   `opponentStrengthGamma` > 0 (default 0 = off) that weight is further
@@ -1964,7 +2022,13 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
  *   call)^gamma, so a vote from an opponent that barely wins anything counts
  *   for little and a vote from a strong one counts most -- computed from the
  *   same battles in a second pass, no extra fights; raw counts
- *   (`battles`, per-opponent tallies) are never weighted. `candidateWeights[i]`
+ *   (`battles`, per-opponent tallies) are never weighted. `candidateStrengthGamma`
+ *   (default 0 = off) is the symmetric term on the OTHER side of the same
+ *   ledger: each opponent's `weightedWinPoints`/`weightedBattles` (below) is
+ *   further scaled by (that candidate's own raw win rate across every
+ *   opponent in this call)^gamma, so an opponent that only ever beats weak
+ *   candidates doesn't outscore one that beat strong ones -- same second-pass
+ *   shape as `opponentStrengthGamma`, no extra fights. `candidateWeights[i]`
  *   (optional, parallel to `teams`) weights team i's contribution to
  *   `opponentTally[j].weightedWinPoints`/`weightedBattles` (frequency-
  *   normalised opponent fitness, only ever passed from the per-generation
@@ -2005,7 +2069,9 @@ async function evaluateTeamsInOrder(ctx, params) {
     opponentWeights = null,
     candidateWeights = null,
     opponentArchetypeGroups = null,
+    candidateArchetypeGroups = null,
     opponentStrengthGamma = 0,
+    candidateStrengthGamma = 0,
     snowballWeight = 0,
     closerWeight = 0,
     consistencyWeight = 0,
@@ -2108,7 +2174,16 @@ async function evaluateTeamsInOrder(ctx, params) {
   }
 
   // ---- (3) accumulate --------------------------------------------------
-  const opponentTally = opponents.map(() => ({ winPoints: 0, battles: 0, weightedWinPoints: 0, weightedBattles: 0 }));
+  const opponentTally = opponents.map(() => ({
+    winPoints: 0, battles: 0, weightedWinPoints: 0, weightedBattles: 0, exchangeWon: 0, exchangeLost: 0,
+  }));
+  // Mirror of `perMeta` (candidate side's per-opponent record), one entry per
+  // candidate team an opponent actually fought, so consistencyScore is
+  // computable symmetrically: "how does this opponent do against its worst
+  // CANDIDATE archetype" (`candidateArchetypeGroups`, parallel to `teams`,
+  // from src/meta/archetypes.js -- same grouping machinery, run over the
+  // candidate population instead of the opponent pool).
+  const opponentPerCandidate = opponents.map(() => []);
   let cursor = 0;
   const partials = [];
   for (let idx = 0; idx < prepared.length; idx++) {
@@ -2139,6 +2214,8 @@ async function evaluateTeamsInOrder(ctx, params) {
       let oppWins = 0;
       let oppLosses = 0;
       let oppTies = 0;
+      let oppExchangeWon = 0; // this opponent's lead fainted the candidate's lead first
+      let oppExchangeLost = 0; // ...candidate's lead fainted this opponent's lead first
 
       for (const { leadA, leadB } of pairings) {
         const outcome = outcomeFor(planKeys[cursor++]);
@@ -2186,6 +2263,8 @@ async function evaluateTeamsInOrder(ctx, params) {
           exchangeWon += 1;
           if (r.winner === 'a') winsGivenExchangeWon += 1; // converted the exchange into the win
         }
+        if (exchange === 'a') oppExchangeWon += 1;
+        else if (exchange === 'b') oppExchangeLost += 1;
         // 'simultaneous'/'none' -- excluded, not a decided exchange (see computeSnowballScore).
 
         if (trackLeads) {
@@ -2209,6 +2288,20 @@ async function evaluateTeamsInOrder(ctx, params) {
         opponentTally[oppIndex].battles += oppBattles;
         opponentTally[oppIndex].weightedWinPoints += oppWinPoints * candWeight;
         opponentTally[oppIndex].weightedBattles += oppBattles * candWeight;
+        opponentTally[oppIndex].exchangeWon += oppExchangeWon;
+        opponentTally[oppIndex].exchangeLost += oppExchangeLost;
+        opponentPerCandidate[oppIndex].push({
+          archetypeGroup: candidateArchetypeGroups ? candidateArchetypeGroups[idx] ?? null : null,
+          winRate: 1 - oppWinPoints / oppBattles, // this opponent's OWN win rate against this candidate
+          strength: 1,
+          // For the candidateStrengthGamma second pass below: this candidate's
+          // index (to look up its own raw win rate once every opponent it
+          // fought is known), its frequency weight, and this pair's raw tally.
+          idx,
+          candWeight,
+          oppWinPoints,
+          oppBattles,
+        });
         perMeta.push({
           metaTeamId: opp.id,
           name: opp.name,
@@ -2228,7 +2321,7 @@ async function evaluateTeamsInOrder(ctx, params) {
     }
 
     partials.push({
-      members, perMeta, weightedWinPoints, weightedBattles, hpSum, battles, candidateErrors,
+      members, perMeta, winPoints, weightedWinPoints, weightedBattles, hpSum, battles, candidateErrors,
       exchangeWon, exchangeLost, winsGivenExchangeWon, winsGivenExchangeLost,
       leadWins, leadBattles, swapHpSum, swapHpCount,
     });
@@ -2240,6 +2333,52 @@ async function evaluateTeamsInOrder(ctx, params) {
   const opponentStrength = opponentTally.map((t) =>
     opponentStrengthGamma > 0 && t.battles > 0 ? Math.pow(Math.max(0, 1 - t.winPoints / t.battles), opponentStrengthGamma) : 1
   );
+  // Symmetric candidate j's strength = its own raw win rate across every
+  // opponent it fought here (the OTHER side of the same ledger opponentStrength
+  // reads, unweighted, no new battles). Feeds the opponentTally reweight just
+  // below, mirroring how opponentStrength feeds the candidate reweight further
+  // down -- without it, only candidate fitness was discounted for cheap wins
+  // over weak opposition; opponent fitness had no equivalent discount.
+  const candidateStrength = partials.map((p) =>
+    candidateStrengthGamma > 0 && p.battles > 0 ? Math.pow(Math.max(0, p.winPoints / p.battles), candidateStrengthGamma) : 1
+  );
+  if (candidateStrengthGamma > 0) {
+    opponentTally.forEach((t, j) => {
+      let sp = 0;
+      let sb = 0;
+      for (const p of opponentPerCandidate[j]) {
+        const w = p.candWeight * candidateStrength[p.idx];
+        sp += w * p.oppWinPoints;
+        sb += w * p.oppBattles;
+      }
+      // Every candidate this opponent fought scored strength 0 (impossible
+      // today -- strength 0 needs battles > 0 and a 0 win rate, which is a
+      // valid state): fall back to the frequency-only weighting already
+      // accumulated above rather than a 0/0 fitness.
+      if (sb > 0) {
+        t.weightedWinPoints = sp;
+        t.weightedBattles = sb;
+      }
+    });
+  }
+  // Opponent-side battle-reality terms, symmetric with the candidate ones
+  // above -- same helper functions, same OwnLeadPairing convention
+  // (`opp.members[0]` is the opponent's own designated lead), just fed this
+  // opponent's own ledger instead of a candidate's. Cheap: no extra battles,
+  // closerScore/sharedWeaknessScore are pure roster lookups and
+  // snowballScore/consistencyScore only re-read tallies this same pass
+  // already accumulated.
+  opponentTally.forEach((t, j) => {
+    const oppWinRate = t.battles > 0 ? 1 - t.winPoints / t.battles : 0.5;
+    t.winRate = oppWinRate;
+    t.snowballScore = computeSnowballScore(t.exchangeWon, t.exchangeLost, oppWinRate);
+    t.closerScore = computeCloserScore(opponents[j].members, roleScores);
+    const sharedWeakness = typeCoverageContext
+      ? computeSharedWeaknessScore(opponents[j].members, typeCoverageContext)
+      : { score: null };
+    t.sharedWeaknessScore = sharedWeakness.score;
+    t.consistencyScore = computeConsistencyScore(opponentPerCandidate[j], oppWinRate).consistencyScore;
+  });
   const results = [];
   for (const partial of partials) {
     const { members, perMeta, hpSum, battles, candidateErrors, exchangeWon, exchangeLost,
@@ -2360,7 +2499,35 @@ async function evaluateTeamsInOrder(ctx, params) {
 // Report + DONE-marker rendering.
 // ---------------------------------------------------------------------------
 
-function renderEvolveReport(result) {
+/**
+ * Fitness/GA weight flags worth surfacing in a report, as ordered
+ * [label, value] pairs -- shared by the Markdown and HTML renderers so the
+ * two never drift. Pulled straight off `config`; only flags actually present
+ * are shown, so an older checkpoint's report just omits newer ones.
+ */
+export function fitnessWeightRows(config) {
+  const rows = [
+    ['snowball weight', config.snowballWeight],
+    ['closer weight', config.closerWeight],
+    ['consistency weight', config.consistencyWeight],
+    ['core-rivalry weight', config.coreRivalry],
+    ['similar-rivalry weight', config.similarRivalry],
+    ['similar floor', config.similarFloor],
+    ['shared-weakness weight', config.sharedWeaknessWeight],
+    ['opponent snowball weight', config.opponentSnowballWeight],
+    ['opponent closer weight', config.opponentCloserWeight],
+    ['opponent consistency weight', config.opponentConsistencyWeight],
+    ['opponent shared-weakness weight', config.opponentSharedWeaknessWeight],
+    ['archetype beta', config.archetypeBeta],
+    ['opponent-strength gamma', config.opponentStrengthGamma],
+    ['candidate-strength gamma', config.candidateStrengthGamma],
+    ['opponent fitness normalised', config.opponentFitnessNormalised],
+    ['fitness semantics', config.fitnessSemantics],
+  ];
+  return rows.filter(([, value]) => value !== undefined && value !== null);
+}
+
+export function renderEvolveReport(result) {
   const { config, generationRecords, elites, stopReason, importWarnings, league } = result;
   const eo = result.eliteOpponents ?? { total: 0, curated: 0, evolved: 0 };
   const rk = result.ranking ?? { weights: RANKING_WEIGHTS, recentWindow: 0, generationsRun: generationRecords.length };
@@ -2444,6 +2611,26 @@ function renderEvolveReport(result) {
     out.push('');
   });
 
+  out.push('## Fitness weights');
+  out.push('');
+  out.push('| Flag | Value |');
+  out.push('| --- | ---: |');
+  for (const [label, value] of fitnessWeightRows(config)) out.push(`| ${label} | ${value} |`);
+  out.push('');
+
+  if (result.finalOpponentPool?.toughest?.length) {
+    out.push(`## Top ${result.finalOpponentPool.toughest.length} opponent teams`);
+    out.push('');
+    out.push("Final generation's opponent pool, ranked by opponent fitness -- the strongest teams the opponent GA bred to beat the candidates above.");
+    out.push('');
+    out.push('| Rank | Team | Origin | Fitness |');
+    out.push('| --- | --- | --- | ---: |');
+    result.finalOpponentPool.toughest.forEach((o, i) => {
+      out.push(`| ${i + 1} | ${o.name} | ${o.origin ?? 'unknown'} | ${pct(o.fitness)} |`);
+    });
+    out.push('');
+  }
+
   out.push('## Run facts');
   out.push('');
   out.push(`- ${generationRecords.length} generation(s) of a ${config.generations} cap -- ${stopReason}`);
@@ -2452,7 +2639,7 @@ function renderEvolveReport(result) {
       `${formatDuration(result.totalElapsedMs)} total, ${threadsLabel}`
   );
   out.push(
-    `- seed \`${config.seed}\`, cp=${config.cp}, population ${config.population} -> ` +
+    `- seed \`${config.seed}\`, cp=${config.cp}, cup=${config.cup ?? DEFAULTS.cup}, population ${config.population} -> ` +
       `${Math.round(config.population * config.populationFinalRatio)}, opponents ${config.opponentsPerGen} -> ` +
       `${opponentsAt(config.generations - 1, config)}, pool=${config.pool}, curated-ratio=${config.curatedRatio}, ` +
       `fitness=${config.fitness}` +
@@ -2460,7 +2647,7 @@ function renderEvolveReport(result) {
       (config.fixedOpponents ? ', fixed-opponents' : '') +
       (config.banSpecies.length ? `, ban=${config.banSpecies.join(',')}` : '')
   );
-  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
+  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.opponentImmigrantFraction !== undefined || config.convergence !== undefined) {
     const ga = [];
     if (config.deathRate !== undefined) ga.push(`death-rate=${config.deathRate}`);
     if (config.mutationFloor !== undefined) ga.push(`mutation-floor=${config.mutationFloor}`);
@@ -2473,6 +2660,7 @@ function renderEvolveReport(result) {
     if (config.opponentMutationCeil !== undefined) ga.push(`opponent-mutation-ceil=${config.opponentMutationCeil}`);
     if (config.opponentMutationFloorStart !== undefined) ga.push(`opponent-mutation-floor-start=${config.opponentMutationFloorStart} (annealed to ${config.opponentMutationFloor ?? DEFAULT_OPPONENT_MUTATION_FLOOR})`);
     if (config.opponentMutationCeilStart !== undefined) ga.push(`opponent-mutation-ceil-start=${config.opponentMutationCeilStart} (annealed to ${config.opponentMutationCeil ?? DEFAULT_OPPONENT_MUTATION_CEIL})`);
+    if (config.opponentImmigrantFraction !== undefined) ga.push(`opponent-immigrant-fraction=${config.opponentImmigrantFraction}`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
     out.push(`- GA overrides: ${ga.join(', ')}`);
   }
@@ -2835,6 +3023,34 @@ export function renderEvolveReportHtml(result) {
   out.push('</section>');
 
   out.push('<section>');
+  out.push('<h2>Fitness weights<span class="rule"></span></h2>');
+  out.push('<div class="table-wrap">');
+  out.push('<table><tr><th>Flag</th><th class="num">Value</th></tr>');
+  for (const [label, value] of fitnessWeightRows(config)) {
+    out.push(`<tr><td>${escapeHtml(label)}</td><td class="num">${escapeHtml(String(value))}</td></tr>`);
+  }
+  out.push('</table>');
+  out.push('</div>');
+  out.push('</section>');
+
+  if (result.finalOpponentPool?.toughest?.length) {
+    out.push('<section>');
+    out.push(`<h2>Top ${result.finalOpponentPool.toughest.length} opponent teams<span class="rule"></span></h2>`);
+    out.push('<p class="podium-note" style="margin-bottom:1.25rem;">Final generation\'s opponent pool, ranked by opponent fitness — the strongest teams the opponent GA bred to beat the candidates above.</p>');
+    out.push('<div class="table-wrap">');
+    out.push('<table><tr><th class="num">#</th><th>Team</th><th>Origin</th><th class="num">Fitness</th></tr>');
+    result.finalOpponentPool.toughest.forEach((o, i) => {
+      out.push(
+        `<tr><td class="num">${i + 1}</td><td>${escapeHtml(o.name)}</td><td>${escapeHtml(o.origin ?? 'unknown')}</td>` +
+          `<td class="num">${pct(o.fitness)}</td></tr>`
+      );
+    });
+    out.push('</table>');
+    out.push('</div>');
+    out.push('</section>');
+  }
+
+  out.push('<section>');
   out.push('<h2>Run notes<span class="rule"></span></h2>');
   out.push('<ul class="notes">');
   out.push(`<li><b>${generationRecords.length} generation(s)</b> of a ${config.generations} cap — ${escapeHtml(stopReason)}.</li>`);
@@ -2846,13 +3062,13 @@ export function renderEvolveReportHtml(result) {
   );
   out.push(`<li><b>How the final pass was scored.</b> ${escapeHtml(finalPassDescription(eo, result.ranking ?? { weights: RANKING_WEIGHTS, recentWindow: 0 })).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</li>`);
   out.push(
-    `<li><b>Setup:</b> seed <code>${escapeHtml(config.seed)}</code>, cp=${config.cp}, pool=${config.pool}, ` +
+    `<li><b>Setup:</b> seed <code>${escapeHtml(config.seed)}</code>, cp=${config.cp}, cup=${config.cup ?? DEFAULTS.cup}, pool=${config.pool}, ` +
       `curated-ratio=${config.curatedRatio}, fitness=${escapeHtml(config.fitness)}` +
       (config.evolutions === false ? ', evolutions=off' : '') +
       (config.fixedOpponents ? ', fixed-opponents' : '') +
       '.</li>'
   );
-  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.convergence !== undefined) {
+  if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.opponentImmigrantFraction !== undefined || config.convergence !== undefined) {
     const ga = [];
     if (config.deathRate !== undefined) ga.push(`death-rate=${config.deathRate}`);
     if (config.mutationFloor !== undefined) ga.push(`mutation-floor=${config.mutationFloor}`);
@@ -2865,6 +3081,7 @@ export function renderEvolveReportHtml(result) {
     if (config.opponentMutationCeil !== undefined) ga.push(`opponent-mutation-ceil=${config.opponentMutationCeil}`);
     if (config.opponentMutationFloorStart !== undefined) ga.push(`opponent-mutation-floor-start=${config.opponentMutationFloorStart} (annealed to ${config.opponentMutationFloor ?? DEFAULT_OPPONENT_MUTATION_FLOOR})`);
     if (config.opponentMutationCeilStart !== undefined) ga.push(`opponent-mutation-ceil-start=${config.opponentMutationCeilStart} (annealed to ${config.opponentMutationCeil ?? DEFAULT_OPPONENT_MUTATION_CEIL})`);
+    if (config.opponentImmigrantFraction !== undefined) ga.push(`opponent-immigrant-fraction=${config.opponentImmigrantFraction}`);
     if (config.convergence !== undefined) ga.push(`convergence=0-churn top-${config.convergence.topN} across ${config.convergence.window} generations`);
     out.push(`<li><b>GA overrides:</b> ${escapeHtml(ga.join(', '))}.</li>`);
   }
@@ -2960,6 +3177,9 @@ function renderDoneMarker(result) {
  *     - opponent-side mutation rates and hot-start anneal, forwarded to
  *     nextOpponentPool (see opponentMutationRatesAt); same only-when-set
  *     fingerprint rule.
+ *   opponentImmigrantFraction?:number, - opponent-side fresh-immigrant share
+ *     of the evolvable portion, forwarded to nextOpponentPool; same
+ *     only-when-set fingerprint rule.
  *   convWindow?:number, convTopN?:number, - convergence window / top-set-size
  *     overrides for hasConverged; same only-when-set fingerprint rule.
  *   populationFinalRatio?:number, - candidate population at the last
@@ -3016,16 +3236,16 @@ export async function runEvolution(csvPath, opts = {}) {
   const threads = opts.threads;
   const deadlineMs = typeof opts.deadlineMinutes === 'number' ? opts.deadlineMinutes * 60000 : null;
 
-  log(`evolve: starting (collection=${config.csvPath}, out-dir=${outDir}, report=${reportPath})`);
+  log(`evolve: starting (collection=${config.csvPath}, cp=${config.cp}, cup=${config.cup}, out-dir=${outDir}, report=${reportPath})`);
 
   const { mons: importedMons, warnings: importWarnings } = importCollection(csvPath, { cp: config.cp });
   // Written into every checkpoint (not the fingerprint) so a resume against a
   // rewritten CSV fails with a real message -- see assertCollectionMatchesCheckpoint.
   const collectionHash = hashFile(csvPath);
-  const ctx = await initEngine({ cp: config.cp });
+  const ctx = await initEngine({ cp: config.cp, cup: config.cup });
   // One pvpoke similarity scorer (memoised per species/moveset pair) shared by both GAs' core rivalry.
   const similarity = createSimilarity();
-  const league = leagueForCp(config.cp);
+  const league = resolveFormat({ cp: config.cp, cup: config.cup });
   // Same expansion src/cli.js does: each mon also competes as anything it can
   // evolve into, so the GA can pick a form you don't own yet. Part of the run
   // config below, so flipping it starts a new checkpoint rather than resuming
@@ -3033,7 +3253,10 @@ export async function runEvolution(csvPath, opts = {}) {
   const expanded = config.evolutions
     ? expandEvolutions(ctx, importedMons)
     : { mons: importedMons, warnings: [] };
-  const mons = expanded.mons;
+  // Same cup eligibility filter src/cli.js applies, always after evolution
+  // expansion (see src/util/eligibility.js's header for why order matters).
+  const eligible = filterEligibleMons(ctx, expanded.mons);
+  const mons = eligible.mons;
   const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta });
   // keepShadowVariants: the GA's shadow-flip mutation needs both the shadow and
   // the non-shadow specimen of a species on hand to swap between; the sampler
@@ -3051,6 +3274,13 @@ export async function runEvolution(csvPath, opts = {}) {
     : config.excludeSpecies;
   const pool = buildSamplingPool(deduped, config.pool, candidateExcludeSpecies);
   const roleScores = loadRoleScores(ctx); // lead/closer/switch priors, cheap local-file read
+  // Fed to composeSampledOpponent (initOpponentPool/nextOpponentPool/
+  // composeFreshOpponents) only -- omitting roleScores there makes
+  // pickLeadIndex fall back to a uniform-random lead (src/meta/sampleTeams.js),
+  // matching the candidate side's assignLead/buildLeadRotation. `roleScores`
+  // itself stays real everywhere else (evaluateTeamsInOrder's closer score is
+  // a separate, already-symmetric fitness term).
+  const opponentLeadRoleScores = config.randomOpponentLead ? null : roleScores;
   // The opponent side's two fixed inputs, both loaded once for the whole run:
   // every curated team for this CP cap (the pool the opponent GA's protected
   // entries are drawn from, and the opponent set the final elites pass uses in
@@ -3060,6 +3290,18 @@ export async function runEvolution(csvPath, opts = {}) {
   // initOpponentPool/nextOpponentPool and their mutation/immigrant draws for
   // movesetPool) sees an already-clean pool -- see the --ban helpers above.
   const curatedPool = filterBannedCuratedTeams(loadMetaTeams(ctx), banBaseIds);
+  // Under a cup (or a heavy --ban) the curated set can filter down to nothing.
+  // Treat that exactly like an explicit --curated-ratio 0: every downstream
+  // read of config.curatedRatio (initOpponentPool, nextOpponentPool,
+  // finalFreshDefault, the final elites pass) sees the forced value, since
+  // they all read this same config object.
+  if (curatedPool.length === 0 && config.curatedRatio > 0) {
+    log(
+      `evolve: curated opponent pool is empty after cup/ban filtering -- forcing curated-ratio 0 for this run ` +
+        `(was ${config.curatedRatio})`
+    );
+    config.curatedRatio = 0;
+  }
   const movesetPool = filterBannedMovesetPool(
     loadMovesetPool(ctx, { metaPoolSize: config.opponentMetaPool }),
     banBaseIds
@@ -3084,7 +3326,7 @@ export async function runEvolution(csvPath, opts = {}) {
   const threaded = typeof threads === 'number' && threads > 0;
   const profileDir = opts.profile ? outDir : undefined;
   const executor = threaded
-    ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true, profileDir })
+    ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true, profileDir, cp: ctx.cp, cup: ctx.cup })
     : null;
 
   try {
@@ -3228,7 +3470,7 @@ export async function runEvolution(csvPath, opts = {}) {
         weights,
         curated: curatedPool,
         curatedRatio: config.curatedRatio,
-        roleScores,
+        roleScores: opponentLeadRoleScores,
         movesetPool,
         seed: `${config.seed}-opponents-gen0`,
       });
@@ -3264,6 +3506,12 @@ export async function runEvolution(csvPath, opts = {}) {
       const oppArchetypeGroups = archetypeGroups(opponents);
       const oppArchetypeWeights = archetypeWeights(oppArchetypeGroups, { beta: config.archetypeBeta });
       const candidateWeights = computeCandidateWeights(deduped, population, { beta: config.archetypeBeta });
+      // Mirror of oppArchetypeGroups, over the CANDIDATE population, so the
+      // opponent side's consistencyScore ("how does this opponent do against
+      // its worst candidate archetype") can be computed symmetrically below.
+      const candArchetypeGroups = archetypeGroups(
+        population.map((keys) => ({ members: keys.map((key) => ({ speciesId: deduped.builtMons[key].speciesId })) }))
+      );
       log(
         `generation ${generation}: battling ${population.length} teams against ${opponents.length} opponents ` +
           `(${curatedInPool} curated, ${opponents.length - curatedInPool} evolved); ` +
@@ -3283,7 +3531,9 @@ export async function runEvolution(csvPath, opts = {}) {
         opponentWeights: oppArchetypeWeights,
         candidateWeights: config.opponentFitnessNormalised ? candidateWeights : null,
         opponentArchetypeGroups: oppArchetypeGroups,
+        candidateArchetypeGroups: candArchetypeGroups,
         opponentStrengthGamma: config.opponentStrengthGamma,
+        candidateStrengthGamma: config.candidateStrengthGamma,
         snowballWeight: config.snowballWeight,
         closerWeight: config.closerWeight,
         consistencyWeight: config.consistencyWeight,
@@ -3306,8 +3556,32 @@ export async function runEvolution(csvPath, opts = {}) {
       // tally has no weighted battles (candidateWeights omitted, or --no-
       // opponent-fitness-normalised).
       const opponentFitness = run.opponentTally.map((t) => {
-        if (config.opponentFitnessNormalised && t.weightedBattles > 0) return 1 - t.weightedWinPoints / t.weightedBattles;
-        return t.battles > 0 ? 1 - t.winPoints / t.battles : 0.5;
+        const oppWinRate =
+          config.opponentFitnessNormalised && t.weightedBattles > 0
+            ? 1 - t.weightedWinPoints / t.weightedBattles
+            : t.battles > 0
+              ? 1 - t.winPoints / t.battles
+              : 0.5;
+        // Symmetric with the candidate blend above -- same computeBlendFitness,
+        // same DEFAULT_FITNESS_WEIGHTS shape, opponent-only weight flags
+        // (--opponent-snowball-weight etc, 0 by default so an unconfigured
+        // run's opponent fitness is unchanged from plain win rate).
+        return computeBlendFitness(
+          {
+            winRate: oppWinRate,
+            snowballScore: t.snowballScore,
+            closerScore: t.closerScore,
+            consistencyScore: t.consistencyScore,
+            sharedWeaknessScore: t.sharedWeaknessScore,
+          },
+          {
+            ...DEFAULT_FITNESS_WEIGHTS,
+            snowball: config.opponentSnowballWeight,
+            closer: config.opponentCloserWeight,
+            consistency: config.opponentConsistencyWeight,
+            sharedWeakness: config.opponentSharedWeaknessWeight,
+          }
+        );
       });
 
       history.push({ population, fitness });
@@ -3395,11 +3669,12 @@ export async function runEvolution(csvPath, opts = {}) {
             weights,
             curated: curatedPool,
             curatedRatio: config.curatedRatio,
-            roleScores,
+            roleScores: opponentLeadRoleScores,
             movesetPool,
             seed: `${config.seed}-opponents-next${generation}`,
             opts: {
               ...(config.opponentDeathRate !== undefined ? { deathRate: config.opponentDeathRate } : {}),
+              ...(config.opponentImmigrantFraction !== undefined ? { immigrantFraction: config.opponentImmigrantFraction } : {}),
               ...opponentMutationRatesAt(generation, config),
               coreRivalry: config.coreRivalry,
               similarRivalry: config.similarRivalry,
@@ -3513,6 +3788,7 @@ export async function runEvolution(csvPath, opts = {}) {
       }
       log(
         `generation ${generation}: done -- mean fitness ${(record.analytics.meanFitness * 100).toFixed(1)}%, ` +
+          `opponent mean fitness ${record.opponentFitness && record.opponentFitness.length ? (record.analytics.opponentMeanFitness * 100).toFixed(1) + "%" : "n/a"}, ` +
           `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (${run.errorCount} errors), ` +
           `${formatDuration(run.elapsedMs)} elapsed, process RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
           workerStatsMsg
@@ -3598,7 +3874,7 @@ export async function runEvolution(csvPath, opts = {}) {
       seed: config.seed,
       movesetPool,
       weights,
-      roleScores,
+      roleScores: opponentLeadRoleScores,
       usedIds: everFielded,
     });
     // --curated-ratio 0 means "no curated teams in this run, full stop": a run
@@ -3713,7 +3989,7 @@ export async function runEvolution(csvPath, opts = {}) {
       config,
       league,
       runStartedAt: new Date(runStartedAtMs).toISOString(),
-      importWarnings: [...importWarnings, ...expanded.warnings],
+      importWarnings: [...new Set([...importWarnings, ...expanded.warnings, ...eligible.warnings])],
       // Collection-size facts for the report's hero/footer -- raw CSV rows vs.
       // how many were actually scored once evolutions (default on) expanded
       // the pool. Both already computed above; just threaded through.
@@ -3764,6 +4040,22 @@ export async function runEvolution(csvPath, opts = {}) {
       log(`HTML report written to ${htmlPath}`);
     }
 
+    // Trimmed re-render source: everything renderEvolveReport/renderEvolveReportHtml
+    // read off `result`, minus the bulky per-generation population/opponentPool/lineage
+    // detail (already on disk as evolve-gen*.json checkpoints) -- just each generation's
+    // timing, which the report's battle/cache/thread totals need. Lets a report-only
+    // fix (wording, a new section, a rendering bug) be re-applied with
+    // `node scripts/render-report.mjs <out-dir>` instead of re-running the sim.
+    writeFileSync(
+      path.join(outDir, 'evolve-result.json'),
+      JSON.stringify(
+        { ...result, generationRecords: generationRecords.map((r) => ({ timing: r.timing, threadsUsed: r.threadsUsed })) },
+        null,
+        2
+      ),
+      'utf8'
+    );
+
     // Small machine-readable final ranking; scripts/chart-top-teams.mjs uses
     // it to pick which trajectories to animate.
     writeFileSync(
@@ -3804,6 +4096,13 @@ Usage:
   node scripts/evolve.mjs <collection.csv> [options]
 
 Options:
+  --config PATH           JSON file of {"flag-name": value} pairs (dashed
+                            flag names as keys, e.g. {"snowball-weight": 0.2}),
+                            applied before individual flags -- an explicit
+                            CLI flag always overrides the same key from
+                            --config. Lets a recipe collapse to one flag
+                            instead of a dozen; see recipes/standard.json
+                                                                       (default: none)
   --population N         GA population size                        (default ${DEFAULTS.population})
   --opponents-per-gen M   opponent teams sampled each generation     (default ${DEFAULTS.opponentsPerGen})
   --generations G         generation cap                            (default ${DEFAULTS.generations})
@@ -3847,6 +4146,9 @@ Options:
                             overwrite -- see the resume-refusal message)
                                                                          (default: off)
   --cp N                  CP cap / league                            (default ${DEFAULTS.cp})
+  --cup NAME              pvpoke cup id (e.g. willpower); restricts candidates,
+                            opponents, movesets, usage weights, role priors,
+                            and meta group to that cup's format          (default: ${DEFAULTS.cup})
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
   --elites N               last-generation teams (by trailing-mean fitness)
@@ -3921,6 +4223,8 @@ Options:
                                                                    (default: no anneal)
   --opponent-mutation-ceil-start R   hot-start opponent ceil, same anneal to
                             --opponent-mutation-ceil               (default: no anneal)
+  --opponent-immigrant-fraction R    opponent-side fresh-immigrant share of
+                            the evolvable pool (default: DEFAULT_OPPONENT_IMMIGRANT_FRACTION, 0.08)
   --conv-window N          convergence: consecutive zero-churn generations
                             required                              (default: DEFAULT_CONVERGENCE_WINDOW)
   --conv-top-n N           convergence: size of the top set that must not
@@ -3933,11 +4237,16 @@ Options:
                             win rate by (that opponent's own win rate)^G, so
                             beating a strong team counts more than beating a
                             weak singleton; 0 = off        (default ${DEFAULTS.opponentStrengthGamma})
+  --candidate-strength-gamma G  symmetric, other side of the same ledger:
+                            scale each candidate's vote in an opponent's
+                            fitness by (that candidate's own win rate)^G, so
+                            an opponent that only beat weak candidates
+                            doesn't outscore one that beat strong ones;
+                            0 = off                (default ${DEFAULTS.candidateStrengthGamma})
   --snowball-weight R      candidate-side fitness weight on snowballScore
                             (own fraction of decided lead exchanges won),
-                            on top of winRate=1; opponent-side fitness
-                            (src/meta/opponentPool.js) is a separate, plain
-                            win-rate calc and is never affected by this flag
+                            on top of winRate=1; see --opponent-snowball-weight
+                            for the opponent-side equivalent
                                                        (default ${DEFAULT_FITNESS_WEIGHTS.snowball})
   --closer-weight R        candidate-side fitness weight on closerScore (mean
                             role-prior closer score of the team's two back
@@ -3956,6 +4265,19 @@ Options:
                             disabled by default, try 0.10-0.20
                             (see src/teams/typeCoverage.js)
                                                        (default ${DEFAULT_FITNESS_WEIGHTS.sharedWeakness})
+  --opponent-snowball-weight R  opponent-side equivalent of --snowball-weight,
+                            fed the opponent's OWN lead-exchange ledger; blends
+                            into src/meta/opponentPool.js's fitness alongside
+                            its plain win rate (Jaxon 2026-09-17, symmetry)
+                                                       (default ${DEFAULT_FITNESS_WEIGHTS.snowball})
+  --opponent-closer-weight R  opponent-side equivalent of --closer-weight
+                                                       (default ${DEFAULT_FITNESS_WEIGHTS.closer})
+  --opponent-consistency-weight R  opponent-side equivalent of
+                            --consistency-weight (worst-quartile win rate
+                            across the CANDIDATE archetypes this opponent
+                            fought)                    (default ${DEFAULT_FITNESS_WEIGHTS.consistency})
+  --opponent-shared-weakness-weight R  opponent-side equivalent of
+                            --shared-weakness-weight  (default ${DEFAULT_FITNESS_WEIGHTS.sharedWeakness})
   --core-rivalry R         each better team sharing a two-species core costs
                             a team R x (field's fitness range) before the
                             cull ranks it, in the population and the opponent
@@ -3975,6 +4297,14 @@ Options:
                             opponent's win-rate ledger weighted down by its
                             most-common member's population share); restores
                             the old flat mean                    (default: normalised on)
+  --random-opponent-lead   assign every composed opponent a uniform-random
+                            lead instead of pvpoke's lead-prior winner,
+                            matching the candidate side's own random lead
+                            assignment. Use for meta-vs-meta runs, where both
+                            sides are meant to be symmetrical -- otherwise the
+                            opponent side's realistic leads give it an
+                            unearned fitness edge from generation 0 on
+                                                                (default: off)
   --help                   print this help and exit
 `;
 
@@ -4024,6 +4354,7 @@ async function main(argv) {
       args: argv,
       allowPositionals: true,
       options: {
+        config: { type: 'string' },
         population: { type: 'string' },
         'opponents-per-gen': { type: 'string' },
         generations: { type: 'string' },
@@ -4034,6 +4365,7 @@ async function main(argv) {
         'seed-from': { type: 'string' },
         'force-fresh': { type: 'boolean' },
         cp: { type: 'string' },
+        cup: { type: 'string' },
         'fixed-opponents': { type: 'boolean' },
         elites: { type: 'string' },
         'selection-trailing': { type: 'string' },
@@ -4065,18 +4397,25 @@ async function main(argv) {
         'opponent-mutation-ceil': { type: 'string' },
         'opponent-mutation-floor-start': { type: 'string' },
         'opponent-mutation-ceil-start': { type: 'string' },
+        'opponent-immigrant-fraction': { type: 'string' },
         'conv-window': { type: 'string' },
         'conv-top-n': { type: 'string' },
         'archetype-beta': { type: 'string' },
         'no-opponent-fitness-normalised': { type: 'boolean' },
         'opponent-strength-gamma': { type: 'string' },
+        'candidate-strength-gamma': { type: 'string' },
         'snowball-weight': { type: 'string' },
         'closer-weight': { type: 'string' },
         'consistency-weight': { type: 'string' },
         'shared-weakness-weight': { type: 'string' },
+        'opponent-snowball-weight': { type: 'string' },
+        'opponent-closer-weight': { type: 'string' },
+        'opponent-consistency-weight': { type: 'string' },
+        'opponent-shared-weakness-weight': { type: 'string' },
         'core-rivalry': { type: 'string' },
         'similar-rivalry': { type: 'string' },
         'similar-floor': { type: 'string' },
+        'random-opponent-lead': { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -4087,6 +4426,22 @@ async function main(argv) {
   }
 
   const { values, positionals } = parsed;
+
+  if (values.config) {
+    let fileValues;
+    try {
+      fileValues = JSON.parse(readFileSync(values.config, 'utf8'));
+    } catch (err) {
+      process.stderr.write(`Error: failed to read --config "${values.config}": ${err.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    // Explicit CLI flags win over the same key in --config.
+    for (const [key, val] of Object.entries(fileValues)) {
+      if (values[key] === undefined) values[key] = val;
+    }
+  }
+
   if (values.help || positionals.length === 0) {
     say(HELP);
     if (positionals.length === 0 && !values.help) process.exitCode = 2;
@@ -4105,6 +4460,7 @@ async function main(argv) {
     seedFrom: values['seed-from'],
     forceFresh: !!values['force-fresh'],
     cp: intFlag(values.cp, 'cp', DEFAULTS.cp),
+    cup: values.cup ?? DEFAULTS.cup,
     fixedOpponents: !!values['fixed-opponents'],
     eliteCount: intFlag(values.elites, 'elites', DEFAULTS.elites),
     selectionTrailing:
@@ -4143,17 +4499,36 @@ async function main(argv) {
     opponentMutationCeil: fractionFlag(values['opponent-mutation-ceil'], 'opponent-mutation-ceil', undefined),
     opponentMutationFloorStart: fractionFlag(values['opponent-mutation-floor-start'], 'opponent-mutation-floor-start', undefined),
     opponentMutationCeilStart: fractionFlag(values['opponent-mutation-ceil-start'], 'opponent-mutation-ceil-start', undefined),
+    opponentImmigrantFraction: fractionFlag(values['opponent-immigrant-fraction'], 'opponent-immigrant-fraction', undefined),
     convWindow: values['conv-window'] !== undefined ? intFlag(values['conv-window'], 'conv-window', undefined) : undefined,
     convTopN: values['conv-top-n'] !== undefined ? intFlag(values['conv-top-n'], 'conv-top-n', undefined) : undefined,
     archetypeBeta: fractionFlag(values['archetype-beta'], 'archetype-beta', undefined),
     opponentFitnessNormalised: values['no-opponent-fitness-normalised'] ? false : undefined,
+    randomOpponentLead: values['random-opponent-lead'] ? true : undefined,
     opponentStrengthGamma: values['opponent-strength-gamma'] !== undefined ? numberFlag(values['opponent-strength-gamma'], 'opponent-strength-gamma') : undefined,
+    candidateStrengthGamma: values['candidate-strength-gamma'] !== undefined ? numberFlag(values['candidate-strength-gamma'], 'candidate-strength-gamma') : undefined,
     snowballWeight: values['snowball-weight'] !== undefined ? numberFlag(values['snowball-weight'], 'snowball-weight') : undefined,
     closerWeight: values['closer-weight'] !== undefined ? numberFlag(values['closer-weight'], 'closer-weight') : undefined,
     consistencyWeight: values['consistency-weight'] !== undefined ? numberFlag(values['consistency-weight'], 'consistency-weight') : undefined,
     sharedWeaknessWeight:
       values['shared-weakness-weight'] !== undefined
         ? numberFlag(values['shared-weakness-weight'], 'shared-weakness-weight')
+        : undefined,
+    opponentSnowballWeight:
+      values['opponent-snowball-weight'] !== undefined
+        ? numberFlag(values['opponent-snowball-weight'], 'opponent-snowball-weight')
+        : undefined,
+    opponentCloserWeight:
+      values['opponent-closer-weight'] !== undefined
+        ? numberFlag(values['opponent-closer-weight'], 'opponent-closer-weight')
+        : undefined,
+    opponentConsistencyWeight:
+      values['opponent-consistency-weight'] !== undefined
+        ? numberFlag(values['opponent-consistency-weight'], 'opponent-consistency-weight')
+        : undefined,
+    opponentSharedWeaknessWeight:
+      values['opponent-shared-weakness-weight'] !== undefined
+        ? numberFlag(values['opponent-shared-weakness-weight'], 'opponent-shared-weakness-weight')
         : undefined,
     coreRivalry: values['core-rivalry'] !== undefined ? numberFlag(values['core-rivalry'], 'core-rivalry') : undefined,
     similarRivalry: values['similar-rivalry'] !== undefined ? numberFlag(values['similar-rivalry'], 'similar-rivalry') : undefined,

@@ -44,7 +44,7 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 | `scripts/tournament.mjs` | large offline sampled runs |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
-| `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs` | one-off benchmarks/analyses, not part of the pipeline |
+| `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs` | one-off benchmarks/analyses, not part of the pipeline |
 
 ### Module map (`src/`)
 
@@ -77,8 +77,9 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 - `cost/` — `powerup.js` (Stardust/Candy build cost, pure arithmetic) +
   `evolutionCandy.json` (generated).
 - `report/` — Markdown + HTML report rendering, pure (no engine).
-- `util/` — `leagues.js` (CP cap → league identity), `rng.js` (seeded PRNG +
-  weighted sampling; the only randomness source in the repo).
+- `util/` — `leagues.js` (CP cap + cup → format identity), `eligibility.js`
+  (candidate-side cup filtering, applied after evolution expansion), `rng.js`
+  (seeded PRNG + weighted sampling; the only randomness source in the repo).
 
 ### Data & artifacts
 

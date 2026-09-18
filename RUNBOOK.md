@@ -38,30 +38,27 @@ jq -r '.moves[] | select(.moveId=="BODY_SLAM" or .moveId=="BUBBLE_BEAM" or .move
 Expected: `BODY_SLAM 65 40 0`, `BUBBLE_BEAM 50 50 0`, `INFESTATION 10 0 12`.
 
 Requirements: Node 18+, `jq` for the check above. Machine: 8 cores / 16
-threads, 8 GB RAM. Every recent run used `--threads 8`; `--threads 12` measured
-fastest in isolation; the raw `cpus-1` count (15) is slower and OOM'd the VM
-twice on bare `evolve.mjs` invocations of the all-generated-opponents recipe
-(each worker boots its own pvpoke engine context, so more threads costs
-memory as well as CPU). `defaultThreadCount()` in
-`src/engine/parallel.js` now caps the automatic default at 8 for this reason,
-so an omitted `--threads` is safe -- but keep passing `--threads 8` explicitly
-anyway per "Why `--threads 8`" in section 3, since it is also the measured-
-fastest count on this machine, not just the safe one.
+threads, 8 GB RAM. Every recent run used `--threads 8`; the raw `cpus-1`
+count (15) is slower and OOM'd the VM twice on bare `evolve.mjs`
+all-generated-opponents runs (each worker boots its own pvpoke engine
+context, so more threads costs memory too). `defaultThreadCount()`
+(`src/engine/parallel.js`) caps the automatic default at 8 for this reason,
+so an omitted `--threads` is safe -- but still pass `--threads 8` explicitly,
+since it's also the measured-fastest count here, not just the safe one (see
+"Why `--threads 8`" in section 3).
 
 Memory over a long run: each worker caches every built Pokemon it has seen
-(`src/engine/parallelWorker.js`). Before 2026-09-07 that cache was unbounded,
-so RSS grew for the whole run (mutation keeps introducing new IVs/movesets).
-It is now an LRU capped at 5000 entries/side/worker (~70 MB per side at ~14 KB per
-built mon), which still spans many generations of turnover and keeps every
-recurring mon hot. `POGO_GBL_WORKER_CACHE=N` raises or lowers the cap.
+(`src/engine/parallelWorker.js`), unbounded before 2026-09-07 (mutation keeps
+introducing new IVs/movesets, so RSS grew all run). Now an LRU capped at
+5000 entries/side/worker (~70 MB/side at ~14 KB/mon) -- still spans many
+generations of turnover. `POGO_GBL_WORKER_CACHE=N` raises or lowers the cap.
 
-The bigger consumer turned out to be the per-worker scenario memo
-(`src/engine/teamBattle.js`): at its old 200k-entry cap it held ~380 MB per
-worker (~3 GB at `--threads 8`) and, with LRU eviction, sat at cap for the
-whole run -- that plus unbounded V8 heap growth in 8 isolates is what got
-`evolve-meta-vs-meta-v5` killed at 8.2 GB RSS (2026-09-09). The memo is now
-20k entries (same hit count, measured) and each worker heap is capped at 512
-MB; see section 3's `--profile` notes for the numbers to expect.
+The bigger consumer was the per-worker scenario memo
+(`src/engine/teamBattle.js`): at its old 200k-entry cap it held ~380 MB/worker
+(~3 GB at `--threads 8`) and sat at cap all run -- that plus unbounded V8 heap
+growth in 8 isolates is what got `evolve-meta-vs-meta-v5` killed at 8.2 GB
+RSS (2026-09-09). Now 20k entries (same hit rate, measured), worker heap
+capped at 512 MB; see section 3's `--profile` notes for expected numbers.
 
 The safety net for a run that outgrows the box is this machine's `earlyoom`
 (configured `-m 10 -s 20 --prefer node`, so it targets node first once
@@ -97,11 +94,16 @@ Test fixtures for dry runs without personal data: `fixtures/*.csv`.
 
 ### The recipe every recent real run used
 
-Updated 2026-09-12 (`jaxon-standard-2`, flags carried over from
-`shared-standard-3-fitness`): opponent side co-evolves again (curated-ratio
-0.66), candidate fitness blends snowball + closer + consistency, core-rivalry
-uses the similarity-aware terms, and shared-weakness-weight is on. Treat this
-as the default unless told otherwise:
+Updated 2026-09-15 (`meta-vs-meta-v6`): snowball-weight raised 0.2 -> 0.4 and
+consistency-weight raised 0.1 -> 0.2, per the user directly. Carries forward
+the 2026-09-12 (`jaxon-standard-2`, flags from `shared-standard-3-fitness`)
+baseline: opponent side co-evolves again (curated-ratio 0.66), candidate
+fitness blends snowball + closer + consistency, core-rivalry uses the
+similarity-aware terms, and shared-weakness-weight is on. Treat this as the
+default unless told otherwise. `sim.sh` already bakes in
+`--config recipes/standard.json` (opponents-per-gen 120, elites 15, baseline
+weights 0.2/0.1/0.1/0.2 -- see `sim.sh` reference below), so the weight flags
+below just override those baseline values with this recipe's raised ones:
 
 ```bash
 COLLECTION="jaxon-gl-collection.csv"
@@ -116,9 +118,9 @@ scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
   --archetype-beta 0.5 \
   --opponent-strength-gamma 1 \
   --population-final-ratio 0.4 \
-  --snowball-weight 0.2 \
+  --snowball-weight 0.4 \
   --closer-weight 0.1 \
-  --consistency-weight 0.1 \
+  --consistency-weight 0.2 \
   --core-rivalry 0.2 \
   --similar-rivalry 1 \
   --similar-floor 0.35 \
@@ -133,10 +135,10 @@ scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
 | `--curated-ratio 0.66`, `--opponent-meta-pool 100`, `--archetype-beta 0.5` | opponent side co-evolves (no `--fixed-opponents`) -- these are the config that `evolve-shared-standard-3-fitness` (the most recent completed real run, gen 99, DONE) actually used, carried over 2026-09-12 |
 | `--opponent-strength-gamma 1` | candidate fitness IS weighted by how strong the opponent it beat was (default weighting) -- reverted from the `jaxon-standard-1` recipe's `0`, per `shared-standard-3-fitness` |
 | `--population-final-ratio 0.4` | candidate population at the last generation is 40% of the starting population; per `shared-standard-3-fitness` |
-| `--snowball-weight 0.2` | candidate-only fitness weight on `snowballScore` (own fraction of decided lead exchanges won), on top of `winRate: 1`; opponent-side fitness (`src/meta/opponentPool.js`) is a separate plain win-rate calc and is never touched by this flag; raised from `0.1` to `0.2` per `shared-standard-3-fitness` |
-| `--closer-weight 0.1`, `--consistency-weight 0.1` | candidate-only fitness weights on `closerScore` (mean...) and `consistencyScore`; both newly added to the standard recipe, per `shared-standard-3-fitness` |
+| `--snowball-weight 0.4` | candidate-only fitness weight on `snowballScore` (own fraction of decided lead exchanges won), on top of `winRate: 1`; opponent-side fitness (`src/meta/opponentPool.js`) is a separate plain win-rate calc and is never touched by this flag; raised `0.1` -> `0.2` per `shared-standard-3-fitness`, then `0.2` -> `0.4` per the user directly, 2026-09-15 |
+| `--closer-weight 0.1`, `--consistency-weight 0.2` | candidate-only fitness weights on `closerScore` (mean...) and `consistencyScore`; both newly added to the standard recipe per `shared-standard-3-fitness`; consistency-weight raised `0.1` -> `0.2` per the user directly, 2026-09-15 |
 | `--core-rivalry 0.2`, `--similar-rivalry 1`, `--similar-floor 0.35` | each better team sharing a two-species core (or a pvpoke-similar core, above the `similar-floor` similarity threshold, weighted `similar-rivalry` relative to an identical core) costs seats in fitness; raised from the earlier default of 0.1 to `0.2`, per `shared-standard-3-fitness` |
-| `--shared-weakness-weight 0.2` | candidate-only blend weight on `sharedWeaknessScore` (`src/teams/typeCoverage.js`). For each of the lead's weakness types that at least one back member also carries, one risk term: lead severity (a double weakness is 1.6x a single, the actual 2.56/1.6 ratio) × prevalence (that type's rank-weighted share of PvPoke's top 200, blended down by `PREVALENCE_INFLUENCE=0.3` so it costs `(1 - 0.3*(1-prevalence))` rather than raw prevalence -- real top-200 data spans an ~18x range (Water 1 vs Rock 0.055), and unblended it swamped the other three weights, e.g. it alone dragged a real double Rock + single Electric shared weakness on Talonflame/Tinkaton/Walrein up to a 0.98 score) × moveset-coverage relief (up to 80% off if the lead's own fast/charged moves hit that type super effectively) × the OTHER back's resistance offset (partial credit for its real damage reduction, none if both backs share the weakness). Terms sum to a raw load, then normalize against a fixed global worst case -- the single worst defensive typing PvPoke's own type chart can produce at all (Dark/Grass, exhaustively checked across all 171 mono/dual combos), fully shared with no coverage or resistance offset -- so every team is judged on the same scale rather than each lead's own typing setting its own ceiling. No extra battles are simulated. Off by default; active in `battle-reality` fitness only. The weight is part of the resume fingerprint (omitted and explicit 0 are equivalent). The v10 semantics reject older checkpoints -- bump to v11 when this prevalence-dampening change ships. Final report ranking still uses the existing win-rate blend; this term affects evolution and finalist selection. |
+| `--shared-weakness-weight 0.2` | candidate-only blend weight on `sharedWeaknessScore` (`src/teams/typeCoverage.js`). Per lead weakness type a back member also carries: lead severity (double weakness = 1.6x single, the actual 2.56/1.6 ratio) × prevalence (rank-weighted share of PvPoke's top 200, dampened by `PREVALENCE_INFLUENCE=0.3` to `(1 - 0.3*(1-prevalence))` rather than raw -- top-200 data spans ~18x, Water 1 vs Rock 0.055, and unblended it alone dragged a real Talonflame/Tinkaton/Walrein double-Rock/single-Electric case to a 0.98 score) × moveset-coverage relief (up to 80% off if the lead's own moves hit that type super effectively) × the other back's resistance offset (partial credit, none if both backs share the weakness). Terms sum to a raw load, normalized against the single worst defensive typing PvPoke's type chart can produce (Dark/Grass, checked across all 171 mono/dual combos), fully shared with no coverage/resistance offset -- so every team is judged on the same scale. No extra battles simulated. Off by default; active in `battle-reality` fitness only; in the resume fingerprint (omitted and explicit 0 are equivalent, v10 semantics -- bump to v11 if the prevalence-dampening math changes). Final report ranking still uses the existing win-rate blend; this term affects evolution and finalist selection only. |
 
 The dry run prints collection, seed, out dir, bans, budget, and the full
 `evolve.mjs` command. Confirm bans, anneal flags, and threads appear, then
@@ -174,26 +176,26 @@ Optional recipe for when there's no curated/community team file to draw on
 (e.g. before `data/meta-teams-community.json` has been repopulated for a new
 season). Drop curated teams entirely and let the opponent side evolve as hard
 as the candidate side. `--curated-ratio 0` removes curated teams from every
-generation AND from the final pass. The
-opponent GA normally culls only 15% and mutates at 2-20%; mutants can only fill
-seats the cull opens, so raise the cull together with the rates. All four
-`--opponent-mutation-*` flags mirror the candidate flags, including the linear
-hot-start anneal. Fresh runs only (these flags are part of the checkpoint
-fingerprint); bare `evolve.mjs`, because `sim.sh` fixes opponents/elites.
+generation AND the final pass. The opponent GA normally culls only 15% and
+mutates at 2-20%; mutants can only fill seats the cull opens, so raise the
+cull together with the rates. All four `--opponent-mutation-*` flags mirror
+the candidate flags, including the linear hot-start anneal. Fresh runs only
+(part of the checkpoint fingerprint); bare `evolve.mjs`, since `sim.sh` fixes
+opponents/elites.
 
 Lessons from the first run of this recipe (`shared-s2-gen-1`, 2026-09-04, see
-section 7 and the 2026-09-05 header note in `scripts/evolve.mjs`): a 0.34 cull
-turned over a third of the opponent pool every generation, which made a team's
-win rate swing 3.9 points generation to generation while real teams were only
+section 7 and the 2026-09-05 header note in `scripts/evolve.mjs`): a 0.34
+cull turned over a third of the opponent pool per generation, swinging a
+team's win rate 3.9 points generation to generation while real teams sat only
 2.2 points apart. Selection now ranks on a 5-generation recency-weighted
-trailing mean and the final pass is held out (archive, plus a small fresh
-stratum only when `--curated-ratio 0`), which absorbs most of that,
-but keep the cull at 0.2: the archive already preserves every strong opponent
-the run breeds, so churn buys nothing. Size `--generations` to the deadline
-(75 for 450 min on this grid); a deadline stop mid-schedule leaves both anneals
-and the population ramp unfinished. Send 30 finalists to the pass, not 15: the
-pass is now the out-of-sample judge, and with real teams only ~2 points apart
-the top 15 of the trailing mean is too tight a cut to trust.
+trailing mean, and the final pass is held out (archive, plus a small fresh
+stratum only when `--curated-ratio 0`), which absorbs most of that -- but
+keep the cull at 0.2, since the archive already preserves every strong
+opponent bred, so churn buys nothing. Size `--generations` to the deadline
+(75 for 450 min on this grid) -- a deadline stop mid-schedule leaves both
+anneals and the population ramp unfinished. Send 30 finalists to the pass,
+not 15: with real teams only ~2 points apart, the top 15 of the trailing
+mean is too tight a cut to trust against the out-of-sample pass.
 
 ```bash
 nohup node scripts/evolve.mjs "shared-gbl-collection.csv" \
@@ -234,6 +236,7 @@ grep "generation 0: done" out/evolve-shared-s2-gen-2.log
 | `--opponent-death-rate R` | evolvable-opponent cull per generation | 0.15 |
 | `--opponent-mutation-floor/ceil R` | opponent mutation odds, worst→best survivor | 0.02 / 0.2 |
 | `--opponent-mutation-floor-start/ceil-start R` | hot-start values at gen 0, annealed linearly to floor/ceil by the last generation | no anneal |
+| `--opponent-immigrant-fraction R` | fresh-immigrant share of the evolvable opponent pool each generation (mirrors `--immigrant-fraction`); in the fingerprint only when set, so existing runs resume unchanged | 0.08 |
 | `--selection-trailing N` | generations a team's fitness is recency-weighted-averaged over before the cull/mutation ranking and the finalist pick (1 = the pre-2026-09-05 single-draw behaviour); in the fingerprint only when set | 5 |
 | `--elites N` | last-generation teams sent to the final pass; NOT in the fingerprint, so a finished run can be re-rendered with more | 15 |
 | `--final-archive N` | final pass: strongest evolved opponents from the whole run, minus any fielded in the last `selection-trailing` generations; not in the fingerprint | 400 |
@@ -243,27 +246,120 @@ grep "generation 0: done" out/evolve-shared-s2-gen-2.log
 
 The recipe behind the recent `meta-vs-meta-*` runs: no curated/community
 opponents anywhere (all Pokemon vs. all Pokemon), both the candidate side and
-the opponent side evolving under the same mutation schedule. It's the
-"All-generated opponents with co-evolution" recipe above, but generations cut
-to 30 -- that's what those runs actually needed to converge, so it's the
-default for this recipe rather than the 75 used for the shared-s2 runs.
-Bare `evolve.mjs`, because `sim.sh` fixes opponents/elites.
+the opponent side evolving. It's the "All-generated opponents with
+co-evolution" recipe above, but generations cut to 30 -- that's what those
+runs actually needed to converge, so it's the default for this recipe rather
+than the 75 used for the shared-s2 runs. Bare `evolve.mjs`, because `sim.sh`
+fixes opponents/elites.
+
+**Symmetry rule (Jaxon, 2026-09-17): the candidate and opponent populations
+must be identical in size and in every GA flag.** Both sides draw from the
+same pool in a meta-vs-meta run, so there is no reason to break the symmetry.
+Concretely, every pair below is set to the same value on both sides, and the
+population ramp is switched off so the two sides stay the same size all run:
+
+| Candidate side | Opponent side | Value |
+| --- | --- | --- |
+| `--population` | `--opponents-per-gen` | 200 (40k pairings/gen, same grid cost as the old 300x120) |
+| `--population-final-ratio 1` | (opponent count is derived from it) | 1 -- no shrink/grow, 200 vs 200 every generation |
+| `--pool` | `--opponent-meta-pool` | 70 |
+| `--death-rate` | `--opponent-death-rate` | 0.2 |
+| `--mutation-floor` / `--mutation-ceil` | `--opponent-mutation-floor` / `--opponent-mutation-ceil` | 0.05 / 0.4 |
+| `--mutation-floor-start` / `--mutation-ceil-start` | `--opponent-mutation-floor-start` / `--opponent-mutation-ceil-start` | 0.15 / 0.6 |
+| `--immigrant-fraction` | `--opponent-immigrant-fraction` | 0.08 |
+
+Also pass `--random-opponent-lead` (2026-09-17, Jaxon): without it, every
+composed opponent gets pvpoke's own lead-prior winner rotated into slot 0
+(`composeSampledOpponent` -> `pickLeadIndex`), while the candidate side always
+assigns a uniform-random lead and only converges on a good one through
+selection (`assignLead` / `buildLeadRotation` in `src/teams/evolve.js`). That
+gap gave the opponent side a lead-quality head start from generation 0 on in
+every prior `meta-vs-meta-*` run -- a persistent opponent-fitness-over-
+candidate-fitness gap (~0.55 vs ~0.47 mean, both at gen 0 and after 20+
+generations) that never closed on its own. `--random-opponent-lead` makes
+opponent composition assign leads the same random way as candidates.
+
+#### Known artifact: candidates read ~5-8pts low on fitness (side bias, not population skill)
+
+(Jaxon, 2026-09-17) Every meta-vs-meta run, including the paused
+`evolve-meta-vs-meta-willpower-3`, shows candidate mean fitness running
+several points below opponent mean fitness every generation, even with
+`--random-opponent-lead` on and the symmetry rule fully satisfied.
+`node scripts/fitness-sides.mjs out/evolve-meta-vs-meta-willpower-3` prints
+the numbers: over generations 0-44, candidate fitness averages 0.476, raw
+candidate win rate (mean of `winRateBySignature`) averages 0.460, opponent
+fitness averages 0.542 -- at gen 44 alone raw win rate (0.450) plus opponent
+fitness (0.551) sum to 1.001. That sum holding near 1.00 every generation is
+the tell: the two numbers are not independent strength measurements, they
+are the same ~40,000 battles per generation read from opposite sides of one
+scoreboard -- when candidates win 45%, opponents "win" the other 55% by
+definition, and that 55% is what's stored as opponent fitness.
+
+Cause: candidates always battle as team A, opponents always as team B
+(`scripts/evolve.mjs` lines 94-98, `src/teams/index.js` lines 17-23), and
+pvpoke emulate mode carries a residual team-B edge even in a mirror match --
+a top-meta team against itself splits 5-4 across 9 lead pairings, 55.6% for
+team B (`src/engine/README.md` "Balance / tolerance"). A 200x200 co-evolving
+population run for 45 generations turns that single-pairing bias into a
+population-scale ~5-8pt offset. This is a harness side-assignment bias, not
+a skill gap: the symmetry rule still holds (identical size and GA flags both
+sides), the offset cancels for ranking teams within one side, and it does
+not cancel in the absolute mean-fitness number.
+
+Ruled out against the checkpoints/code: IVs (both sides use pvpoke default
+IVs -- `resolveDefaultIvs`, `src/importer/index.js:273`; `defaultIvsForCp`,
+`src/scoring/index.js:175-195`); shadows (present both sides); pool size and
+GA flags (identical per the symmetry-rule table, checked in each
+checkpoint's `config`). Still open: candidates get pvpoke's recommended
+moveset (`src/scoring/index.js:148-150`) vs. opponents' explicit
+`loadMovesetPool` moveset (`scripts/evolve.mjs:3306`) -- usually equal, not
+verified species-by-species, so a residual <=1pt contribution isn't ruled
+out. Unsettled: a side-swap re-battle of the gen-44 populations, not run.
+
+So "opponent fitness > candidate fitness" means the opponent side won more
+battles as team B, not that the opponent population is winning an arms race.
+Check your own run: `node scripts/fitness-sides.mjs out/evolve-<name>`.
+
+Pass every one of these explicitly even where it matches a default, so the
+checkpoint `config` shows the symmetry rather than relying on two modules'
+defaults staying equal (they don't: candidate defaults are death 1/3, floor
+0.05, ceil 0.4, immigrants 0.1; opponent defaults are death 0.15, floor 0.02,
+ceil 0.2, immigrants 0.08). Older `meta-vs-meta-v1..v6` runs pre-date this
+rule (300 candidates vs 120 opponents, candidate death 1/3 vs opponent 0.2,
+ramp 0.4); don't resume them with this recipe -- the fingerprint won't match.
+`meta-vs-meta-v1..v6` and `meta-vs-meta-willpower-1/2` also pre-date
+`--random-opponent-lead` (added 2026-09-17) -- their opponent side used
+lead-prior leads throughout, so their fitness numbers aren't directly
+comparable to a run started with the flag on; don't resume them with it added
+either, same fingerprint-mismatch reason.
+
+This rule is specific to meta-vs-meta. The standard recipe above (real
+collection vs. a co-evolving meta) is deliberately asymmetric -- the two sides
+draw from different pools -- and none of these flags or values carry over to
+it; `scripts/sim.sh` and its defaults are untouched by this recipe.
 
 ```bash
 COLLECTION="jaxon-gl-collection.csv"
 RUN_NAME="meta-vs-meta-vN"          # bump N each run
 
 nohup node scripts/evolve.mjs "$COLLECTION" \
-  --population 300 --opponents-per-gen 120 --generations 30 --pool 70 --elites 30 \
-  --threads 8 \
+  --population 200 --opponents-per-gen 200 --population-final-ratio 1 \
+  --generations 30 --elites 30 --threads 8 \
+  --pool 70 --opponent-meta-pool 70 \
   --curated-ratio 0 \
-  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
-  --opponent-death-rate 0.2 \
+  --death-rate 0.2 --opponent-death-rate 0.2 \
+  --mutation-floor 0.05 --mutation-ceil 0.4 \
   --opponent-mutation-floor 0.05 --opponent-mutation-ceil 0.4 \
+  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
   --opponent-mutation-floor-start 0.15 --opponent-mutation-ceil-start 0.6 \
+  --immigrant-fraction 0.08 --opponent-immigrant-fraction 0.08 \
+  --random-opponent-lead \
   --seed "$RUN_NAME" --out-dir "out/evolve-$RUN_NAME" > "out/evolve-$RUN_NAME.log" 2>&1 &
 echo $! > "out/evolve-$RUN_NAME.pid"
 ```
+
+Expected gen-0 log line:
+`generation 0: battling 200 teams against 200 opponents (0 curated, 200 evolved)`.
 
 Same "check gen 0 timing before walking away" rule as the shared-s2 recipe
 above applies -- the population schedule and both mutation anneals are indexed
@@ -289,11 +385,17 @@ Options (anything else is passed through to `evolve.mjs`):
 | `--fg` | foreground instead of nohup | detached |
 | `--dry-run` | print command, exit | off |
 
-The launcher always adds `--opponents-per-gen 120 --elites 15 --seed NAME
---out-dir out/evolve-NAME` (`--pool` is left unset -- evolve.mjs's own
-default, no cap, whole deduped collection -- unless `--meta` sets it to
-`--meta-pool`). A bare `node scripts/evolve.mjs` uses much smaller defaults
-(pop 100, 20 opponents, 15 gens) and is not a standard run.
+The launcher always adds `--config recipes/standard.json --seed NAME
+--out-dir out/evolve-NAME`. `recipes/standard.json` holds the baked
+defaults -- `opponents-per-gen 120`, `elites 15`, weights
+`snowball/closer/consistency/shared-weakness 0.2/0.1/0.1/0.2` -- edit that
+file, not `sim.sh`, to change them for every future run. A passthrough flag
+of the same name overrides its `--config` value; a passthrough `--config
+other.json` replaces `recipes/standard.json` wholesale (evolve.mjs only
+honors one). `--pool` is left unset -- no cap, whole deduped collection --
+unless `--meta` sets it to `--meta-pool`. A bare `node scripts/evolve.mjs`
+uses much smaller defaults (pop 100, 20 opponents, 15 gens) and is not a
+standard run.
 
 ### Common variants
 
@@ -315,6 +417,29 @@ scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8  --no-evolutions    
   original start timestamp including downtime, so pass the new *total*.
 - Do not pass `--out-dir` through the wrapper; `--name` owns it.
 - Full lower-level flag list: `node scripts/evolve.mjs --help`.
+
+### Cup run
+
+```bash
+scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8  --cup willpower
+```
+
+Restricts the whole run (candidates, opponents, movesets, usage weights, role
+priors, meta group) to the named pvpoke cup -- `--cp` still applies alongside
+it (a cup and its CP cap are looked up together; e.g. `--cup little --cp 500`
+for Little Cup). Two things to expect, both correct, not bugs:
+
+- **Curated opponents are usually empty.** The vendor "GO Battle League"
+  preset file is a Great-League-meta pool; every preset with an
+  ineligible member is dropped, which under most cups is all of them. Opponent
+  quality then rests entirely on the composed/sampled half of the pool
+  (`src/meta/sampleTeams.js`), drawn from the cup's own rankings -- consider
+  raising `--opponent-meta-pool` toward the cup's full field size (it's
+  usually well under the Great League 400 default; the run log prints the
+  effective pool size).
+- `--ban` still layers on top for house rules (e.g. a community-run extra
+  ban) -- the cup's own bans (type/tag/id) come from pvpoke's cup definition
+  and are never something `--ban` needs to restate.
 
 ### Timing expectations (marisa, 300×120 grid, `--threads 8`)
 
@@ -392,7 +517,7 @@ Log lines to recognise:
 ```text
 evolve: starting (collection=..., out-dir=..., report=...)
 generation 0: battling 300 teams against 120 opponents (79 curated, 41 evolved)
-generation 0: done -- mean fitness 41.4%, 36000 battles simulated + 0 served from cache (0 errors), 10m 32s elapsed
+generation 0: done -- mean fitness 41.4%, opponent mean fitness 46.2%, 36000 battles simulated + 0 served from cache (0 errors), 10m 32s elapsed
 evolve: resuming -- 37 generation(s) already complete (config matches)
 Top team: Tinkaton (Lead) / Furret / Carbink -- score 55% (57% elites-pass win rate, 51% over the last 5 generation(s)).
 Done marker written to out/evolve-RUN_NAME/evolve-DONE

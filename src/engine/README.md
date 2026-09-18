@@ -76,6 +76,11 @@ across all 9 lead pairings of a top-meta team against itself the split is
 5–4. `test/e2e.test.js` therefore asserts neither side takes more than
 6 of 9 pairings (win rate inside `[2/9, 7/9]`), not a hard 50/50. A blatantly
 dominant team (3 top-meta mons vs 3 joke mons) wins **all 9** pairings.
+Across a 200x200 co-evolving population (willpower-3, 45 generations) this
+same fixed-side offset shows up at population scale: team A (candidates)
+wins ~45-47% of battles overall -- a harness side bias, not a skill gap
+between the populations. See RUNBOOK.md "Known artifact: candidates read
+~5-8pts low on fitness (side bias, not population skill)".
 
 **Instance rules.** As with `simBattle`, `teamA` and `teamB` must be distinct
 Pokemon instances from each other (pvpoke mutates `.index`/battle state on the
