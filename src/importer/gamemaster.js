@@ -164,6 +164,12 @@ export function createSpeciesResolver() {
   const byName = cachedIndex;
 
   return function resolveSpecies({ name, form, gender }) {
+    // An exact gamemaster speciesId in the name column wins outright
+    // (scripts/build-meta-collection.mjs writes ids: pvpoke's rankings label
+    // `morpeko_full_belly` "Morpeko (Hangry)", so its display names are not a
+    // safe key). Base ids only -- shadow stays its own flag.
+    const byId = typeof name === 'string' && !form ? cachedById?.get(name.trim()) : null;
+    if (byId && !byId.speciesId.endsWith('_shadow')) return { speciesId: byId.speciesId, speciesName: byId.speciesName };
     const candidates = buildCandidateNames({ name, form, gender });
     for (const candidate of candidates) {
       const entry = byName.get(normalizeKey(candidate));

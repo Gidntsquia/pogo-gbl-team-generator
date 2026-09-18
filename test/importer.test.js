@@ -84,6 +84,7 @@ test('species resolver: forms, gendered species, punctuation, size/letter varian
   const resolve = createSpeciesResolver();
   const cases = [
     [{ name: 'Rattata' }, 'rattata'],
+    [{ name: 'morpeko_full_belly' }, 'morpeko_full_belly'], // exact speciesId (meta collection CSV)
     [{ name: 'Rattata', form: 'Alola' }, 'rattata_alolan'],
     [{ name: 'Rattata', form: 'Alolan' }, 'rattata_alolan'],
     [{ name: 'Stunfisk', form: 'Galar' }, 'stunfisk_galarian'],

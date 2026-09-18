@@ -205,10 +205,10 @@ import { importCollection } from '../src/importer/index.js';
 import { expandEvolutions } from '../src/evolution/index.js';
 import { filterEligibleMons } from '../src/util/eligibility.js';
 import { teamBuildCost } from '../src/cost/powerup.js';
-import { initEngine } from '../src/engine/harness.js';
+import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
-import { scoreCollection, computeWeightedScore } from '../src/scoring/index.js';
+import { scoreCollection, computeWeightedScore, buildMetaMon, applyGroupMoveset } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
 import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf, composeSampledOpponent } from '../src/meta/sampleTeams.js';
 import { archetypeGroups, archetypeWeights, DEFAULT_ARCHETYPE_BETA, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../src/meta/archetypes.js';
@@ -937,7 +937,7 @@ function leadExchangeLoser(summary) {
  * of matrix key, so an opponent lead gets real coverage relief for the
  * first time instead of always reading the empty-map fallback.
  */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v14';
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v15';
 const TYPE_COVERAGE_META_SIZE = 200;
 // Closer/consistency disabled for now (weights zeroed rather than removed,
 // so they're a one-line revert away). Snowball is opt-in via
@@ -1433,7 +1433,11 @@ function buildRunConfig(csvPath, opts) {
   return {
     csvPath: path.resolve(csvPath),
     scoreMeta: opts.scoreMeta ?? DEFAULTS.scoreMeta,
-    evolutions: opts.evolutions ?? true,
+    // Meta mode forces expansion off: the meta collection already lists every
+    // ranked build as its own row, and expansion would fold a ranked
+    // pre-evolution (Morgrem, Zweilous, ...) into its evolved form's lineage,
+    // deleting a build the opponent side still fields.
+    evolutions: opts.metaMode ? false : opts.evolutions ?? true,
     // undefined = no cap, whole deduped collection (buildSamplingPool).
     pool: opts.pool ?? undefined,
     seed: String(opts.seed ?? DEFAULTS.seed),
@@ -1484,7 +1488,11 @@ function buildRunConfig(csvPath, opts) {
     // output to the unflagged run because config.candidateSampleAlpha stayed
     // undefined the whole time despite the flag parsing correctly). undefined
     // here still means "no override" (DEFAULT_BLEND_ALPHA applies).
-    candidateSampleAlpha: opts.candidateSampleAlpha,
+    candidateSampleAlpha: opts.candidateSampleAlpha ?? (opts.metaMode ? 1 : undefined),
+    // Meta-vs-meta mode: both sides share one species universe, so the
+    // candidate side picks its species pool by pvpoke rank and samples by
+    // usage weight only, like the opponent side. Part of the fingerprint.
+    metaMode: !!opts.metaMode,
     // Changes what a composed opponent's lead IS, not just a weighting --
     // resuming under a different value would silently regenerate every
     // future opponent with a different lead policy than the ones already in
@@ -3435,7 +3443,18 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
   // expansion (see src/util/eligibility.js's header for why order matters).
   const eligible = filterEligibleMons(ctx, expanded.mons);
   const mons = eligible.mons;
-  const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta });
+  // Meta mode: every candidate fields the exact moveset pvpoke's rankings file
+  // lists for that build -- the moveset the opponent side composes with --
+  // instead of pvpoke's auto-selected one (they differ for a few builds, e.g.
+  // morpeko_full_belly's Aura Wheel type). Logged as build parity below.
+  if (config.metaMode) {
+    const rankedMoves = new Map(loadMovesetPool(ctx, { metaPoolSize: 0 }).map((e) => [e.speciesId, e]));
+    for (const mon of mons) {
+      const ranked = rankedMoves.get(`${mon.speciesId}${mon.shadow ? '_shadow' : ''}`);
+      if (ranked) mon.moves = { fastMove: ranked.fastMove, chargedMoves: ranked.chargedMoves };
+    }
+  }
+  const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta, currentMoves: config.metaMode });
   // keepShadowVariants: the GA's shadow-flip mutation needs both the shadow and
   // the non-shadow specimen of a species on hand to swap between; the sampler
   // itself still sees one key per species (see buildSamplingPool).
@@ -3450,7 +3469,49 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
   const candidateExcludeSpecies = banBaseIds.size
     ? [...new Set([...config.excludeSpecies, ...expandBanToCandidateSpeciesIds(deduped.builtMons, banBaseIds)])]
     : config.excludeSpecies;
-  const pool = buildSamplingPool(deduped, config.pool, candidateExcludeSpecies);
+  // --meta-mode (meta-vs-meta): the collection IS the ranked field, so the
+  // candidate species pool is chosen by the SAME criterion as the opponent's
+  // (pvpoke overall rank, top --pool) instead of by 1v1 matrix score. A
+  // real-collection run keeps the matrix-score pool: a player's own mons have
+  // no pvpoke rank of their own (IVs, levels, legacy moves differ).
+  let pool;
+  if (config.metaMode) {
+    const rankedEntries = filterBannedMovesetPool(loadMovesetPool(ctx, { metaPoolSize: config.pool ?? 0 }), banBaseIds);
+    const rankedIds = new Set(rankedEntries.map((e) => e.speciesId));
+    const exclude = new Set(candidateExcludeSpecies);
+    pool = Object.keys(deduped.builtMons)
+      .filter((key) => {
+        const b = deduped.builtMons[key];
+        return !exclude.has(b.speciesId) && rankedIds.has(`${b.speciesId}${b.spec?.shadow ? '_shadow' : ''}`);
+      })
+      .sort();
+    log(`evolve: meta mode -- candidate species pool = ${pool.length} of pvpoke's top ${rankedIds.size} ranked builds`);
+    // Build parity: a candidate and an opponent of the same ranked build must
+    // be the same fighter (IVs, level, CP, moveset). Logged, not assumed.
+    const describe = (pk) =>
+      `${pk.ivs?.atk}/${pk.ivs?.def}/${pk.ivs?.hp} L${pk.level} cp${pk.cp} ${pk.fastMove?.moveId}+${(pk.chargedMoves ?? []).map((m) => m.moveId).sort().join(',')}`;
+    const byRankedId = new Map(pool.map((key) => {
+      const b = deduped.builtMons[key];
+      return [`${b.speciesId}${b.spec?.shadow ? '_shadow' : ''}`, b];
+    }));
+    const mismatches = [];
+    for (const entry of rankedEntries) {
+      const cand = byRankedId.get(entry.speciesId);
+      if (!cand) { mismatches.push(`${entry.speciesId}: no candidate build`); continue; }
+      // Rebuilt fresh from the spec (what a worker thread battles with): the
+      // matrix's own instance has already fought 1v1s, and a form-changer
+      // (Morpeko) carries its mid-battle move swap on the object.
+      const fresh = buildPokemon(ctx, cand.spec);
+      if (cand.spec.fastMove) applyGroupMoveset(fresh, cand.spec);
+      const a = describe(fresh);
+      const o = describe(buildMetaMon(ctx, entry).pokemon);
+      if (a !== o) mismatches.push(`${entry.speciesId}: candidate ${a} vs opponent ${o}`);
+    }
+    log(`evolve: meta mode -- build parity: ${rankedEntries.length - mismatches.length}/${rankedEntries.length} ranked builds identical on both sides`);
+    for (const m of mismatches.slice(0, 20)) log(`evolve: meta mode -- build mismatch: ${m}`);
+  } else {
+    pool = buildSamplingPool(deduped, config.pool, candidateExcludeSpecies);
+  }
   const roleScores = loadRoleScores(ctx); // lead/closer/switch priors, cheap local-file read
   // Fed to composeSampledOpponent (initOpponentPool/nextOpponentPool/
   // composeFreshOpponents) only -- omitting roleScores there makes
@@ -3659,6 +3720,7 @@ export async function runEvolution(csvPath, opts = {}) {
         seed: `${config.seed}-gen0`,
         excludeSpecies: candidateExcludeSpecies,
         alpha: config.candidateSampleAlpha,
+        perBuild: config.metaMode,
       });
       opponentPool = initOpponentPool(ctx, {
         size: opponentsAt(0, config),
@@ -3846,6 +3908,7 @@ export async function runEvolution(csvPath, opts = {}) {
             targetSize: populationAt(generation + 1, config),
             deathRate: config.deathRate,
             alpha: config.candidateSampleAlpha,
+            perBuild: config.metaMode,
             // Annealed per generation (constant when no start value is set)
             // -- see mutationRatesAt.
             ...mutationRatesAt(generation, config),
@@ -4614,6 +4677,7 @@ export function parseEvolveArgs(argv) {
         fitness: { type: 'string' },
         'death-rate': { type: 'string' },
         'candidate-sample-alpha': { type: 'string' },
+        'meta-mode': { type: 'boolean' },
         'mutation-floor': { type: 'string' },
         'mutation-ceil': { type: 'string' },
         'mutation-floor-start': { type: 'string' },
@@ -4726,6 +4790,7 @@ export function parseEvolveArgs(argv) {
     // fitness gap this one formula difference accounts for. undefined (flag
     // omitted) is a no-op: DEFAULT_BLEND_ALPHA (0.5) applies as before. Not
     // part of any evolve recipe.
+    metaMode: !!values['meta-mode'],
     candidateSampleAlpha:
       values['candidate-sample-alpha'] !== undefined
         ? fractionFlag(values['candidate-sample-alpha'], 'candidate-sample-alpha', undefined)

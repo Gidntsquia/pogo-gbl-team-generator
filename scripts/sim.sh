@@ -193,7 +193,7 @@ if [ "$meta" = 1 ]; then
   # opponent fitness gap (mean final blend gap -0.108 -> -0.027, mean final
   # raw gap -0.137 -> -0.032, `ga` vs `sample-usage-only-v2` labels,
   # plans/WORKER_NOTES.md).
-  cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --candidate-sample-alpha 1)
+  cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --meta-mode)
 fi
 [ -n "$ban" ] && cmd+=(--ban "$ban")
 [ -n "$threads" ] && cmd+=(--threads "$threads")

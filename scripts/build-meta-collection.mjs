@@ -56,7 +56,10 @@ if (!Array.isArray(rankings) || rankings.length === 0) {
 const rows = rankings
   .filter((r) => typeof r?.speciesId === 'string' && typeof r?.speciesName === 'string')
   .map((r) => ({
-    name: r.speciesName.replace(/\s*\((Shadow|Purified)\)\s*$/i, ''),
+    // The base speciesId, not speciesName: pvpoke's rankings mislabel some
+    // forms (morpeko_full_belly is named "Morpeko (Hangry)"), and the
+    // importer resolves an exact id first (src/importer/gamemaster.js).
+    name: r.speciesId.replace(/_shadow$/, ''),
     shadow: r.speciesId.endsWith('_shadow'),
   }));
 

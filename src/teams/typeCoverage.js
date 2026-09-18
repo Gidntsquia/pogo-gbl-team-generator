@@ -141,7 +141,13 @@ export function computeLeadCoverageScores(leadPokemon, rankedMons, speciesWeight
  * chargedMoves}`, so the same function keys both sides identically.
  */
 export function coverageBuildKey(built) {
-  return `${built.speciesId}|${built.fastMove}|${[...(built.chargedMoves ?? [])].sort().join(',')}`;
+  // Moves are read off the built pvpoke Pokemon when present: a candidate
+  // matrix entry carries no top-level fastMove/chargedMoves, an opponent
+  // MetaMon does, and both carry `.pokemon`. `_shadow` is stripped because
+  // coverage (move types vs target types) does not depend on shadow state.
+  const fast = built.pokemon?.fastMove?.moveId ?? built.fastMove;
+  const charged = built.pokemon?.chargedMoves?.map((m) => m.moveId) ?? built.chargedMoves ?? [];
+  return `${String(built.speciesId).replace(/_shadow$/, '')}|${fast}|${[...charged].sort().join(',')}`;
 }
 
 /** Build the run-wide top-meta prevalence and exact-build move-coverage maps. */
@@ -152,7 +158,10 @@ export function buildTypeCoverageContext(ctx, builtMons, rankedEntries, speciesW
   for (const built of Object.values(builtMons)) {
     leadCoverageByKey.set(coverageBuildKey(built), computeLeadCoverageScores(built.pokemon, rankedMons, speciesWeights));
   }
-  return { metaSize: rankedMons.length, typeWeights, leadCoverageByKey };
+  // rankedMons/speciesWeights ride along so a lead whose exact build is not in
+  // the candidate collection (any opponent build: `_shadow` ids, other
+  // movesets) gets its coverage computed on first lookup -- see leadCoverageFor.
+  return { metaSize: rankedMons.length, typeWeights, leadCoverageByKey, rankedMons, speciesWeights };
 }
 
 /**
@@ -182,6 +191,22 @@ export function buildTypeCoverageContext(ctx, builtMons, rankedEntries, speciesW
  * When no context is supplied, prevalence defaults to 1 (worst case) and
  * coverage defaults to none.
  */
+/**
+ * Coverage scores for a lead build, from the context's cache or computed (and
+ * cached) on a miss, so both sides get the same relief for the same build.
+ */
+export function leadCoverageFor(context, built) {
+  const cache = context?.leadCoverageByKey;
+  if (!cache) return null;
+  const key = coverageBuildKey(built);
+  let scores = cache.get(key);
+  if (!scores && context.rankedMons && built.pokemon) {
+    scores = computeLeadCoverageScores(built.pokemon, context.rankedMons, context.speciesWeights);
+    cache.set(key, scores);
+  }
+  return scores ?? null;
+}
+
 export function computeSharedWeaknessScore(members, context = {}) {
   const empty = { score: 1, load: 0, sharedTypes: [] };
   if (!members || members.length < 2) return empty;
@@ -190,7 +215,7 @@ export function computeSharedWeaknessScore(members, context = {}) {
   if (leadProfile.size === 0) return empty;
   const backs = members.slice(1);
   const suppliedTypeWeights = context.typeWeights instanceof Map && context.typeWeights.size > 0;
-  const leadCoverage = context.leadCoverage ?? context.leadCoverageByKey?.get(coverageBuildKey(members[0])) ?? new Map();
+  const leadCoverage = context.leadCoverage ?? leadCoverageFor(context, members[0]) ?? new Map();
   const sharedTypes = [];
   let load = 0;
 

@@ -3,18 +3,13 @@
 // only -- no battle math, no engine boot -- so both sides (and this module's
 // own tests) can exercise it against fake fitness arrays.
 //
-// This does NOT attempt a literal merge of the two GAs' selection loops --
-// see out/plan-unify-ga.md for why (population element shape, growth
-// direction, curated/protected-origin handling and immigrant sourcing
-// genuinely differ). What lands here is the machinery that WAS drifting
-// apart for no reason: archetype-pair crowding weights for the voting side
-// (previously species-share on the candidate side, archetype-pair on the
-// opponent side) and trailing-mean selection smoothing (previously
-// candidate-only). Shadow-twin rivalry, once a third shared helper here,
-// lives in src/meta/archetypes.js coreRivalryFitness as the whole-team
-// similarity term of core rivalry.
+// `evolveStep` below is THE generation step for both sides: rivalry ranking,
+// cull, mutation roll, mutant/immigrant seat split, fill and dedupe. Each side
+// supplies only an adapter (how a team is identified and profiled, how a mutant
+// or an immigrant is built) plus, on the opponent side, its protected (curated)
+// entries. nextGeneration / nextOpponentPool are thin callers.
 
-import { archetypeGroups, archetypeWeights } from '../meta/archetypes.js';
+import { archetypeGroups, archetypeWeights, coreRivalryFitness } from '../meta/archetypes.js';
 
 // Bounded retries when a mutant/immigrant collides with an already-used
 // identity -- one constant shared by both sides instead of two copies.
@@ -183,4 +178,115 @@ export function trailingFitnessGeneric(history, signature, trailing, decay) {
   const scores = new Map();
   for (const [sig, sum] of sums) scores.set(sig, sum / weights.get(sig));
   return history[end].population.map((entry, i) => scores.get(signature(entry)) ?? history[end].fitness[i]);
+}
+
+/**
+ * One GA generation step, shared by both sides. Side-agnostic: everything a
+ * side contributes comes through `adapter`, and the function never asks which
+ * side is calling.
+ *
+ * Order of work (one rng stream, deterministic):
+ *  1. rivalry ranking (coreRivalryFitness, whole-team twins read `'lead'`:
+ *     same lead, backs in either order -- the same identity `signatureOf` uses);
+ *  2. cull (computeChurn), exact-duplicate losers die on top of it;
+ *  3. mutation roll per survivor, chance ramping floor->ceil with rank
+ *     percentile, one type roll per success; `extraParents` (protected
+ *     entries, never culled) roll a flat `extraParentRate`;
+ *  4. seat split (allocateNewSlots), mutants built through the adapter -- a
+ *     shadowFlip that cannot be built falls through to a memberSwap;
+ *  5. immigrants fill the rest (finalizeImmigrantCount), bounded retries;
+ *  6. dedupe: `used` holds the signature of EVERY entry alive at the start
+ *     (culled ones included, so a team just judged weakest is not re-created
+ *     the same generation), `reserved`, and each new team as it is accepted.
+ *
+ * @param {object} params
+ * @param {any[]} params.entries - the evolvable entries.
+ * @param {number[]} params.fitness - parallel to `entries`.
+ * @param {number} params.targetSize - next generation's evolvable headcount.
+ * @param {() => number} params.rng
+ * @param {{deathRate:number, mutationFloor:number, mutationCeil:number, leadRotationRate:number,
+ *   shadowFlipRate:number, immigrantFraction:number}} params.rates
+ * @param {{coreRivalry:number, similar:number, floor:number, similarity:any}} params.rivalry
+ * @param {{profilesOf:(e:any)=>any[], signatureOf:(e:any)=>string,
+ *   buildMutant:(parent:any, type:string, accept:(e:any)=>boolean, rng:()=>number, maxAttempts:number)=>object|null,
+ *   immigrants:(count:number, rng:()=>number)=>Iterable<any>}} params.adapter -
+ *   `buildMutant` returns `{entry, ...detail}` for an entry `accept` took, or
+ *   null; `accept(entry)` is the dedupe check (true = new, now recorded).
+ * @param {any[]} [params.extraParents] - protected entries that may parent a mutant.
+ * @param {number} [params.extraParentRate]
+ * @param {string[]} [params.reserved] - signatures new teams must also avoid.
+ * @returns {{died:number[], coreRivalryDied:number[], survivorIdx:number[],
+ *   mutants:Array<object>, immigrants:any[]}} indices are into `entries`;
+ *   `survivorIdx` ascending; each mutant is `{entry, parent, parentIndex, type, ...detail}`
+ *   (`parentIndex` -1 for an extra parent).
+ */
+export function evolveStep({ entries, fitness, targetSize, rng, rates, rivalry, adapter, extraParents = [], extraParentRate = 0, reserved = [] }) {
+  const { deathRate, mutationFloor, mutationCeil, leadRotationRate, shadowFlipRate, immigrantFraction } = rates;
+  const { shared, rivalsAbove, twinLosers } = coreRivalryFitness(
+    entries.map(adapter.profilesOf),
+    fitness,
+    rivalry.coreRivalry,
+    { similar: rivalry.similar, floor: rivalry.floor, similarity: rivalry.similarity, twins: 'lead' }
+  );
+  const loserSet = new Set(twinLosers);
+  const contenderIdx = entries.map((_, i) => i).filter((i) => !loserSet.has(i));
+  const rankedWorstFirst = contenderIdx.slice().sort((a, b) => shared[a] - shared[b] || a - b);
+  const { deathCount } = computeChurn({ liveCount: entries.length, contenders: rankedWorstFirst.length, targetSize, deathRate });
+  const byRaw = (a, b) => fitness[a] - fitness[b] || a - b;
+  const died = [...twinLosers, ...rankedWorstFirst.slice(0, deathCount)].sort(byRaw);
+  const survivorsAsc = rankedWorstFirst.slice(deathCount);
+  const rawCut = new Set(contenderIdx.slice().sort(byRaw).slice(deathCount));
+  const coreRivalryDied = rankedWorstFirst.slice(0, deathCount).filter((i) => rawCut.has(i) && rivalsAbove[i] > 0);
+
+  const rollType = () => {
+    const t = rng();
+    return t < leadRotationRate ? 'leadRotation' : t < leadRotationRate + shadowFlipRate ? 'shadowFlip' : 'memberSwap';
+  };
+  const rolls = [];
+  const n = survivorsAsc.length;
+  survivorsAsc.forEach((idx, rank) => {
+    const percentile = n <= 1 ? 1 : rank / (n - 1);
+    if (rng() < mutationFloor + (mutationCeil - mutationFloor) * percentile) {
+      rolls.push({ parent: entries[idx], parentIndex: idx, percentile, type: rollType() });
+    }
+  });
+  for (const parent of extraParents) {
+    if (rng() < extraParentRate) rolls.push({ parent, parentIndex: -1, percentile: 0, type: rollType() });
+  }
+
+  const openSlots = Math.max(0, targetSize - survivorsAsc.length);
+  const { chosenRolls } = allocateNewSlots({ openSlots, immigrantFraction, targetSize, rolls });
+
+  const used = new Set([...entries.map(adapter.signatureOf), ...reserved]);
+  const accept = (entry) => {
+    const sig = adapter.signatureOf(entry);
+    if (used.has(sig)) return false;
+    used.add(sig);
+    return true;
+  };
+  const maxAttempts = Math.max(chosenRolls.length, 1) * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
+  const mutants = [];
+  for (const { parent, parentIndex, type } of chosenRolls) {
+    let builtType = type;
+    let built = adapter.buildMutant(parent, type, accept, rng, maxAttempts);
+    if (!built && type === 'shadowFlip') {
+      builtType = 'memberSwap';
+      built = adapter.buildMutant(parent, builtType, accept, rng, maxAttempts);
+    }
+    if (!built) continue; // bounded retries exhausted -- graceful shortfall, backfilled below
+    mutants.push({ ...built, parent, parentIndex, type: builtType });
+  }
+
+  const immigrantCount = finalizeImmigrantCount({ openSlots, builtMutantCount: mutants.length });
+  const immigrants = [];
+  if (immigrantCount > 0) {
+    const budget = immigrantCount * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
+    let attempts = 0;
+    for (const entry of adapter.immigrants(budget, rng)) {
+      if (immigrants.length >= immigrantCount || attempts >= budget) break;
+      attempts += 1;
+      if (accept(entry)) immigrants.push(entry);
+    }
+  }
+  return { died, coreRivalryDied, survivorIdx: survivorsAsc.slice().sort((a, b) => a - b), mutants, immigrants };
 }

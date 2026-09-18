@@ -7,6 +7,7 @@ import {
   computeTypePrevalence,
   computeLeadCoverageScores,
   computeSharedWeaknessScore,
+  coverageBuildKey,
   buildTypeCoverageContext,
 } from '../src/teams/typeCoverage.js';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
@@ -185,4 +186,15 @@ test('an opponent lead and a candidate lead with the same build get the same sha
   // both sides sharing the empty-map fallback for different reasons).
   const key = [...context.leadCoverageByKey.keys()][0];
   assert.ok(context.leadCoverageByKey.get(key).size > 0);
+
+  // An opponent build ABSENT from the candidate collection (a `_shadow` id)
+  // gets its coverage computed on lookup, identical to the collection build's.
+  const shadowLead = buildMetaMon(ctx, { ...leadEntry, speciesId: 'swampert_shadow' });
+  const shadowScore = computeSharedWeaknessScore([shadowLead, ...backs], context);
+  assert.equal(shadowScore.load, candidateScore.load);
+  // ...and a build with a different moveset is a genuinely new key.
+  const otherLead = buildMetaMon(ctx, { ...leadEntry, chargedMoves: ['HYDRO_CANNON', 'SLUDGE_WAVE'] });
+  computeSharedWeaknessScore([otherLead, ...backs], context);
+  assert.equal(context.leadCoverageByKey.size, 2);
+  assert.ok(context.leadCoverageByKey.get(coverageBuildKey(otherLead)).size > 0);
 });

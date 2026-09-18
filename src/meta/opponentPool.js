@@ -43,9 +43,9 @@
 import { rngFromSeed, pickWeighted } from '../util/rng.js';
 import { buildMetaMon } from '../scoring/index.js';
 import { curatedTierWeight } from './teams.js';
-import { coreRivalryFitness, opponentProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from './archetypes.js';
+import { opponentProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from './archetypes.js';
 import { createSimilarity } from '../engine/similarity.js';
-import { computeChurn, allocateNewSlots, finalizeImmigrantCount } from '../ga/core.js';
+import { evolveStep } from '../ga/core.js';
 import {
   baseIdOf,
   composeSampledOpponent,
@@ -184,8 +184,12 @@ export function initOpponentPool(ctx, params) {
   while (pool.length < size && attempts < maxAttempts) {
     attempts += 1;
     const team = composeSampledOpponent(ctx, rng, movesetPool, weights, roleScores);
-    if (used.has(team.id)) continue;
-    used.add(team.id);
+    // Gen-0 identity is the unordered species set, the candidate side's
+    // initPopulation rule (src/teams/sample.js dedupes the trio BEFORE a lead
+    // is assigned), so neither side starts with two leads of one trio.
+    const setKey = team.members.map((m) => m.speciesId).sort().join('|');
+    if (used.has(setKey)) continue;
+    used.add(setKey);
     pool.push({ ...team, origin: 'sampled', label: 'sampled' });
   }
   return pool;
@@ -198,11 +202,23 @@ export function initOpponentPool(ctx, params) {
  * meta-pool draw that shares no base species with the two members kept.
  * Returns a new entry or `null` if every bounded attempt collided.
  */
-function buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAttempts) {
+/**
+ * Lead-aware identity of an opponent entry: the lead's speciesId, then the two
+ * backs sorted -- the same rule as src/teams/evolve.js teamSignature, so both
+ * sides agree on when two teams are the same individual.
+ */
+export function opponentSignature(entry) {
+  const ids = entry.members.map((m) => m.speciesId);
+  return `${ids[0]}||${ids.slice(1).sort().join('|')}`;
+}
+
+function buildMemberSwap(ctx, parent, movesetPool, weights, accept, rng, maxAttempts) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const slot = Math.floor(rng() * TEAM_SIZE) % TEAM_SIZE;
-    const kept = parent.members.filter((_, i) => i !== slot);
-    const excludeBaseIds = new Set(kept.map((m) => baseIdOf(m.speciesId)));
+    // Every current member's base species is excluded, the replaced one
+    // included -- the candidate side's rule (a swap brings in a DIFFERENT
+    // species; changing only shadow state is the shadowFlip mutation's job).
+    const excludeBaseIds = new Set(parent.members.map((m) => baseIdOf(m.speciesId)));
     const eligible = movesetPool.filter(
       (e) => !excludeBaseIds.has(baseIdOf(e.speciesId)) && (weights.get(e.speciesId) ?? 0) > 0
     );
@@ -218,8 +234,7 @@ function buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAtt
     const members = parent.members.slice();
     members[slot] = built;
     const { id, name } = describeSampledTeam(ctx, members);
-    if (usedIds.has(id)) continue;
-    usedIds.add(id);
+    if (!accept({ id, members })) continue;
     return { id, name, members, leadIndex: 0, parentId: parent.id, swappedSlot: slot };
   }
   return null;
@@ -230,13 +245,12 @@ function buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAtt
  * 0. Same three species, a different designated lead, therefore a different
  * entry. There are only two possible rotations, so this exhausts fast.
  */
-function buildLeadRotation(ctx, parent, usedIds, rng, maxAttempts) {
+function buildLeadRotation(ctx, parent, accept, rng, maxAttempts) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const promoted = BACK_SLOTS[Math.floor(rng() * BACK_SLOTS.length) % BACK_SLOTS.length];
     const members = orderMembersByLead(parent.members, promoted);
     const { id, name } = describeSampledTeam(ctx, members);
-    if (usedIds.has(id)) continue;
-    usedIds.add(id);
+    if (!accept({ id, members })) continue;
     return { id, name, members, leadIndex: 0, parentId: parent.id, promotedSlot: promoted };
   }
   return null;
@@ -278,7 +292,7 @@ function buildOpponentShadowTwins(movesetPool) {
  * `null` if no member is flippable, a rebuild throws (rare gamemaster edge
  * case), or every attempted combination collides with a used id.
  */
-function buildOpponentShadowFlip(ctx, parent, shadowTwins, usedIds, rng, maxAttempts) {
+function buildOpponentShadowFlip(ctx, parent, shadowTwins, accept, rng, maxAttempts) {
   const flippable = [];
   parent.members.forEach((m, slot) => {
     if (shadowTwins.has(m.speciesId)) flippable.push(slot);
@@ -305,8 +319,7 @@ function buildOpponentShadowFlip(ctx, parent, shadowTwins, usedIds, rng, maxAtte
     }
     if (!ok) continue;
     const { id, name } = describeSampledTeam(ctx, members);
-    if (usedIds.has(id)) continue;
-    usedIds.add(id);
+    if (!accept({ id, members })) continue;
     return { id, name, members, leadIndex: 0, parentId: parent.id, flippedSlots };
   }
   return null;
@@ -395,14 +408,12 @@ export function nextOpponentPool(ctx, params) {
   // ---- (1) curated: never culled, topped up to the ratio ------------------
   const curatedKept = pool.filter(isProtectedOpponent);
   const curatedTarget = curatedHeadcount(targetSize, curatedRatio, curated.length);
-  const usedIds = new Set(pool.map((e) => e.id));
   const curatedAdded = [];
   if (curatedKept.length < curatedTarget) {
     const heldIds = new Set(curatedKept.map((e) => e.curatedId ?? e.id));
     const available = curated.filter((t) => !heldIds.has(t.id));
     for (const team of pickWeighted(rng, available, curatedTierWeight, curatedTarget - curatedKept.length)) {
       curatedAdded.push(curatedEntry(team));
-      usedIds.add(team.id);
     }
   }
   // Curated entries are never culled, but they also cannot overflow a pool the
@@ -412,130 +423,53 @@ export function nextOpponentPool(ctx, params) {
   // topped-up (and therefore lowest-priority) end.
   const curatedOut = [...curatedKept, ...curatedAdded].slice(0, Math.max(0, targetSize));
 
-  // ---- (2) evolvable: twin-cull, rank worst-first, cull --------------------
+  // ---- (2) evolvable entries: the shared generation step ------------------
+  // src/ga/core.js evolveStep does rivalry ranking, cull, mutation roll, seat
+  // split, fill and dedupe -- the same function the candidate side calls.
+  // This side's adapter: an entry is identified by opponentSignature (lead +
+  // sorted backs, the candidate side's teamSignature rule), mutants and
+  // immigrants are composed from the meta moveset pool. Curated entries are
+  // protected input data: never ranked or culled, they only parent mutants at
+  // the flat curatedMutationRate and reserve their identities.
   const evolvableIdx = pool.map((_, i) => i).filter((i) => !isProtectedOpponent(pool[i]));
-  // Rivalries among the evolvable entries only (src/meta/archetypes.js
-  // coreRivalryFitness; curated entries are neither penalised nor count as
-  // rivals -- they are never culled anyway). Whole-team similarity is read
-  // slot for slot (`twins: 'positional'` -- an OpponentEntry's id is
-  // positional and a back's slot can matter to how the engine sequences a
-  // switch-in, so unlike the candidate side's sorted backs this must never
-  // treat two entries the pool itself distinguishes as one). An exact
-  // duplicate draw dies outright, only the fitter copy living; a shadow
-  // variant of a better entry pays the heavy twin load instead. An exact
-  // duplicate can arise from a chance draw or from a shadowFlip mutation
-  // that happens to land on a build already in the pool (see
-  // buildOpponentShadowFlip); a shadow variant of a better entry can arise
-  // either way too.
   const similarity = coreRivalry > 0 && similarRivalry > 0 ? opts.similarity ?? createSimilarity() : null;
-  const { shared, rivalsAbove, twinLosers } = coreRivalryFitness(
-    evolvableIdx.map((i) => opponentProfiles(pool[i])),
-    evolvableIdx.map((i) => fitness[i]),
-    coreRivalry,
-    { similar: similarRivalry, floor: similarFloor, similarity, twins: 'positional' }
-  );
-  const duplicateDied = twinLosers.map((k) => evolvableIdx[k]);
-  const twinLoserSet = new Set(duplicateDied);
-  const contenderIdx = evolvableIdx.filter((i) => !twinLoserSet.has(i));
-  const rankFitness = new Map(evolvableIdx.map((i, k) => [i, shared[k]]));
-  const rivalsOf = new Map(evolvableIdx.map((i, k) => [i, rivalsAbove[k]]));
-  const rankedWorstFirst = contenderIdx.slice().sort((a, b) => rankFitness.get(a) - rankFitness.get(b) || a - b);
   const evolvableTarget = Math.max(0, targetSize - curatedOut.length);
-  // Shared churn/cull accounting (src/ga/core.js computeChurn -- churn is a
-  // share of who is ALIVE NOW, `evolvableIdx.length`, not of the target;
-  // see that function's doc). Twin-rivalry deaths add to the total death
-  // toll ON TOP of this cull -- the cull is the same headcount it would be
-  // with no twins, taken off the worst contenders, same as the candidate
-  // side -- so a twin loser never shields the bottom of the ranking.
-  const { deathCount } = computeChurn({
-    liveCount: evolvableIdx.length,
-    contenders: rankedWorstFirst.length,
-    targetSize: evolvableTarget,
-    deathRate,
-  });
-  const died = [...duplicateDied, ...rankedWorstFirst.slice(0, deathCount)].sort((a, b) => fitness[a] - fitness[b] || a - b);
-  const survivorIdxAsc = rankedWorstFirst.slice(deathCount); // worst-to-best among survivors
-  const rawCut = new Set(contenderIdx.slice().sort((a, b) => fitness[a] - fitness[b] || a - b).slice(deathCount));
-  const coreRivalryDied = rankedWorstFirst.slice(0, deathCount).filter((i) => rawCut.has(i) && rivalsOf.get(i) > 0);
-  const survivorsOut = survivorIdxAsc
-    .slice()
-    .sort((a, b) => a - b)
-    .map((i) => pool[i]);
-
-  const openSlots = Math.max(0, evolvableTarget - survivorsOut.length);
-  // `usedIds` deliberately still holds the ids of the teams just culled: a
-  // mutant or immigrant must not re-create, this same generation, a team the
-  // cull just decided was the pool's weakest. They become drawable again next
-  // generation, when `usedIds` is rebuilt from the surviving pool.
-
-  // ---- (3) mutation: evolvable survivors ramp with fitness percentile,
-  //          curated parents roll a flat (much lower) rate ------------------
-  // Type roll matches evolve.js's rollMutations: leadRotationRate share are
-  // lead rotations, the next shadowFlipRate share are shadow flips, the rest
-  // member swaps -- one typeRoll per success, same as before shadowFlip
-  // existed here (it only splits the existing memberSwap share, doesn't add
-  // an extra rng() draw).
-  const rollType = () => {
-    const typeRoll = rng();
-    return typeRoll < leadRotationRate ? 'leadRotation' : typeRoll < leadRotationRate + shadowFlipRate ? 'shadowFlip' : 'memberSwap';
+  const adapter = {
+    profilesOf: opponentProfiles,
+    signatureOf: opponentSignature,
+    buildMutant(parent, type, accept, mrng, maxAttempts) {
+      const built =
+        type === 'leadRotation'
+          ? buildLeadRotation(ctx, parent, accept, mrng, maxAttempts)
+          : type === 'shadowFlip'
+            ? buildOpponentShadowFlip(ctx, parent, shadowTwins, accept, mrng, maxAttempts)
+            : buildMemberSwap(ctx, parent, movesetPool, weights, accept, mrng, maxAttempts);
+      return built && { entry: built };
+    },
+    *immigrants(budget, irng) {
+      for (let i = 0; i < budget; i++) yield composeSampledOpponent(ctx, irng, movesetPool, weights, roleScores);
+    },
   };
-  const rolls = [];
-  const n = survivorIdxAsc.length;
-  survivorIdxAsc.forEach((idx, rank) => {
-    const percentile = n <= 1 ? 1 : rank / (n - 1);
-    const chance = mutationFloor + (mutationCeil - mutationFloor) * percentile;
-    if (rng() < chance) rolls.push({ parent: pool[idx], percentile, type: rollType() });
+  const step = evolveStep({
+    entries: evolvableIdx.map((i) => pool[i]),
+    fitness: evolvableIdx.map((i) => fitness[i]),
+    targetSize: evolvableTarget,
+    rng,
+    rates: { deathRate, mutationFloor, mutationCeil, leadRotationRate, shadowFlipRate, immigrantFraction },
+    rivalry: { coreRivalry, similar: similarRivalry, floor: similarFloor, similarity },
+    adapter,
+    extraParents: curatedOut,
+    extraParentRate: curatedMutationRate,
+    reserved: curatedOut.map(opponentSignature),
   });
-  for (const parent of curatedOut) {
-    if (rng() < curatedMutationRate) {
-      rolls.push({ parent, percentile: 0, type: rollType() });
-    }
-  }
-
-  // Shared slot allocation (src/ga/core.js allocateNewSlots): immigrants get
-  // a reserved share of the open slots so fresh blood keeps arriving
-  // whatever else happens; mutants take the rest. `Math.floor`, not
-  // `Math.round`, because at this pool's scale rounding the reserve UP is what
-  // starves mutation outright: a default run's evolvable half is ~7 entries,
-  // the 15% cull opens exactly 1 seat, and a rounded 8% reserve claims it --
-  // so no opponent would ever mutate at the shipped settings. And if a roll
-  // does fire with no seat left for it, it borrows one from the reserve:
-  // immigrants are the fallback filler at step (4) and refill whatever the
-  // mutants don't use, so the reserve only ever needs to bind the other way.
-  const { chosenRolls } = allocateNewSlots({ openSlots, immigrantFraction, targetSize: evolvableTarget, rolls });
-
-  const maxAttempts = Math.max(chosenRolls.length, 1) * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
-  const mutants = [];
-  for (const { parent, type } of chosenRolls) {
-    let built;
-    if (type === 'leadRotation') {
-      built = buildLeadRotation(ctx, parent, usedIds, rng, maxAttempts);
-    } else if (type === 'shadowFlip') {
-      built = buildOpponentShadowFlip(ctx, parent, shadowTwins, usedIds, rng, maxAttempts);
-      // No flippable member (or every combination already taken): fall
-      // through to a member-swap so the parent's roll still yields a
-      // mutant, same rule as evolve.js's buildShadowFlip fallback.
-      if (!built) built = buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAttempts);
-    } else {
-      built = buildMemberSwap(ctx, parent, movesetPool, weights, usedIds, rng, maxAttempts);
-    }
-    if (!built) continue; // bounded retries exhausted -- graceful shortfall
+  const died = step.died.map((k) => evolvableIdx[k]);
+  const coreRivalryDied = step.coreRivalryDied.map((k) => evolvableIdx[k]);
+  const survivorsOut = step.survivorIdx.map((k) => pool[evolvableIdx[k]]);
+  const mutants = step.mutants.map(({ entry, parent }) => {
     const origin = mutantOrigin(parent);
-    mutants.push({ ...built, origin, label: origin });
-  }
-
-  // ---- (4) immigrants fill whatever is left --------------------------------
-  const immigrantTarget = finalizeImmigrantCount({ openSlots, builtMutantCount: mutants.length });
-  const immigrants = [];
-  const immigrantAttempts = immigrantTarget * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
-  let attempts = 0;
-  while (immigrants.length < immigrantTarget && attempts < immigrantAttempts) {
-    attempts += 1;
-    const team = composeSampledOpponent(ctx, rng, movesetPool, weights, roleScores);
-    if (usedIds.has(team.id)) continue;
-    usedIds.add(team.id);
-    immigrants.push({ ...team, origin: 'immigrant', label: 'immigrant' });
-  }
+    return { ...entry, origin, label: origin };
+  });
+  const immigrants = step.immigrants.map((team) => ({ ...team, origin: 'immigrant', label: 'immigrant' }));
 
   const nextPool = [...curatedOut, ...survivorsOut, ...mutants, ...immigrants];
   const originCounts = {};

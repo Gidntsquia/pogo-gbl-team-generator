@@ -52,7 +52,7 @@ function combinationsCount3(n) {
  * Entries whose species is in `exclude`, or whose key is missing from the
  * matrix, are dropped.
  */
-export function buildScoredPool(matrix, pool, exclude) {
+export function buildScoredPool(matrix, pool, exclude, { perBuild = false } = {}) {
   const bySpecies = new Map();
   for (const key of pool) {
     const built = matrix.builtMons[key];
@@ -60,9 +60,16 @@ export function buildScoredPool(matrix, pool, exclude) {
     if (!built || !ratings) continue;
     if (exclude.has(built.speciesId)) continue;
     const score = computeWeightedScore(ratings);
-    const cur = bySpecies.get(built.speciesId);
+    // usageId is the id pvpoke ranks this build under (`_shadow` suffixed),
+    // so a shadow build reads its OWN usage weight. With `perBuild` (meta
+    // mode) the shadow and the plain build are separate entries, exactly as
+    // the opponent side's moveset pool lists them; otherwise one entry per
+    // species (the best-scoring specimen), weighted by the species' base id.
+    const usageId = perBuild ? `${built.speciesId}${built.spec?.shadow ? '_shadow' : ''}` : built.speciesId;
+    const groupKey = perBuild ? usageId : built.speciesId;
+    const cur = bySpecies.get(groupKey);
     if (!cur || score > cur.score) {
-      bySpecies.set(built.speciesId, { key, speciesId: built.speciesId, score });
+      bySpecies.set(groupKey, { key, speciesId: built.speciesId, usageId, score });
     }
   }
   return [...bySpecies.values()];
@@ -78,10 +85,10 @@ export function buildScoredPool(matrix, pool, exclude) {
 export function makeBlendedWeightFn(entries, weights, alpha) {
   const usageOf = (speciesId) => weights?.get(speciesId) ?? 0;
   const maxScore = Math.max(0, ...entries.map((e) => e.score)) || 1;
-  const maxUsage = Math.max(0, ...entries.map((e) => usageOf(e.speciesId))) || 1;
+  const maxUsage = Math.max(0, ...entries.map((e) => usageOf(e.usageId ?? e.speciesId))) || 1;
   return (entry) => {
     const normScore = entry.score / maxScore;
-    const normUsage = usageOf(entry.speciesId) / maxUsage;
+    const normUsage = usageOf(entry.usageId ?? entry.speciesId) / maxUsage;
     return (1 - alpha) * normScore + alpha * normUsage;
   };
 }
@@ -118,17 +125,17 @@ export function makeBlendedWeightFn(entries, weights, alpha) {
  *   pool can't supply that many distinct teams.
  */
 export function sampleCandidateTeams(params) {
-  const { matrix, pool, weights, count, seed, excludeSpecies = [], alpha } = params;
+  const { matrix, pool, weights, count, seed, excludeSpecies = [], alpha, perBuild = false, allowRepeatSets = false } = params;
   const blendAlpha = typeof alpha === 'number' ? alpha : DEFAULT_BLEND_ALPHA;
   const exclude = new Set(excludeSpecies);
   const rng = rngFromSeed(seed, 'sampleCandidateTeams');
 
-  const entries = buildScoredPool(matrix, pool, exclude);
-  if (entries.length < TEAM_SIZE) return [];
+  const entries = buildScoredPool(matrix, pool, exclude, { perBuild });
+  if (new Set(entries.map((e) => e.speciesId)).size < TEAM_SIZE) return [];
 
   const weightFn = makeBlendedWeightFn(entries, weights, blendAlpha);
 
-  const targetCount = Math.min(count, combinationsCount3(entries.length));
+  const targetCount = allowRepeatSets ? count : Math.min(count, combinationsCount3(entries.length));
   const maxAttempts = targetCount * MAX_ATTEMPTS_MULTIPLIER + MAX_ATTEMPTS_FLOOR;
 
   const seen = new Set();
@@ -136,12 +143,22 @@ export function sampleCandidateTeams(params) {
   let attempts = 0;
   while (teams.length < targetCount && attempts < maxAttempts) {
     attempts += 1;
-    const picked = pickWeighted(rng, entries, weightFn, TEAM_SIZE);
+    // One member at a time, never two builds of one species (a shadow and its
+    // plain twin are separate entries under `perBuild`). Without `perBuild`
+    // every entry is already a distinct species, so this is the same draw as
+    // pickWeighted(entries, 3).
+    const picked = [];
+    while (picked.length < TEAM_SIZE) {
+      const taken = new Set(picked.map((e) => e.speciesId));
+      const [pick] = pickWeighted(rng, entries.filter((e) => !taken.has(e.speciesId)), weightFn, 1);
+      if (!pick) break;
+      picked.push(pick);
+    }
     if (picked.length < TEAM_SIZE) break; // ran out of positive-weight entries entirely
 
     const keys = picked.map((e) => e.key);
     const signature = [...keys].sort().join('|');
-    if (seen.has(signature)) continue;
+    if (!allowRepeatSets && seen.has(signature)) continue;
     seen.add(signature);
     teams.push(keys);
   }

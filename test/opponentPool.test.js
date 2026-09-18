@@ -235,17 +235,16 @@ test('with mutation off, the freed slots go to immigrants', () => {
 });
 
 test('a culled team cannot be re-created the same generation (graceful shortfall)', () => {
-  // Only 3 species in the pool, so there are exactly 6 distinct teams (three
-  // species x which one leads -- the id is positional) and the pool below
-  // already holds every one of them. The cull frees a slot that nothing legal
+  // Only 3 species in the pool, so there are exactly 3 distinct teams (which
+  // one leads -- identity is lead + backs in either order, the same rule as the
+  // candidate side's teamSignature) and the pool below already holds them all. The cull frees a slot that nothing legal
   // can fill, which must fall short rather than resurrect the team just
   // culled or loop forever.
   const tinyPool = movesetPool.slice(0, 3);
   const tinyWeights = new Map(tinyPool.map((e) => [e.speciesId, 1]));
   const built = tinyPool.map((e) => buildMetaMon(ctx, e));
   const permutations = [
-    [0, 1, 2], [0, 2, 1], [1, 0, 2],
-    [1, 2, 0], [2, 0, 1], [2, 1, 0],
+    [0, 1, 2], [1, 0, 2], [2, 0, 1],
   ];
   const pool = permutations.map((order) => {
     const members = order.map((i) => built[i]);
@@ -258,21 +257,21 @@ test('a culled team cannot be re-created the same generation (graceful shortfall
       label: 'sampled',
     };
   });
-  assert.equal(new Set(pool.map((e) => e.id)).size, 6, 'all six distinct teams are in the pool');
+  assert.equal(new Set(pool.map((e) => e.id)).size, 3, 'all three distinct teams are in the pool');
 
   const { pool: next, lineage } = nextOpponentPool(ctx, {
     pool,
     fitness: pool.map((_, i) => i),
-    targetSize: 6,
+    targetSize: 3,
     weights: tinyWeights,
     curated: [],
     curatedRatio: 0,
     movesetPool: tinyPool,
     seed: 'shortfall',
-    opts: { ...NEVER, deathRate: 0.17, immigrantFraction: 0 },
+    opts: { ...NEVER, deathRate: 0.34, immigrantFraction: 0 },
   });
   assert.deepEqual(lineage.died, [0], 'the worst-fitness entry');
-  assert.equal(next.length, 5, 'falls short of targetSize rather than resurrecting the culled team');
+  assert.equal(next.length, 2, 'falls short of targetSize rather than resurrecting the culled team');
   assert.ok(!next.some((e) => e.id === pool[0].id));
 });
 

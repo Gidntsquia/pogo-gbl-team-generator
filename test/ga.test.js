@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { crowdingWeights, trailingFitnessGeneric, computeChurn, allocateNewSlots, finalizeImmigrantCount } from '../src/ga/core.js';
+import { crowdingWeights, trailingFitnessGeneric, computeChurn, evolveStep } from '../src/ga/core.js';
+import { rngFromSeed } from '../src/util/rng.js';
 
 test('crowdingWeights: a crowded shared-core entry weighs less than a singleton-core entry, both candidate- and opponent-shaped', () => {
   const entries = [
@@ -54,21 +55,72 @@ test('trailingFitnessGeneric: an entry seen only in the newest generation is sco
   assert.equal(scores[1], 0.9);
 });
 
-// plans/PLAN.md Item 2's shared-step behaviour test: the exact same death
-// count, mutant count and immigrant count for a steady, a shrinking and a
-// growing target, driven purely through computeChurn/allocateNewSlots/
-// finalizeImmigrantCount -- the two adapters (src/teams/evolve.js's
-// nextGeneration, src/meta/opponentPool.js's nextOpponentPool) both reduce
-// to exactly this arithmetic, just with different entity-building code
-// behind `chosenRolls`.
-function runStep({ liveCount, targetSize, deathRate, immigrantFraction, rollCount, builtMutantCount }) {
-  const { churn, deathCount } = computeChurn({ liveCount, contenders: liveCount, targetSize, deathRate });
-  const openSlots = targetSize - (liveCount - deathCount);
-  const rolls = Array.from({ length: rollCount }, (_, i) => ({ percentile: i / Math.max(1, rollCount - 1) }));
-  const { chosenRolls } = allocateNewSlots({ openSlots, immigrantFraction, targetSize, rolls });
-  const actualBuilt = Math.min(builtMutantCount, chosenRolls.length);
-  const immigrantCount = finalizeImmigrantCount({ openSlots, builtMutantCount: actualBuilt });
-  return { churn, deathCount, openSlots, mutantCount: actualBuilt, immigrantCount };
+// plans/PLAN.md Item 2's shared-step behaviour test: evolveStep driven through
+// two differently-shaped adapters (a candidate-like team = array of key
+// strings; an opponent-like entry = {members:[{speciesId}]}) with the same
+// fitness vector, rates and seed must kill, mutate and immigrate the same
+// number of teams for a steady, a shrinking and a growing target.
+const SPECIES = Array.from({ length: 40 }, (_, i) => `mon${i}`);
+function fakeAdapter(shape) {
+  const wrap = (ids) => (shape === 'keys' ? ids : { members: ids.map((speciesId) => ({ speciesId })) });
+  const idsOf = (e) => (shape === 'keys' ? e : e.members.map((m) => m.speciesId));
+  const randomTrio = (rng) => {
+    const picked = [];
+    while (picked.length < 3) {
+      const id = SPECIES[Math.floor(rng() * SPECIES.length)];
+      if (!picked.includes(id)) picked.push(id);
+    }
+    return picked;
+  };
+  return {
+    wrap,
+    profilesOf: idsOf,
+    signatureOf: (e) => `${idsOf(e)[0]}||${idsOf(e).slice(1).sort().join('|')}`,
+    buildMutant(parent, type, accept, rng, maxAttempts) {
+      if (type === 'shadowFlip') return null; // no twins -> core must fall through to a memberSwap
+      for (let a = 0; a < maxAttempts; a++) {
+        const ids = idsOf(parent).slice();
+        if (type === 'leadRotation') [ids[0], ids[1]] = [ids[1], ids[0]];
+        else ids[Math.floor(rng() * 3)] = SPECIES[Math.floor(rng() * SPECIES.length)];
+        if (new Set(ids).size < 3) continue;
+        const entry = wrap(ids);
+        if (accept(entry)) return { entry };
+      }
+      return null;
+    },
+    *immigrants(budget, rng) {
+      for (let i = 0; i < budget; i++) yield wrap(randomTrio(rng));
+    },
+  };
+}
+
+function runStep(shape, liveCount, targetSize) {
+  const adapter = fakeAdapter(shape);
+  const seedRng = rngFromSeed('ga-step-teams');
+  const entries = [];
+  const seen = new Set();
+  while (entries.length < liveCount) {
+    const e = adapter.immigrants(1, seedRng).next().value;
+    if (seen.has(adapter.signatureOf(e))) continue;
+    seen.add(adapter.signatureOf(e));
+    entries.push(e);
+  }
+  const out = evolveStep({
+    entries,
+    fitness: entries.map((_, i) => ((i * 37) % 101) / 100),
+    targetSize,
+    rng: rngFromSeed('ga-step'),
+    rates: { deathRate: 0.2, mutationFloor: 0.05, mutationCeil: 0.4, leadRotationRate: 0.2, shadowFlipRate: 0.2, immigrantFraction: 0.08 },
+    rivalry: { coreRivalry: 0, similar: 0, floor: 0, similarity: null },
+    adapter,
+  });
+  return {
+    died: out.died,
+    survivors: out.survivorIdx,
+    mutantTypes: out.mutants.map((m) => `${m.parentIndex}:${m.type}`),
+    immigrants: out.immigrants.length,
+    size: out.survivorIdx.length + out.mutants.length + out.immigrants.length,
+  };
 }
 
 for (const [label, liveCount, targetSize] of [
@@ -76,13 +128,13 @@ for (const [label, liveCount, targetSize] of [
   ['a shrinking population', 60, 30],
   ['a growing population', 20, 60],
 ]) {
-  test(`shared GA step: ${label} -- same death/mutant/immigrant counts from the same inputs, whichever adapter calls it`, () => {
-    const params = { liveCount, targetSize, deathRate: 0.2, immigrantFraction: 0.08, rollCount: 12, builtMutantCount: 12 };
-    const candidateSide = runStep(params);
-    const opponentSide = runStep(params); // same shared functions, same inputs -- must be identical regardless of caller
+  test(`shared GA step: ${label} -- both adapters get the same deaths, mutants and immigrants`, () => {
+    const candidateSide = runStep('keys', liveCount, targetSize);
+    const opponentSide = runStep('entries', liveCount, targetSize);
     assert.deepEqual(opponentSide, candidateSide);
-    assert.ok(candidateSide.deathCount >= 0);
-    assert.equal(liveCount - candidateSide.deathCount + candidateSide.openSlots, targetSize);
+    assert.equal(candidateSide.size, targetSize);
+    assert.ok(candidateSide.died.length >= Math.round(0.2 * liveCount));
+    assert.ok(!candidateSide.mutantTypes.some((t) => t.endsWith('shadowFlip')), 'unbuildable shadowFlip fell through to memberSwap');
   });
 }
 
