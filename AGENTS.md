@@ -9,7 +9,9 @@ they don't say.
 - No `.env`; there are no secrets. All artifacts and logs live in `out/` (gitignored):
   `out/evolve-<name>/` checkpoints, `out/evolve-<name>.log`, `.pid`.
 - Never edit `vendor/pvpoke`; never reimplement its battle math.
-- Never commit as a worker; keep the diff inside the files the task names.
+- Never commit as a worker; keep the diff inside the files the task names. Exception: inside
+  the planner/worker/evaluator loop (`plans/PLAN.md`) the worker commits, one commit per item,
+  only the files its work touches, with `git add <paths>` -- the evaluator only sees commits.
 - Never kill, resume, or restart an evolve run unless the task says so.
 - Known invariant (v13, 2026-09-18; measured 2026-09-18, `docs/fitness-symmetry.md`):
   `evaluateTeamsInOrder` battles every pairing from both seats (candidate-as-A, and
