@@ -822,8 +822,13 @@ function opponentLeadIndex(opp) {
   return opp.leadIndex ?? 0;
 }
 
-/** Own-lead-locked single pairing: candidate's team[0] vs. the opponent's declared lead. */
-function ownLeadPairing(opp) {
+/**
+ * Own-lead-locked single pairing: candidate's team[0] vs. the opponent's
+ * declared lead. Exported (plans/WORKER_NOTES.md Item 3) so a study script
+ * can feed `evaluateTeamsInOrder` the exact same pairing generator
+ * `runEvolution`'s per-generation battles use, instead of a reimplementation.
+ */
+export function ownLeadPairing(opp) {
   return [{ leadA: CANDIDATE_LEAD, leadB: opponentLeadIndex(opp) }];
 }
 
@@ -3353,7 +3358,27 @@ function renderDoneMarker(result) {
  * }} [opts]
  * @returns {Promise<object>} the full run result; also written to disk.
  */
-export async function runEvolution(csvPath, opts = {}) {
+/**
+ * Everything a meta-vs-meta run needs before its first battle: collection
+ * import, evolution expansion, cup eligibility, the 1v1 scoring matrix, the
+ * candidate sampling pool, and the opponent side's curated/moveset pools and
+ * (optional) shared-weakness context -- exactly the block `runEvolution` used
+ * to inline before its generation loop. Extracted (plans/WORKER_NOTES.md
+ * Item 3) so a study script can build the SAME gen-0 population/opponent-pool
+ * inputs `runEvolution` would, via `initPopulation`/`initOpponentPool`,
+ * without reimplementing any of this setup. `runEvolution` itself now just
+ * calls this and destructures.
+ *
+ * @param {string} csvPath
+ * @param {object} [opts] - same shape runEvolution accepts.
+ * @returns {Promise<object>} every local this block used to produce, keyed
+ *   by name (config, outDir, log, ctx, matrix, deduped, pool, curatedPool,
+ *   movesetPool, typeCoverageContext, roleScores, opponentLeadRoleScores,
+ *   weights, similarity, league, difficulty, collectionHash, importWarnings,
+ *   candidateExcludeSpecies, banBaseIds, battleCache, threads, deadlineMs,
+ *   reportPath, writeHtml, htmlPath).
+ */
+export async function buildEvolveSetup(csvPath, opts = {}) {
   if (opts.fitness !== undefined && !FITNESS_MODES.includes(opts.fitness)) {
     throw new Error(`evolve: opts.fitness must be one of ${FITNESS_MODES.join('|')}, got "${opts.fitness}"`);
   }
@@ -3455,6 +3480,22 @@ export async function runEvolution(csvPath, opts = {}) {
     `evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, ` +
       `${curatedPool.length} curated opponent teams, opponent meta pool of ${movesetPool.length} species, league=${league.name}`
   );
+
+  return {
+    config, outDir, reportPath, writeHtml, htmlPath, log, difficulty, threads, deadlineMs,
+    importedMons, importWarnings, expanded, eligible, collectionHash, ctx, similarity, league, matrix, deduped, weights,
+    banBaseIds, candidateExcludeSpecies, pool, roleScores, opponentLeadRoleScores,
+    curatedPool, movesetPool, typeCoverageContext, battleCache,
+  };
+}
+
+export async function runEvolution(csvPath, opts = {}) {
+  const {
+    config, outDir, reportPath, writeHtml, htmlPath, log, difficulty, threads, deadlineMs,
+    importedMons, importWarnings, expanded, eligible, collectionHash, ctx, similarity, league, matrix, deduped, weights,
+    candidateExcludeSpecies, pool, roleScores, opponentLeadRoleScores,
+    curatedPool, movesetPool, typeCoverageContext, battleCache,
+  } = await buildEvolveSetup(csvPath, opts);
 
   const threaded = typeof threads === 'number' && threads > 0;
   const profileDir = opts.profile ? outDir : undefined;
@@ -4501,7 +4542,16 @@ function fitnessFlag(value) {
   return value;
 }
 
-async function main(argv) {
+/**
+ * CLI flag parsing only (plans/WORKER_NOTES.md Item 3): argv -> {csvPath,
+ * opts} where `opts` is exactly the object `runEvolution` accepts, or `null`
+ * if this call should just print help/an error (already written to
+ * stdout/stderr, `process.exitCode` already set) -- so a study script can
+ * accept the SAME `<collection.csv> <...evolve.mjs flags>` argv shape
+ * `scripts/evolve.mjs` itself does, without re-declaring the ~70 flags below.
+ * `main` now just calls this and runs the result through `runEvolution`.
+ */
+export function parseEvolveArgs(argv) {
   let parsed;
   try {
     parsed = parseArgs({
@@ -4576,7 +4626,7 @@ async function main(argv) {
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n\n${HELP}`);
     process.exitCode = 2;
-    return;
+    return null;
   }
 
   const { values, positionals } = parsed;
@@ -4588,7 +4638,7 @@ async function main(argv) {
     } catch (err) {
       process.stderr.write(`Error: failed to read --config "${values.config}": ${err.message}\n`);
       process.exitCode = 2;
-      return;
+      return null;
     }
     // Explicit CLI flags win over the same key in --config.
     for (const [key, val] of Object.entries(fileValues)) {
@@ -4599,7 +4649,7 @@ async function main(argv) {
   if (values.help || positionals.length === 0) {
     say(HELP);
     if (positionals.length === 0 && !values.help) process.exitCode = 2;
-    return;
+    return null;
   }
 
   const csvPath = positionals[0];
@@ -4688,6 +4738,14 @@ async function main(argv) {
     similarRivalry: values['similar-rivalry'] !== undefined ? numberFlag(values['similar-rivalry'], 'similar-rivalry') : undefined,
     similarFloor: values['similar-floor'] !== undefined ? numberFlag(values['similar-floor'], 'similar-floor') : undefined,
   };
+
+  return { csvPath, opts };
+}
+
+async function main(argv) {
+  const parsed = parseEvolveArgs(argv);
+  if (!parsed) return;
+  const { csvPath, opts } = parsed;
 
   const realLog = console.log;
   console.log = () => undefined;
