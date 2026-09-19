@@ -63,7 +63,10 @@ node scripts/evolve.mjs --help                        # full flag list
 - Mons are also evaluated as each evolution they can still become.
 - Build costs are reported per team: Stardust, Candy, and Candy XL, with
   shadow/purified/lucky modifiers and evolution items.
-- Great League and Ultra League (`--cp 2500`); cup bans via `--ban`.
+- A meta-vs-meta mode (`scripts/sim.sh --meta`) runs the search with no
+  collection, and its results can seed the curated opponent teams for a new
+  cup or season.
+- Great League and Ultra League (`--cp 2500`), pvpoke cups (`--cup willpower`), and species bans via `--ban`.
 - Deterministic: the same seed gives identical results, serial or with
   `--threads N`.
 
@@ -75,10 +78,10 @@ and genetic settings, see the local [Runbook](RUNBOOK.md).
 Detailed documentation is in the
 [wiki](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki):
 
-- [Running the CLI](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Running-the-CLI) — every flag, leagues, Best Buddies, current moves, tuning, threads
-- [How Scoring Works](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/How-Scoring-Works) — 1v1 pruning, 3v3 ranking, sampling weights, role priors
+- [Running the CLI](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Running-the-CLI) — `sim.sh`, common flags, leagues, cups, Best Buddies, threads
+- [How Scoring Works](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/How-Scoring-Works) — 3v3 battles, sampling weights, role priors, curated opponent file
 - [Build Costs and Evolutions](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Build-Costs-and-Evolutions) — the Stardust/Candy math
-- [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm, fitness modes, checkpoints
+- [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm, fitness, checkpoints
 - [Shared Collections](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Shared-Collections) — teams two players can both build
 - [Development and Tests](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Development-and-Tests) — test tiers, what to run when
 
