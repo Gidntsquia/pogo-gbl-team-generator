@@ -1,76 +1,101 @@
-# Candidate/opponent GA symmetry inventory
+# Candidate/opponent GA symmetry: what is still asymmetric
 
-Read against the codebase as of 2026-09-19 (`FITNESS_SEMANTICS`
-`core-pair-archetypes-v16`, after the removal of 1v1 scoring from evolve runs).
-BASE is the flag list in `scripts/symmetry-gap.mjs` plus `--meta-mode`.
-Every row's status is one of: `removed (commit)`, `kept: <size ± SE>
-(labels), <reason>`, or `inactive under BASE: <reason checkable in code>`.
-No row ends as `kept`: every difference found was either removed for all runs or
-switched off by `--meta-mode`. Line numbers were read on 2026-09-19.
+Current code: `FITNESS_SEMANTICS` `core-pair-archetypes-v16`, commit 370583a.
+Checked 2026-09-19. Fixed differences and every result from older code are in
+[History](#history-fixed-differences-and-results-from-older-code-v13-v15) at the
+bottom of this file.
 
-**What is measured and what is not.** The 5-seed labels (`base`, `ga`,
-`sample-usage-only-v2`, `finalv14`, `meta3`, `final`) and the 200 x 200 run
-(`real`) below were run on v15 code, before 1v1 scoring was removed and before
-both pools were widened to the full 281-build field, so they do **not** measure
-the current code. After this change only one short sanity run was made (label
-`rank`, seed s1, 60 x 60, 3 generations). One seed cannot prove the 0.02 bound.
-Rows 2, 4, 6, 10, 12, 13, 25, 27-31 were measured together as one label
-(`meta3`) and have no per-row size; that batch's combined step was about
-1 SE (see Ladder).
+## Leftover gap on current code (v16)
 
-| # | Difference | Candidate side | Opponent side | Status |
-|---|---|---|---|---|
-| 1 | Mon build: IVs | `src/scoring/index.js` `buildMon`-path uses the CSV's own IVs, defaulted only when blank (`src/importer/index.js:266-278`) | `src/scoring/index.js` `buildMetaMon` always uses `defaultIvsForCp` | inactive under BASE: BASE's CSV (`out/meta-collection-willpower-1500.csv`) is itself built from gamemaster default IVs, so every shared species already has identical IVs on both sides — checkable by diffing any built member's `ivs` field between a candidate and opponent build of the same species under BASE. A real player collection with non-default IVs would make this an active, measurable difference; not yet measured under BASE since it cannot fire there. |
-| 2 | Mon build: moveset | pvpoke's auto-selected moveset (`buildPokemon`), or the row's own under `currentMoves` (`src/scoring/index.js:451`) | the exact moveset in pvpoke's rankings file (`buildMetaMon`, `src/scoring/index.js:175`) | inactive under BASE: BASE includes `--meta-mode`, which gives every candidate the rankings-file moveset for its build (`scripts/evolve.mjs:3416`). Each run logs `build parity: N/N ranked builds identical on both sides` (IVs, level, CP, moves, rebuilt fresh from the spec); label `meta3` logged 70/70 in all five seeds and label `rank` (after this change) logged 281/281. Kept for real-collection runs, not measured per row (part of the `meta3` batch, see Ladder): forcing a rankings moveset onto a player's mon would recommend a build they may not have the moves for. |
-| 3 | Mon build: level/shadow | `buildPokemon` (`src/engine/harness.js`), solves for max level under the CP cap; shadow branch same function | same `buildPokemon` call | removed: one shared builder function, no side branch — `grep -n "function buildPokemon" src/engine/harness.js` shows one definition, called from both `src/scoring/index.js`'s candidate and opponent build paths. |
-| 4 | Species pool criterion | real-collection: the player's mons, `--pool P` keeps the P best-ranked species (`buildRankedPool`, `src/teams/rankedPool.js`); meta mode: every ranked build (`scripts/evolve.mjs:3453`-`3488`) | `--opponent-meta-pool`: top-N builds by pvpoke overall rank (`loadMovesetPool`); under `--meta-mode` the default is the full field (`scripts/evolve.mjs`, `buildRunConfig` `opponentMetaPool`) | removed: the 1v1 matrix-score pool is gone. Both sides now use the same criterion, pvpoke rank, and under `--meta-mode` the same set: label `rank` log reads `candidate species pool = 281 of pvpoke's top 281 ranked builds` and `opponent meta pool of 281 species`. BASE no longer caps either pool (`scripts/symmetry-gap.mjs` `BASE_FLAGS`). Caps still work when passed. Before this change (v15): candidates were cut to 70 builds, opponents drew 70 (label `final`), a config the user rejected. |
-| 5 | Sampling weights | `makeRankWeightFn` (`src/teams/sample.js`): each build's pvpoke-rank weight 1/(rank+20) from `loadUsageWeights`, last place when unranked | the same `loadUsageWeights` map (`src/meta/sampleTeams.js`) | removed: the alpha blend of 1v1 score and usage (`--candidate-sample-alpha`, `makeBlendedWeightFn`) no longer exists. Both sides read one weight map (`scripts/evolve.mjs` passes `ignoreSnapshot: true`, so `data/meta-usage.json` cannot reorder either side). Draw share at gen 0 of label `rank`, by node one-liner over `evolve-gen0.json` (see `plans/WORKER_NOTES.md`): top-70 builds hold 54.4% of candidate slots and 53.3% of opponent slots, bottom-70 hold 10.0% and 11.7% (the curve alone gives 55% and 10%). Older measured size of the blend difference (v15, labels `sample-usage-only-v2` minus `ga`): mean final blend −0.1079 → −0.0272, raw −0.1373 → −0.0323. |
-| 6 | Evolution expansion | `src/evolution/` expands each row into its evolutions; `dedupeByRank` then keeps one entry per lineage, the form whose build pvpoke ranks best (real-collection runs only) | opponents are built straight from rankings entries | inactive under BASE: `--meta-mode` forces `evolutions: false` (`scripts/evolve.mjs:1442`). With expansion on, a ranked pre-evolution was folded into its evolved form's lineage and vanished from the candidate side: a smoke run logged 62/70 builds present (missing morgrem, zweilous, pawmo, hakamo_o, farfetchd_galarian, grimer_alolan, primeape_shadow, morpeko), 69/70 with expansion off (part of the `meta3` batch). Real-collection runs keep expansion: it is how the tool recommends a form the player does not own yet. Lineage and specimen choice is now by rank weight, then atk×def×hp stat product, then smaller userMonKey (`src/teams/rankedPool.js`), not by 1v1 score. |
-| 7 | Shadow-flip mutation | `buildShadowFlip` (`src/teams/evolve.js:283`), rate `DEFAULT_SHADOW_FLIP_RATE = 0.2` (`:81`), fed by `buildShadowTwins` (`:171`) | `buildOpponentShadowFlip` (`src/meta/opponentPool.js:281-315`), rate `DEFAULT_OPPONENT_SHADOW_FLIP_RATE = 0.2` (`:70`), fed by `buildOpponentShadowTwins` (`src/meta/opponentPool.js:150-170`ish) | removed (commit, this Item 2): opponent side previously had no shadowFlip mutation at all; added for mutation-type parity, same 0.2 default rate on both sides, rolled by the one type roll inside `evolveStep` (`src/ga/core.js:223`). Under BASE both sides hold shadow builds: label `finalv14`, gen 7, 254 candidate vs 282 opponent shadow slots of 900 (the round-1 evaluation's "zero candidate shadows" came from grepping the CSV for `shadow=true`; its cells read `true`, 86 of 281 rows). |
-| 8 | Gen-0 lead assignment | `assignLead` (`src/teams/evolve.js:198`) — uniform seeded-random, always | `pickLeadIndex` (`src/meta/sampleTeams.js:133-145`) — deterministic highest-lead-prior member when `roleScores` given; `--random-opponent-lead` forces the same uniform-random fallback | inactive under BASE: BASE passes `--random-opponent-lead`, so both sides use uniform-random lead assignment — read at `scripts/evolve.mjs:3497`, `opponentLeadRoleScores = config.randomOpponentLead ? null : roleScores`. |
-| 9 | Lead-rotation mutation | `DEFAULT_LEAD_ROTATION_RATE = 0.3` (`src/teams/evolve.js:67`), `buildLeadRotation` (`:262`) | `DEFAULT_OPPONENT_LEAD_ROTATION_RATE = 0.3` (`src/meta/opponentPool.js:92`), `buildLeadRotation` (`:233-243`) | removed: same rate, same mechanics, one type roll inside `evolveStep` (`src/ga/core.js:223`) for both sides. |
-| 10 | Team identity | `teamSignature` (`src/teams/evolve.js:140`): lead + sorted backs | `opponentSignature` (`src/meta/opponentPool.js:210`): lead + sorted backs | removed (68e45a6): the opponent side used its positional id, so the same trio with backs swapped counted as two teams there and one here. Both adapters now hand `evolveStep` the same identity rule. `test/opponentPool.test.js` "a culled team cannot be re-created" changed from 6 distinct teams to 3 for this reason. |
-| 11 | Member-swap replacement weights | `buildMutant` (`src/teams/evolve.js`), `makeRankWeightFn` | `buildMemberSwap` (`src/meta/opponentPool.js`), the same rank weights | removed: same weight map as row 5 on both sides. |
-| 12 | Mutant eligibility | replacement must be a species not on the team, the replaced member's species included | now the same: every current member's base species excluded (`src/meta/opponentPool.js`, `buildMemberSwap`) | removed (68e45a6): the opponent side excluded only the two kept members, so a swap could bring back the replaced species' shadow twin, which on the candidate side only the shadowFlip mutation can do. |
-| 13 | Used-identity set | seeded from every team alive at the start of the step, culled ones included | same | removed (68e45a6): one `used` set inside `evolveStep` (`src/ga/core.js:223`). The candidate side used to seed it from survivors only, so it could re-create a team culled the same generation and the opponent side could not. |
-| 14 | Voter weights (crowding) | `computeCandidateWeights` delegates to `crowdingWeights` (`src/ga/core.js:142-146`) | `archetypeWeights` called directly on `oppArchetypeGroups` (`scripts/evolve.mjs`) | removed: `crowdingWeights` is exactly `archetypeGroups` + `archetypeWeights`; the opponent path already had the groups computed, same `beta` source (`config.archetypeBeta`) both times — net computation identical. |
-| 15 | Strength gammas | `candidateStrengthGamma`, default 1, `Math.pow(clamp(winPoints/battles), gamma) : 1` | `opponentStrengthGamma`, default 1, `Math.pow(clamp(1 - winPoints/battles), gamma) : 1` | inactive under BASE: identical shape, each reads its own side of the same ledger (documented mirror in `scripts/evolve.mjs`); BASE passes `--opponent-strength-gamma 1 --candidate-strength-gamma 1`, read at `scripts/evolve.mjs:2458` and `:2467`; gamma 1 is a no-op power, so both sides are inert. |
-| 16 | Blend fitness function | `computeBlendFitness` (`scripts/evolve.mjs`), one shared function, same `DEFAULT_FITNESS_WEIGHTS` | same function, same call | removed: one shared function, no side branch. |
-| 17 | Snowball/closer/consistency scores | `computeSnowballScore`/`computeCloserScore`/`computeConsistencyScore` | same functions, same call shape | removed: no side branch in any of the three. |
-| 18 | Shared-weakness move-coverage relief | `leadCoverageFor` (`src/teams/typeCoverage.js:198`) | same | removed (12a0e12, 68e45a6): first fix keyed the lookup by build instead of the candidate-only `.key`; this round the key reads moves off the built Pokemon (a candidate matrix entry has no top-level `fastMove`), drops `_shadow` (coverage does not depend on it), and a build absent from the collection is computed on first lookup instead of getting an empty map. Test: `test/typeCoverage.test.js` parity test, which fails on the previous code (map size 1, expected 2). |
-| 19 | Selection smoothing (trailing mean) | `trailingFitness` delegates to `trailingFitnessGeneric` (`src/ga/core.js:166-186`) | same `trailingFitnessGeneric`, called directly to produce `opponentSelectionFitness` | removed: same shared function, both sides trailing-smoothed before selection. |
-| 20 | Death-rate churn accounting | previously `churn = min(targetSize, round(deathRate * targetSize))`, `survivorsWanted = targetSize - churn` (candidate-only formula, broke under a growing target) | previously `churn = round(deathRate * liveCount)`, `survivorsWanted = max(0, min(liveCount - churn, targetSize))` | removed (commit, this Item 2): `evolveStep` calls `computeChurn` (`src/ga/core.js:61`) for both sides, using the opponent's original (algebraically correct under both growth and shrink) formula. Verified against `test/opponentPool.test.js`'s pre-existing "the cull still fires while the pool is growing" case and a new explicit regression in `test/ga.test.js` (`liveCount:4, targetSize:10` no longer zeroes `deathCount`). One real behavior change: under a deep shrink the candidate side no longer reserves `churn` slots of new blood the way it used to — inert under BASE (`--population-final-ratio 1` never shrinks the candidate side; a fixed `--opponents-per-gen` never shrinks the opponent side). |
-| 21 | Immigrant-slot rounding and seat allocation | previously candidate used `Math.round(immigrantFraction * targetSize)`; opponent used `Math.floor(...)` plus a borrow-one-seat rule the candidate side lacked | same as candidate previously | removed (commit, this Item 2): `evolveStep` calls `allocateNewSlots` (`src/ga/core.js:105`) for both sides, which floors the immigrant reserve (opponent's original rule — flooring never over-claims the seat budget at any pool size) and applies the borrow-one-seat rule (previously opponent-only) on both sides. Immigrant count is now computed after mutant building via shared `finalizeImmigrantCount` on both sides (previously only the opponent side backfilled a failed mutant build with an extra immigrant; the candidate side left the slot empty — candidate side now backfills too). |
-| 22 | Death rate / mutation rate defaults | `DEFAULT_DEATH_RATE = 1/3`, `DEFAULT_MUTATION_FLOOR/CEIL = 0.05/0.4` | `DEFAULT_OPPONENT_DEATH_RATE = 0.15`, `DEFAULT_OPPONENT_MUTATION_FLOOR/CEIL = 0.02/0.2` — deliberately gentler by design ("the opponent pool is a measuring instrument, not a search") | inactive under BASE: BASE passes explicit equal values on both sides (`--death-rate 0.2 --opponent-death-rate 0.2`, matching mutation floor/ceil pairs), read at `scripts/evolve.mjs:3883` and `:3913`, so the differing DEFAULTS never apply — checkable in any BASE run's `config` block in its `evolve-gen0.json`. |
-| 23 | Curated protection | none on the candidate side | `PROTECTED_ORIGINS`, curated headcount/top-up (`src/meta/opponentPool.js`) | inactive under BASE: BASE passes `--curated-ratio 0`, read at `scripts/evolve.mjs:1452`, so no opponent is ever curated/protected. This is opponent input data (a curated preset pool), not GA behavior, and stays by design per PLAN.md Item 2 ("curated protection stays ... must be inert at `--curated-ratio 0`"). |
-| 24 | Population/opponent-count schedule | `--population-final-ratio` shrinks `config.population` toward `population * ratio` by the last generation | `opponentsAt(g, config)` is DERIVED to keep the battle grid (population × opponents) constant | inactive under BASE: `--population-final-ratio 1` (BASE, read at `scripts/evolve.mjs:1130`) holds `populationAt(g)` constant, so `opponentsAt(g)` is constant too — no schedule-driven asymmetry under BASE. |
-| 25 | Core-rivalry twin mode | `twins: 'lead'` | `twins: 'lead'` | removed (68e45a6): `coreRivalryFitness` is called once, inside `evolveStep`, with `'lead'` for whoever calls. The opponent side used `'positional'`. |
-| 26 | Which mean is reported | `analytics.meanFitness` | `analytics.opponentMeanFitness` | removed: same empty-array-safe mean-of-array shape; `scripts/symmetry-gap.mjs` (Item 1) reads raw/weighted siblings computed the same way on both sides. |
-| 27 | Shadow builds in the sampler | one sampler entry per (species, shadow) build, weighted by its own pvpoke rank id (`buildScoredPool`, `src/teams/sample.js`), never two builds of one species on a team | shadow and plain are separate pool entries, each with its own weight | removed: this is now the only mode, for real-collection runs too. Before (v15) it was `--meta-mode` only (part of the `meta3` batch: gen 0 of an early meta-mode run without it had 47 distinct candidate builds against 65 opponent builds). |
-| 28 | Gen-0 dedupe | unique unordered species set, lead assigned after | same (`src/meta/opponentPool.js:190`) | removed (68e45a6): the opponent side deduped gen 0 by positional id, so it could start with two leads of one trio. |
-| 29 | Immigrant dedupe | `evolveStep`'s lead-aware `used` set only (`allowRepeatSets`, `src/teams/evolve.js:420`) | same | removed (68e45a6): candidate immigrants were also deduped by unordered set inside the sampler's batch. |
-| 30 | Meta collection species names | CSV `name` column is the base speciesId, resolved exactly (`src/importer/gamemaster.js:171`) | rankings speciesId | removed (68e45a6): the CSV used pvpoke's `speciesName`; pvpoke's rankings label `morpeko_full_belly` "Morpeko (Hangry)", so the candidate side fielded `morpeko_hangry`, a different Pokemon, and had no Full Belly. `out/meta-collection-willpower-1500.csv` was rebuilt (old file kept as `.names-v1.csv.bak`); labels before `meta3` used the old file. |
-| 31 | The generation step itself | `nextGeneration` → `evolveStep` | `nextOpponentPool` → `evolveStep` | removed (68e45a6): rivalry ranking, cull, mutation roll, seat split, shadowFlip→memberSwap fallback, fill and dedupe are one function (`src/ga/core.js:223`). Adapters supply only `profilesOf`, `signatureOf`, `buildMutant`, `immigrants`; the opponent side also passes its protected curated entries (`extraParents`, `reserved`), empty at `--curated-ratio 0`. `test/ga.test.js` drives it through two differently-shaped adapters and asserts identical deaths, mutants and immigrants for a steady, shrinking and growing target. |
+Candidate-side mean fitness minus opponent-side mean fitness, in percentage
+points (positive = candidates score higher). Source: label `rank`, from
+`node scripts/symmetry-gap.mjs report --label rank`
+(`out/evolve-symgap-rank-s1/`, `out/symmetry-gap-rank.json`).
+**1 seed (s1), 3 generations, 60 x 60, full 281-build field on both sides, no SE.**
 
-## Result
+| | blend | raw |
+|---|---|---|
+| final generation | +1.51 | +1.82 |
+| all generations, averaged | +1.65 | +2.99 |
+| generation 0 (before either side has evolved) | +3.36 | +5.94 |
 
-Bound: mean candidate-minus-opponent fitness gap within 0.02, blend and raw, at
-the final generation and averaged over all generations. Five seeds, 8
-generations, 60 x 60, willpower cup, `out/meta-collection-willpower-1500.csv`.
+The accepted bound is 2.00 points. Final-generation and all-generation blend
+and final raw are under it; all-generation raw (+2.99) and generation 0 are
+over it, so `report --label rank` prints `VERDICT: FAIL`.
 
-Command (BASE lives in `scripts/symmetry-gap.mjs` `BASE_FLAGS`, which now
-includes `--meta-mode`):
+**Justification: the leftover gap is probably noise.** One seed with no SE
+cannot separate a real gap from noise, and nothing else is claimed. For scale,
+the last multi-seed run, on older code (v15, label `final`, 5 seeds, 60 x 60, 8
+generations, pools capped at 70), had a mean final-generation gap of -0.74
+(SE 0.98) blend and -1.30 (SE 1.01) raw, and an all-generation gap of +0.14
+(SE 1.25) blend and +0.24 (SE 1.44) raw. Those are within 2 SE of zero and
+inside the bound. No 5-seed run has been made on v16.
+
+## Remaining differences in the code
+
+Each row is a difference that exists in the source today. The number column is
+that row's own contribution to the gap, in percentage points. No per-row size
+has been measured for any of them, because none can fire in the runs that
+measure the gap.
+
+| # | Difference | Candidate side | Opponent side | Number | Fires when | Why it stays |
+|---|---|---|---|---|---|---|
+| 1 | Mon IVs | CSV's own IVs; blank IVs default to pvpoke's spread (`src/importer/index.js:266-278`) | always pvpoke default IVs (`src/scoring/index.js:180`, `buildMetaMon`) | not measured | Real collections with non-default IVs. Not in meta-vs-meta runs: the meta CSV is built from default IVs. | A player's mon has the IVs it has. |
+| 2 | Mon moveset | pvpoke's auto-selected moveset, or the row's own with `currentMoves` (`src/scoring/index.js:451`) | the exact moveset in pvpoke's rankings file (`src/scoring/index.js:175`, `buildMetaMon`) | not measured | Real-collection runs. `--meta-mode` overrides candidates with the rankings moveset (`scripts/evolve.mjs:3416`). | Forcing a rankings moveset onto a player's mon would suggest moves they may not have. |
+| 3 | Evolution expansion | each row expands to its evolutions; one entry per lineage is kept (`src/evolution/`, `dedupeByRank` in `src/teams/rankedPool.js`) | opponents built straight from rankings entries | not measured | Real-collection runs (default). `--meta-mode` forces it off (`scripts/evolve.mjs:1442`). | It is how the tool suggests a form the player does not own yet. |
+| 4 | Gen-0 lead choice | uniform random (`assignLead`, `src/teams/evolve.js:198`) | highest lead-prior member when role scores are passed (`pickLeadIndex`, `src/meta/sampleTeams.js:129-141`) | not measured | Default flags. `--random-opponent-lead` (in the gap runs' flags) makes both random (`scripts/evolve.mjs:3497`). | The lead prior is the better opponent model outside the gap runs. |
+| 5 | Strength gamma | `candidateStrengthGamma`, default 1 (`scripts/evolve.mjs:2467`) | `opponentStrengthGamma`, default 1 (`scripts/evolve.mjs:2458`) | not measured | Only if the two flags are set to different values. Both default to 1 and mirror each other. | Mirror of each other; kept as separate knobs for experiments. |
+| 6 | Death and mutation rate defaults | `DEFAULT_DEATH_RATE = 1/3`, mutation 0.05-0.4 (`src/teams/evolve.js:56-58`) | `DEFAULT_OPPONENT_DEATH_RATE = 0.15`, mutation 0.02-0.2 (`src/meta/opponentPool.js:68`, `:77-78`) | not measured | Default flags. The gap runs pass equal explicit values (`scripts/evolve.mjs:3883`, `:3913`). | The opponent pool is a measuring instrument, not a search, so it changes more slowly. |
+| 7 | Curated opponents | none | curated preset teams are protected from culling (`PROTECTED_ORIGINS`, `src/meta/opponentPool.js:116`) | not measured | Default `--curated-ratio`. The gap runs pass 0 (`scripts/evolve.mjs:1452`), so none exist. | It is opponent input data (real GL teams), not GA behavior. |
+| 8 | Population/opponent-count schedule | `populationAt` shrinks the population by `--population-final-ratio` (`scripts/evolve.mjs:1130`) | opponent count is derived to keep the battle grid constant (`opponentsAt`) | not measured | Default flags. The gap runs pass `--population-final-ratio 1`, so both stay constant. | Fewer candidates late in a run saves battles once the search has converged. |
+
+Real-collection runs differ between sides on purpose (rows 1-3, 6-8), so a gap
+there is not evidence of a bug.
+
+## Checking your own run
 
 ```
-node scripts/symmetry-gap.mjs run --label final
-node scripts/symmetry-gap.mjs report --label final     # exit 0 = inside the bound
+node scripts/fitness-sides.mjs out/evolve-<name>          # per-generation means, both sides
+node scripts/symmetry-gap.mjs report --label <label>      # for out/evolve-symgap-<label>-* runs
 ```
 
-### After this change (v16): short sanity run only
+## History: fixed differences and results from older code (v13-v15)
 
-`node scripts/symmetry-gap.mjs run --label rank --seeds s1 -- --generations 3`
-(one seed, 60 x 60, 3 generations, full 281-build field on both sides, no 1v1
-scoring; log reads `281 mons built (no 1v1 scoring)`, 0 lines `mons scored`).
+Nothing below describes current code except where marked. Line numbers here
+may no longer match the source.
+
+### Fixed differences
+
+One line each: what it was, what removed it, measured size where one exists.
+Sizes come from the Ladder below and are on older code.
+
+- Level/shadow build: one shared `buildPokemon`, no side branch.
+- Species pool criterion: candidate pool was cut by 1v1 matrix score, opponent pool by pvpoke rank. Now both use pvpoke rank and, under `--meta-mode`, the same 281-build set (v16, commit 370583a). Old (v15) config: 70 builds a side.
+- Sampling weights: candidates used a blend of 1v1 score and usage (`--candidate-sample-alpha`), opponents usage only. Now both use `1/(rank+20)` per species+shadow build (370583a). Size, v15, `sample-usage-only-v2` vs `ga`: final blend -10.79 -> -2.72 points, raw -13.73 -> -3.23.
+- Shadow-flip mutation: opponent side had none; added with the same 0.2 rate (Item 2, `ga` label; no separate size).
+- Lead-rotation mutation: same rate and mechanics on both sides via `evolveStep` (`src/ga/core.js`).
+- Team identity: opponent side used a positional id, candidate side lead + sorted backs; both now use lead + sorted backs (68e45a6, part of `meta3`).
+- Member-swap replacement weights: both use the rank-weight map (370583a; size shared with the sampling-weights row).
+- Mutant eligibility: opponent swap could bring back the replaced species' shadow twin; now excluded on both sides (68e45a6, `meta3`).
+- Used-identity set: candidate side seeded it from survivors only; both now seed from every team alive at step start (68e45a6, `meta3`).
+- Voter (crowding) weights: both call the same `crowdingWeights` path; no side difference in output.
+- Blend fitness function: one shared `computeBlendFitness`.
+- Snowball/closer/consistency scores: one shared function each.
+- Shared-weakness move-coverage relief: lookup key read differently per side; fixed in 12a0e12 and 68e45a6 (`ga` label; no separate size).
+- Selection smoothing (trailing mean): one shared `trailingFitnessGeneric`.
+- Death-rate churn accounting: two different formulas; one `computeChurn` (Item 2, `ga`).
+- Immigrant-slot rounding and seat allocation: round vs floor and a borrow-one-seat rule on one side only; one `allocateNewSlots` (Item 2, `ga`).
+- Core-rivalry twin mode: opponent side used `'positional'`, candidate `'lead'`; both `'lead'` (68e45a6, `meta3`).
+- Which mean is reported: same shape on both sides; no difference.
+- Shadow builds in the sampler: shadow and plain were separate entries only in `--meta-mode`; now always (370583a; part of `meta3`, no separate size).
+- Gen-0 dedupe: opponent side deduped by positional id; both now by unordered species set (68e45a6, `meta3`).
+- Immigrant dedupe: candidate immigrants were also deduped inside the sampler batch; now only by `evolveStep`'s set (68e45a6, `meta3`).
+- Meta collection species names: CSV used pvpoke `speciesName`, so `morpeko_full_belly` became `morpeko_hangry` (68e45a6, `meta3`).
+- The generation step itself: `nextGeneration` and `nextOpponentPool` are now thin callers of one `evolveStep` (68e45a6, `meta3`). `meta3 --minus finalv14` is +1.98 points (SE 1.63) blend, +1.93 (SE 2.17) raw for the whole batch, about 1 SE.
+
+### v16 sanity run (raw report)
+
+`node scripts/symmetry-gap.mjs run --label rank --seeds s1 -- --generations 3`;
 `report --label rank`:
 
 ```
@@ -78,16 +103,16 @@ seed	gen0Blend	gen0Raw	finalBlend	finalWeighted	finalRaw	allGenBlendMean	allGenR
 s1	0.0336	0.0594	0.0151	0.0278	0.0182	0.0165	0.0299	core-pair-archetypes-v16
 ```
 
-This is a sanity number, not a pass of the 0.02 bound: one seed, 3 generations,
-no SE. `report --label rank` prints `VERDICT: FAIL` (exit 1): the final blend
-and raw gaps (+0.0151, +0.0182) and the all-generation blend gap (+0.0165) are
-under 0.02, but the all-generation raw gap is +0.0299, and gen 0 is +0.0336
-blend / +0.0594 raw (the gap shrinks after gen 0 as both populations evolve).
-All are inside the 0.05 line at which the work would be reported as a problem.
-No
-5-seed and no 200 x 200 run was made on v16 (ruled out for this round).
+### Results on older code (v13-v15)
 
-The measurements below are v15 and predate this change.
+Bound: mean candidate-minus-opponent fitness gap within 0.02, blend and raw,
+final generation and averaged over all generations. Five seeds, 8 generations,
+60 x 60, willpower cup, `out/meta-collection-willpower-1500.csv`.
+
+```
+node scripts/symmetry-gap.mjs run --label final
+node scripts/symmetry-gap.mjs report --label final     # exit 0 = inside the bound
+```
 
 Before any change (`report --label base`, exit 1):
 
@@ -149,7 +174,7 @@ mean all-gen blend gap: 0.0072 (SE n/a)  mean all-gen raw gap: 0.0084 (SE n/a)
 VERDICT: PASS (<= 0.02 on all four)
 ```
 
-## Ladder
+### Ladder (older code)
 
 Mean final-generation gap +/- SE over seeds s1-s5. Each label is
 `out/evolve-symgap-<label>-s*`, summarised in `out/symmetry-gap-<label>.json`.
@@ -164,25 +189,9 @@ Mean final-generation gap +/- SE over seeds s1-s5. Each label is
 | final | 01e9bf9 | logging only; rows identical to `meta3` (`--minus meta3` is 0.0000 on every seed) | -0.0074 +/- 0.0098 | -0.0130 +/- 0.0101 |
 
 Measured steps: `ga` to `sample-usage-only-v2` moved the blend gap from -0.1079
-to -0.0272 (rows 5 and 11). `meta3 --minus finalv14` is +0.0198 (SE 0.0163)
-blend, +0.0193 (SE 0.0217) raw: that batch (rows 2, 4, 6, 10, 12, 13, 25, 27-31)
+to -0.0272 (the sampling-weight and member-swap-weight differences). `meta3 --minus finalv14` is +0.0198 (SE 0.0163)
+blend, +0.0193 (SE 0.0217) raw: that batch (team identity, mutant eligibility, used-identity set, core-rivalry twin mode, gen-0 and immigrant dedupe, species names, per-build sampling, the shared step, plus differences 1-3 of the current table under `--meta-mode`)
 was run as one label, so its rows have no separate sizes, and the step is about
 1 SE, so it is not shown to be more than noise on five seeds. `base` to `ga`
 (+0.0048) is inside noise.
 
-## Remainder
-
-No `kept` rows. On v15 the remainder was the final gap itself: blend -0.0074
-(SE 0.0098), raw -0.0130 (SE 0.0101), within 2 SE of zero. On v16 the remainder
-is not measured beyond the single sanity run above (blend +0.0151, raw +0.0182,
-one seed, no SE). Real-collection runs (no `--meta-mode`) differ between sides on
-purpose: candidates are the player's own mons (own IVs, own or auto movesets,
-evolution expansion on) while opponents are pvpoke's ranked builds; no equal
-fitness is expected there.
-
-## Checking your own run
-
-```
-node scripts/fitness-sides.mjs out/evolve-<name>          # per-generation means, both sides
-node scripts/symmetry-gap.mjs report --label <label>      # for out/evolve-symgap-<label>-* runs
-```
