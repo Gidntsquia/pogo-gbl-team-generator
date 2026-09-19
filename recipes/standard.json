@@ -1,0 +1,8 @@
+{
+  "opponents-per-gen": 120,
+  "elites": 15,
+  "snowball-weight": 0.2,
+  "closer-weight": 0.1,
+  "consistency-weight": 0.1,
+  "shared-weakness-weight": 0.2
+}

@@ -167,6 +167,13 @@ test('the meta-pool cap keeps every sampled member inside the top N by ranking s
   assert.ok(byDefault.at(-1).score >= uncapped.at(-1).score, 'the cap keeps the top of the field, not the tail');
 });
 
+test('under a cup, loadMovesetPool reads the cup rankings (281-entry Willpower field, no off-type mons)', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  const pool = loadMovesetPool(wpCtx, { metaPoolSize: 0 });
+  assert.equal(pool.length, 281);
+  assert.ok(pool.every((e) => wpCtx.eligibleSpeciesIds.has(e.speciesId)));
+});
+
 test('every team is lead-ordered: members[0] leads, leadIndex is 0', () => {
   const roleScores = loadRoleScores(ctx);
   const teams = sampleOpponentTeams(ctx, { count: 12, weights, seed: 'lead-order', curatedRatio: 0.5, roleScores });

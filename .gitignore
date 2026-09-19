@@ -7,3 +7,5 @@ out/
 !.claude/settings.json
 !.claude/test-commands.sh
 !.claude/hooks/
+wiki/
+plans/

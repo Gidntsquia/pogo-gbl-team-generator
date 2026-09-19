@@ -180,3 +180,10 @@ test('a structurally-invalid snapshot (missing categories) falls back without th
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('under a cup, role scores come from the cup rankings, not Great League', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  const scores = loadRoleScores(wpCtx);
+  assert.ok(scores.has('medicham'));
+  assert.ok(!scores.has('azumarill'), 'azumarill is off-type for Willpower');
+});

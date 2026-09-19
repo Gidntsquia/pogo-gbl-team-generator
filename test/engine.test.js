@@ -10,7 +10,7 @@
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
+import { initEngine, buildPokemon, simBattle, isEligible } from '../src/engine/harness.js';
 import { DEFAULT_VENDOR_ROOT } from '../src/engine/pvpokeLoader.js';
 
 // pvpoke's own shadow Attack/Defense multipliers
@@ -29,7 +29,7 @@ const VALIDATION_PAIRS = [
   ['tinkaton', 'thievul'],
   ['corsola_galarian', 'altaria'],
   ['mimikyu', 'melmetal'], // exercises Mimikyu's Disguise form-change path
-  ['jellicent', 'tinkaton'],
+  ['tinkaton', 'altaria'],
 ];
 
 /** Look up speciesId's own recorded rating against opponentId, pvpoke's "leads" (shields 1/1) scenario. */
@@ -300,7 +300,7 @@ describe('initEngine({ cp }) -- Ultra League (CP 2500) parameterization', () => 
   });
 
   test('rejects an unsupported CP cap with a clear error', async () => {
-    await assert.rejects(() => initEngine({ cp: 999 }), /no vendored rankings for cp=999/);
+    await assert.rejects(() => initEngine({ cp: 999 }), /unsupported cp 999/);
   });
 
   test('buildPokemon respects the CP-2500 cap, not 1500', () => {
@@ -341,5 +341,54 @@ describe('initEngine({ cp }) -- Ultra League (CP 2500) parameterization', () => 
         assert.strictEqual(result.rating2, expectedRating2);
       });
     }
+  });
+});
+
+describe('initEngine({ cp, cup }) -- Willpower Cup parameterization', () => {
+  let wpCtx;
+
+  before(async () => {
+    wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  });
+
+  test('battle is configured for the Willpower cup, cup rankings are loaded', () => {
+    assert.strictEqual(wpCtx.battle.getCup().name, 'willpower');
+    assert.strictEqual(wpCtx.battle.getCP(), 1500);
+    assert.strictEqual(wpCtx.cup, 'willpower');
+    assert.ok(wpCtx.gm.rankings.willpoweroverall1500);
+
+    // Default ("all") ctx from the top-level before() hook is unaffected.
+    assert.strictEqual(ctx.battle.getCup().name, 'all');
+    assert.strictEqual(ctx.eligibleSpeciesIds, null);
+  });
+
+  test('eligibleSpeciesIds has type-eligible mons, lacks banned/off-type/mega mons', () => {
+    assert.ok(wpCtx.eligibleSpeciesIds.has('medicham'));
+    assert.ok(wpCtx.eligibleSpeciesIds.has('sableye'));
+    assert.ok(!wpCtx.eligibleSpeciesIds.has('azumarill')); // off-type
+    assert.ok(!wpCtx.eligibleSpeciesIds.has('gardevoir')); // id-banned
+    assert.ok(!wpCtx.eligibleSpeciesIds.has('gardevoir_shadow')); // id-ban strips shadow suffix
+    assert.ok(!wpCtx.eligibleSpeciesIds.has('mega_medicham')); // mega tag
+  });
+
+  test('isEligible checks base and shadow-suffixed ids; the "all" ctx allows everything', () => {
+    assert.strictEqual(isEligible(wpCtx, { speciesId: 'medicham' }), true);
+    assert.strictEqual(isEligible(wpCtx, { speciesId: 'sableye', shadow: true }), true);
+    assert.strictEqual(isEligible(wpCtx, { speciesId: 'azumarill' }), false);
+    assert.strictEqual(isEligible(wpCtx, { speciesId: 'gardevoir', shadow: true }), false);
+
+    assert.strictEqual(isEligible(ctx, { speciesId: 'azumarill' }), true);
+    assert.strictEqual(isEligible(ctx, { speciesId: 'anything-at-all' }), true);
+  });
+
+  test('unknown cup rejects', async () => {
+    await assert.rejects(() => initEngine({ cup: 'not-a-real-cup' }), /no format for cup="not-a-real-cup"/);
+  });
+
+  test('buildPokemon picks the cup moveset where it differs from Great League (sableye 2nd charged move)', () => {
+    const built = buildPokemon(wpCtx, { speciesId: 'sableye', ivs: { atk: 1, def: 15, hp: 14 } });
+    const chargedIds = built.chargedMoves.filter(Boolean).map((m) => m.moveId);
+    assert.ok(chargedIds.includes('DAZZLING_GLEAM'), `expected willpower moveset, got ${chargedIds}`);
+    assert.ok(!chargedIds.includes('POWER_GEM'), `expected the GL-only move dropped, got ${chargedIds}`);
   });
 });

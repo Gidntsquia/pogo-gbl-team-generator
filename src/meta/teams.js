@@ -14,6 +14,8 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { buildMetaMon, buildRecommendedMon } from '../scoring/index.js';
+import { isEligible } from '../engine/harness.js';
+import { DEFAULT_CUP } from '../util/leagues.js';
 
 // pvpoke's own "GO Battle League" curated preset set, one file per CP cap
 // (1500.json/2500.json/10000.json vendored -- great/ultra/master league,
@@ -172,6 +174,12 @@ function buildVendorTeams(ctx, teamsFile) {
         chargedMoves: entry.chargedMoves,
       })
     );
+    // Cup eligibility: under a cup (ctx.eligibleSpeciesIds set), drop any
+    // preset with a member the cup doesn't allow. Under Willpower this
+    // leaves the vendor "GO Battle League" pool nearly empty (it's a
+    // Great-League-meta preset file) -- that is correct; see
+    // docs/plans/2026-09-17-cup-support.md step 4.
+    if (ctx.eligibleSpeciesIds && members.some((m) => !isEligible(ctx, m))) continue;
     const id = members.map((m) => m.speciesId).join('-');
     // Preview branches can temporarily contain the same training preset more
     // than once. Keep the first occurrence so stable IDs remain unique and a
@@ -219,12 +227,21 @@ function parseCommunityMember(member) {
   return { speciesId, override };
 }
 
-/** Read+parse the community teams file (or opts.communityEntries); [] if the file is absent. */
-function readCommunityEntries(opts) {
+/**
+ * Read+parse the community teams file (or opts.communityEntries); [] if the
+ * file is absent, or if the file's top-level "cup" field (default `'all'`,
+ * meaning Great League) doesn't match `ctx.cup` -- e.g. a Great-League-only
+ * `data/meta-teams-community.json` is ignored under `--cup willpower`. A
+ * later cup-specific pool (e.g. `data/meta-teams-community-willpower.json`)
+ * would set `"cup": "willpower"` and be selected by `opts.communityFile`.
+ */
+function readCommunityEntries(ctx, opts) {
   if (opts.communityEntries) return opts.communityEntries;
   const filePath = opts.communityFile ?? DEFAULT_COMMUNITY_FILE;
   if (!existsSync(filePath)) return [];
   const raw = JSON.parse(readFileSync(filePath, 'utf8'));
+  const fileCup = raw.cup ?? DEFAULT_CUP;
+  if (fileCup !== (ctx.cup ?? DEFAULT_CUP)) return [];
   return Array.isArray(raw.teams) ? raw.teams : [];
 }
 
@@ -264,7 +281,7 @@ function readCommunityEntries(opts) {
  *   `leadIndex` is always 0 (see above).
  */
 export function loadCommunityTeams(ctx, opts = {}) {
-  const entries = readCommunityEntries(opts);
+  const entries = readCommunityEntries(ctx, opts);
   const teams = [];
   for (const entry of entries) {
     if (!Array.isArray(entry.members) || entry.members.length !== TEAM_SIZE) {

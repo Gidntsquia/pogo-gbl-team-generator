@@ -23,7 +23,7 @@ does not rank is last place).
 cd /home/jaxon/files/pogo-gbl-team-generator
 test "$(git branch --show-current)" = "main"
 bash scripts/setup.sh          # materializes/repairs vendor/pvpoke (gitignored) at the pin
-test "$(git -C vendor/pvpoke rev-parse HEAD)" = "cc89274c1589574114cb3ba79c7fb24fb25b0468"
+test "$(git -C vendor/pvpoke rev-parse HEAD)" = "bc28b41e766db0597e6c2b4d5e01ca9dd4ab2471"
 ```
 
 `setup.sh` is idempotent and fixes an existing checkout to the pin.

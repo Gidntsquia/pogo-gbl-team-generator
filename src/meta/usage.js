@@ -25,7 +25,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { DEFAULT_CP, leagueForCp } from '../util/leagues.js';
+import { DEFAULT_CP, DEFAULT_CUP, resolveFormat, rankingsPath, readVendoredJson } from '../util/leagues.js';
 
 // Default snapshot path, relative to the process cwd -- mirrors the removed CLI's
 // "out/report.md" convention (both assume the CLI/tests run from repo root).
@@ -46,7 +46,7 @@ const DEFAULT_RANK_ALPHA = 1.0;
 const DEFAULT_RANK_OFFSET = 20;
 
 function readJson(filePath) {
-  return JSON.parse(readFileSync(filePath, 'utf8'));
+  return readVendoredJson(filePath);
 }
 
 /** Default training-teams file for ctx's CP cap, mirroring src/meta/teams.js. */
@@ -54,14 +54,15 @@ function defaultTrainingFile(ctx) {
   return `src/data/training/teams/gobattleleague/${ctx.cp}.json`;
 }
 
-/** Default vendored rankings file for ctx's CP cap. */
+/** Default vendored rankings file for ctx's CP cap + cup. */
 function defaultRankingsFile(ctx) {
-  return `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
+  return rankingsPath(ctx, 'overall');
 }
 
-/** Default meta group file for ctx's CP cap. */
+/** Default meta group file for ctx's CP cap + cup. */
 function defaultGroupFile(ctx) {
-  return `src/data/groups/${leagueForCp(ctx.cp).group}.json`;
+  const group = resolveFormat({ cp: ctx.cp, cup: ctx.cup ?? DEFAULT_CUP, vendorRoot: ctx.vendorRoot }).group;
+  return `src/data/groups/${group}.json`;
 }
 
 function readTrainingSpeciesIds(raw) {
@@ -140,9 +141,9 @@ function loadSnapshot(snapshotPath) {
  */
 function loadScoreBySpecies(ctx, opts) {
   const snapshotPath = opts.snapshotPath ?? DEFAULT_SNAPSHOT_PATH;
-  const snapshot = opts.snapshotEntries
   // `ignoreSnapshot`: evolve runs sample by pure pvpoke rank, so a
   // data/meta-usage.json freshness snapshot must not reorder them.
+  const snapshot = opts.snapshotEntries
     ? { entries: opts.snapshotEntries }
     : opts.ignoreSnapshot
       ? null
@@ -155,11 +156,15 @@ function loadScoreBySpecies(ctx, opts) {
     // for the league actually being run -- fall back to the vendored
     // rankings for that cap instead.
     const snapshotCp = snapshot.cp ?? DEFAULT_CP;
-    if (opts.snapshotEntries || snapshotCp === ctx.cp) {
+    // A missing "cup" field means the snapshot predates cup support and was
+    // fetched for the "all" cup (Great League etc), same convention as cp.
+    const snapshotCup = snapshot.cup ?? DEFAULT_CUP;
+    if (opts.snapshotEntries || (snapshotCp === ctx.cp && snapshotCup === (ctx.cup ?? DEFAULT_CUP))) {
       return new Map(snapshot.entries.map((e) => [e.speciesId, e.score]));
     }
     process.stderr.write(
-      `loadUsageWeights: ignoring ${snapshotPath} (cp ${snapshotCp}) for a cp-${ctx.cp} run -- using vendored rankings\n`
+      `loadUsageWeights: ignoring ${snapshotPath} (cp ${snapshotCp}, cup ${snapshotCup}) for a cp-${ctx.cp}` +
+        ` cup-${ctx.cup ?? DEFAULT_CUP} run -- using vendored rankings\n`
     );
   }
 
@@ -198,12 +203,12 @@ function loadScoreBySpecies(ctx, opts) {
  *   rankingsEntries?: Array<{speciesId: string, score: number}>,
  *   snapshotPath?: string,
  *   snapshotEntries?: Array<{speciesId: string, score: number}>,
+ *   ignoreSnapshot?: boolean,
  * }} [opts]
  *   `*Entries`/`trainingSpeciesIds`/`snapshotEntries` override reading the
  *   corresponding vendor/snapshot file entirely (testability, mirrors
  *   src/scoring/index.js's `groupEntries` pattern). `snapshotPath` overrides
  *   the default `data/meta-usage.json` (also testability, e.g. pointing at a
- *   ignoreSnapshot?: boolean,
  *   temp file to test the snapshot-preference / corrupt-snapshot-fallback
  *   rules without touching the repo's committed snapshot).
  * @returns {Map<string, number>} speciesId -> normalized positive weight.
@@ -231,7 +236,6 @@ export function loadUsageWeights(ctx, opts = {}) {
   }
   return weights;
 }
-}
 
 /**
  * Sampling weight of a build pvpoke does not rank for this format: last place,
@@ -250,3 +254,4 @@ export function lastPlaceWeight(weights, opts = {}) {
   const n = weights.size;
   const minWeight = Math.min(...weights.values());
   return minWeight * Math.pow((n + k) / (n + 1 + k), alpha);
+}

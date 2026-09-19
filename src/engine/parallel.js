@@ -27,7 +27,7 @@
 // and serial runs can therefore differ in HP margin even though win/loss
 // outcomes (verified empirically) very rarely do. This affects any REUSE of a
 // Pokemon instance across sequential battles, so it already existed in
-// today's serial evaluateTeams/tournament.mjs too. The vendor-is-read-only
+// today's serial evaluateTeams/the removed tournament script too. The vendor-is-read-only
 // rule (never reimplement battle math) means this is documented as a
 // known engine characteristic, not "fixed" here -- the harness-level
 // bench-member state stamp in src/engine/teamBattle.js is what addresses it
@@ -48,7 +48,7 @@
 // booting its own headless engine context) for every call and tore it down
 // before resolving -- correct, but it means pool+engine boot cost (dominated
 // by parsing/indexing gamemaster.json once per worker) is paid again on every
-// single call, which is exactly why scripts/tournament.mjs had to batch big
+// single call, which is exactly why the removed tournament script had to batch big
 // runs per-candidate rather than pay that cost once for the whole run.
 //
 // `createExecutor(opts)` splits pool lifecycle from individual batches of
@@ -58,7 +58,7 @@
 // creates an executor, runs one batch, and closes it -- so its own behavior
 // (one pool per call, torn down before the returned promise settles) is
 // unchanged; the new amortization only benefits callers that adopt
-// `createExecutor` directly and call `run()` repeatedly (scripts/tournament.mjs
+// `createExecutor` directly and call `run()` repeatedly (the removed tournament script
 // and src/teams/index.js's evaluateTeams).
 //
 // **run() concurrency policy: serialized, not parallel-dispatched.** Multiple
@@ -114,7 +114,7 @@
 //
 // Contiguous chunks (worker 0 gets specs [0, n/threads), worker 1 the next
 // slice, etc.) were chosen over striping (worker i gets every i-th spec)
-// because callers (evaluateTeams, tournament.mjs) build their flat spec lists
+// because callers (evaluateTeams, the removed tournament script) build their flat spec lists
 // in an order that already groups a given team's/candidate's battles
 // together (all 9 lead pairings against one meta team are adjacent, etc.) --
 // contiguous chunks keep that locality inside one worker's build cache, while
@@ -292,14 +292,19 @@ export function partitionContiguous(n, workers) {
  * @param {(worker: Worker) => void} onStarted - called synchronously the
  *   moment the Worker object is constructed (even before it's ready), so a
  *   caller can track/terminate it if a LATER worker in the same pool fails.
+ * @param {string|undefined} profileDir
+ * @param {number|undefined} cp - forwarded to the worker's own initEngine
+ *   so a spec without an explicit moveset still gets the right format's
+ *   recommended moveset (see src/engine/harness.js's initEngine).
+ * @param {string|undefined} cup - forwarded to the worker's own initEngine.
  * @returns {Promise<Worker>}
  */
-function bootWorker(vendorRoot, onStarted, profileDir) {
+function bootWorker(vendorRoot, onStarted, profileDir, cp, cup) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
       worker = new Worker(WORKER_PATH, {
-        workerData: { vendorRoot, profileDir },
+        workerData: { vendorRoot, profileDir, cp, cup },
         resourceLimits: { maxOldGenerationSizeMb: WORKER_OLD_GEN_MB },
       });
     } catch (err) {
@@ -347,7 +352,11 @@ function bootWorker(vendorRoot, onStarted, profileDir) {
  * of paying it per batch. See the module header above for the full run()
  * concurrency policy and worker-crash policy.
  *
- * @param {{ threads?: number, vendorRoot?: string, continueOnError?: boolean, profileDir?: string }} [opts]
+ * @param {{ threads?: number, vendorRoot?: string, continueOnError?: boolean, profileDir?: string, cp?: number, cup?: string }} [opts]
+ *   `cp`/`cup` are forwarded to each worker's own `initEngine` (see
+ *   bootWorker) so a spec without an explicit moveset still gets the right
+ *   format's recommended moveset; default to Great League ('all', 1500) when
+ *   omitted, matching initEngine's own defaults.
  *   `profileDir` is diagnostic-only and off by default: when set, each worker
  *   runs a `node:inspector` CPU profiler for its whole life and, on `close()`,
  *   writes `<profileDir>/worker-<i>.cpuprofile` plus reports its scenario-memo
@@ -590,7 +599,8 @@ export function createExecutor(opts = {}) {
 
     const threadCount = Math.max(1, resolveThreadCount(opts.threads));
     const started = [];
-    const bootOne = () => bootWorker(vendorRoot, (w) => started.push(w), opts.profileDir);
+    const bootOne = () =>
+      bootWorker(vendorRoot, (w) => started.push(w), opts.profileDir, opts.cp, opts.cup);
 
     bootPromise = Promise.all(Array.from({ length: threadCount }, bootOne))
       .then((workers) => {
@@ -706,7 +716,7 @@ export function createExecutor(opts = {}) {
  * is left running (and keeping the process alive) after runBattles() returns.
  *
  * @param {BattleSpec[]} specs
- * @param {{ threads?: number, vendorRoot?: string }} [opts]
+ * @param {{ threads?: number, vendorRoot?: string, cp?: number, cup?: string }} [opts]
  * @returns {Promise<object[]>} results in spec order, each shaped like
  *   battleTeams()'s return value ({winner, survivorsHp, summary}).
  */
@@ -717,6 +727,6 @@ export function runBattles(specs, opts = {}) {
   if (specs.length === 0) return Promise.resolve([]);
 
   const threads = Math.max(1, Math.min(resolveThreadCount(opts.threads), specs.length));
-  const executor = createExecutor({ threads, vendorRoot: opts.vendorRoot });
+  const executor = createExecutor({ threads, vendorRoot: opts.vendorRoot, cp: opts.cp, cup: opts.cup });
   return executor.run(specs).finally(() => executor.close());
 }

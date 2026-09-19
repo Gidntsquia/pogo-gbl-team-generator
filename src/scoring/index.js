@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildPokemon, simBattle } from '../engine/harness.js';
-import { leagueForCp } from '../util/leagues.js';
+import { resolveFormat, DEFAULT_CUP, readVendoredJson } from '../util/leagues.js';
 
 const SHADOW_SUFFIX = '_shadow';
 
@@ -87,15 +87,15 @@ const SCORE_WEIGHTS = Object.freeze({ s00: 0.25, s11: 0.5, s22: 0.25 });
  *   Meta mons are never Best Buddy, so this is always `bestBuddy: false` here.
  */
 
-/** The meta group file for ctx's CP cap: "great" at 1500, "ultra" at 2500, etc. */
+/** The meta group file for ctx's CP cap + cup: "great" at 1500, "willpower" under that cup, etc. */
 function defaultGroupFile(ctx) {
-  return leagueForCp(ctx.cp).group;
+  return resolveFormat({ cp: ctx.cp, cup: ctx.cup ?? DEFAULT_CUP, vendorRoot: ctx.vendorRoot }).group;
 }
 
 /** Read one vendor/pvpoke meta group file (default: the group for ctx.cp) as raw entries. */
 function readGroupEntries(ctx, groupFile) {
   const groupPath = path.join(ctx.vendorRoot, 'src/data/groups', `${groupFile}.json`);
-  return JSON.parse(readFileSync(groupPath, 'utf8'));
+  return readVendoredJson(groupPath);
 }
 
 /**

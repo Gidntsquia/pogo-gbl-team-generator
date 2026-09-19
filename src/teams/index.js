@@ -105,7 +105,7 @@ function speciesOf(matrix, key) {
  * of each physical Pokemon. Returns a shallow matrix copy
  * with pruned `ratings`/`builtMons`; other fields are shared unchanged.
  *
- * Originally lived in src/cli.js; moved here so the weighted
+ * Originally lived in the removed CLI; moved here so the weighted
  * candidate sampler (src/teams/sample.js) and the exhaustive CLI path share
  * exactly one implementation instead of drifting. Behavior is unchanged.
  *
@@ -339,7 +339,12 @@ export async function evaluateTeams(ctx, params) {
         }
       }
     }
-    allResults = await runBattles(specs, { threads: opts.threads, vendorRoot: ctx.vendorRoot });
+    allResults = await runBattles(specs, {
+      threads: opts.threads,
+      vendorRoot: ctx.vendorRoot,
+      cp: ctx.cp,
+      cup: ctx.cup,
+    });
   }
   let globalIdx = 0;
 

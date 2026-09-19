@@ -108,6 +108,17 @@ describe('loadMeta', () => {
       'expected Ultra League mons above the Great League cap'
     );
   });
+
+  test('under a cup, the default group file is the cup group, not the CP-cap group', async () => {
+    const groupIds = (cpCtx, group) =>
+      JSON.parse(
+        readFileSync(path.join(cpCtx.vendorRoot, 'src/data/groups', `${group}.json`), 'utf8').replace(/^﻿/, '')
+      ).map((e) => e.speciesId);
+
+    const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+    const willpower = loadMeta(wpCtx, { metaLimit: 3 });
+    assert.deepEqual(willpower.map((m) => m.speciesId), groupIds(wpCtx, 'willpower').slice(0, 3));
+  });
 });
 
 describe('scoreCollection', () => {

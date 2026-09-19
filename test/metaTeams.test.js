@@ -385,3 +385,34 @@ test('a member object with no speciesId drops its team, like an unknown id', () 
   });
   assert.deepEqual(teams.map((t) => t.id), ['community:fine']);
 });
+
+test('under a cup, a vendor preset with an ineligible member is dropped', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  const glTeams = loadMetaTeams(ctx, { includeCommunity: false });
+  const wpTeams = loadMetaTeams(wpCtx, { includeCommunity: false });
+  assert.ok(glTeams.length > wpTeams.length, 'willpower vendor pool should be far smaller than GL');
+  for (const team of wpTeams) {
+    for (const member of team.members) {
+      assert.ok(
+        wpCtx.eligibleSpeciesIds.has(member.speciesId),
+        `${member.speciesId} should be Willpower-eligible`
+      );
+    }
+  }
+});
+
+test('community file with the wrong cup returns [] under a cup ctx', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  // The real data/meta-teams-community.json has no top-level "cup" field, so
+  // it defaults to 'all' -- a mismatch against ctx.cup === 'willpower'.
+  const teams = loadCommunityTeams(wpCtx, {});
+  assert.deepEqual(teams, []);
+});
+
+test('communityEntries option bypasses the cup file-match check', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  const teams = loadCommunityTeams(wpCtx, {
+    communityEntries: [{ id: 'fine', members: ['medicham', 'sableye', 'annihilape'] }],
+  });
+  assert.deepEqual(teams.map((t) => t.id), ['community:fine']);
+});

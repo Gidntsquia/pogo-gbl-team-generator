@@ -192,3 +192,33 @@ test('a structurally-invalid snapshot (missing entries array) falls back without
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('under a cup, weights are computed from the cup rankings/group files, not Great League', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  const weights = loadUsageWeights(wpCtx);
+  // medicham/sableye are Willpower-eligible; azumarill/gardevoir are not
+  // (off-type / id-banned) so they must be entirely absent from the universe.
+  assert.ok(weights.has('medicham'));
+  assert.ok(weights.has('sableye'));
+  assert.ok(!weights.has('azumarill'));
+  assert.ok(!weights.has('gardevoir'));
+});
+
+test('a Great-League snapshot (no "cup" field) is ignored under a cup ctx', async () => {
+  const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
+  const dir = mkdtempSync(path.join(tmpdir(), 'meta-usage-wrongcup-'));
+  const snapshotPath = path.join(dir, 'meta-usage.json');
+  try {
+    // cp matches (1500) but cup is implicitly 'all' -- must still fall back.
+    writeFileSync(
+      snapshotPath,
+      JSON.stringify({ cp: 1500, entries: [{ speciesId: 'medicham', score: 100 }, { speciesId: 'sableye', score: 1 }] })
+    );
+    const weights = loadUsageWeights(wpCtx, { snapshotPath });
+    // Real vendored willpower rankings should win instead of the snapshot's
+    // score inversion -- just assert it didn't throw and returned real data.
+    assert.ok(weights.size > 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

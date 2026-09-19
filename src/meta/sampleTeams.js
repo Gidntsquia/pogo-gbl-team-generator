@@ -44,6 +44,7 @@ import path from 'node:path';
 import { buildMetaMon } from '../scoring/index.js';
 import { loadMetaTeams, curatedTierWeight } from './teams.js';
 import { pickWeighted, rngFromSeed } from '../util/rng.js';
+import { rankingsPath } from '../util/leagues.js';
 
 const DEFAULT_CURATED_RATIO = 0.4;
 const TEAM_SIZE = 3;
@@ -92,9 +93,12 @@ export function displayName(ctx, metaMon) {
  * @returns {Array<{speciesId: string, fastMove: string, chargedMoves: string[], score: number}>}
  */
 export function loadMovesetPool(ctx, opts = {}) {
-  // Rankings file follows ctx.cp so a `--cp 2500` run composes
-  // opponents from Ultra League movesets, not Great League ones.
-  const rankingsFile = opts.rankingsFile ?? `src/data/rankings/all/overall/rankings-${ctx.cp}.json`;
+  // Rankings file follows ctx.cp + ctx.cup so a `--cp 2500` run composes
+  // opponents from Ultra League movesets (not Great League ones), and a
+  // `--cup willpower` run composes from the Willpower rankings, whose field
+  // is far smaller (281 entries) -- see loadMovesetPool's own doc note below
+  // about a large --opponent-meta-pool effectively meaning "whole field".
+  const rankingsFile = opts.rankingsFile ?? rankingsPath(ctx, 'overall');
   const raw =
     opts.rankingsEntries ?? JSON.parse(readFileSync(path.join(ctx.vendorRoot, rankingsFile), 'utf8'));
   const pool = [];

@@ -108,7 +108,7 @@ function monKey(m) {
  * mon spec. A cache is per-side (see below) so this worker doesn't rebuild
  * an identical mon on every battle -- teamA is very often the same candidate
  * across many opponents, and teamB is very often the same opponent across
- * many candidates (mirrors how src/teams/index.js and scripts/tournament.mjs
+ * many candidates (mirrors how src/teams/index.js and the removed tournament script
  * already drive battleTeams).
  */
 function buildTeam(ctx, cache, monSpecs) {
@@ -163,7 +163,11 @@ const cacheA = new BoundedCache(MAX_CACHE_ENTRIES);
 const cacheB = new BoundedCache(MAX_CACHE_ENTRIES);
 
 async function init() {
-  ctx = await initEngine(workerData?.vendorRoot ? { vendorRoot: workerData.vendorRoot } : {});
+  const initOpts = {};
+  if (workerData?.vendorRoot) initOpts.vendorRoot = workerData.vendorRoot;
+  if (workerData?.cp !== undefined) initOpts.cp = workerData.cp;
+  if (workerData?.cup !== undefined) initOpts.cup = workerData.cup;
+  ctx = await initEngine(initOpts);
   parentPort.postMessage({ type: 'ready' });
 }
 

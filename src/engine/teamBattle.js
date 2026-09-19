@@ -1160,6 +1160,7 @@ export function battleTeams(ctx, params) {
   // battle reports the league it's actually running. Safe here for the same
   // reason it is in initEngine -- setCP re-initializes any Pokemon already on
   // the Battle, and this one has none yet.
+  if (ctx.cup && ctx.cup !== 'all') battle.setCup(ctx.cup);
   if (ctx.cp) battle.setCP(ctx.cp);
 
   const orderedA = orderWithLead(teamA, leadA);

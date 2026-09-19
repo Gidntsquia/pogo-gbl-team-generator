@@ -19,13 +19,15 @@
 // instead of whatever species one real player happens to own -- i.e. a true
 // meta-vs-meta run, not "the opponent GA learns to counter my collection."
 //
-// Usage: node scripts/build-meta-collection.mjs [--cp 1500] [--out out/meta-collection-1500.csv]
+// Usage: node scripts/build-meta-collection.mjs [--cp 1500] [--cup all] [--out out/meta-collection-1500.csv]
 
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveFormat, DEFAULT_CUP } from '../src/util/leagues.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const VENDOR_ROOT = path.join(REPO_ROOT, 'vendor', 'pvpoke');
 
 function argVal(args, flag, def) {
   const i = args.indexOf(flag);
@@ -34,23 +36,16 @@ function argVal(args, flag, def) {
 
 const args = process.argv.slice(2);
 const cp = Number(argVal(args, '--cp', '1500'));
-const outPath = path.resolve(argVal(args, '--out', path.join('out', `meta-collection-${cp}.csv`)));
+const cup = argVal(args, '--cup', DEFAULT_CUP);
+const defaultOutName = cup === DEFAULT_CUP ? `meta-collection-${cp}.csv` : `meta-collection-${cup}-${cp}.csv`;
+const outPath = path.resolve(argVal(args, '--out', path.join('out', defaultOutName)));
 
-const rankingsPath = path.join(
-  REPO_ROOT,
-  'vendor',
-  'pvpoke',
-  'src',
-  'data',
-  'rankings',
-  'all',
-  'overall',
-  `rankings-${cp}.json`,
-);
+const format = resolveFormat({ cp, cup, vendorRoot: VENDOR_ROOT });
+const rankingsFilePath = path.join(VENDOR_ROOT, 'src/data/rankings', format.rankingsDir, 'overall', `rankings-${cp}.json`);
 
-const rankings = JSON.parse(readFileSync(rankingsPath, 'utf8'));
+const rankings = JSON.parse(readFileSync(rankingsFilePath, 'utf8'));
 if (!Array.isArray(rankings) || rankings.length === 0) {
-  throw new Error(`no rankings found at ${rankingsPath}`);
+  throw new Error(`no rankings found at ${rankingsFilePath}`);
 }
 
 const rows = rankings
@@ -68,4 +63,4 @@ for (const row of rows) lines.push(`"${row.name.replace(/"/g, '""')}",,,,${row.s
 
 mkdirSync(path.dirname(outPath), { recursive: true });
 writeFileSync(outPath, lines.join('\n') + '\n');
-console.log(`wrote ${rows.length} species (cp ${cp}) -> ${outPath}`);
+console.log(`wrote ${rows.length} species (cp ${cp}, cup ${cup}) -> ${outPath}`);

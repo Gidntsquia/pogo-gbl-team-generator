@@ -7,9 +7,10 @@
 // number in the returned results comes from executing vendor/pvpoke's own
 // code.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { loadPvpokeEngine } from './pvpokeLoader.js';
+import { resolveFormat, DEFAULT_CUP } from '../util/leagues.js';
 
 const GREAT_LEAGUE_CP = 1500;
 const DEFAULT_MAX_LEVEL = 50;
@@ -34,14 +35,20 @@ const BEST_BUDDY_MAX_LEVEL = 51;
  * (no type/tag restriction beyond excluding Mega Pokemon), so only the CP
  * cap itself varies -- battle.setCup() is still never called.
  *
- * @param {{ vendorRoot?: string, cp?: number }} [opts] cp defaults to 1500
- *   (Great League); pass 2500 for Ultra League, etc. Must have a matching
- *   vendor/pvpoke/src/data/rankings/all/overall/rankings-<cp>.json file.
- * @returns {Promise<object>} ctx -- pass to buildPokemon/simBattle
+ * @param {{ vendorRoot?: string, cp?: number, cup?: string }} [opts] cp
+ *   defaults to 1500 (Great League); pass 2500 for Ultra League, etc. `cup`
+ *   defaults to `'all'` (today's behaviour, byte-for-byte) -- pass e.g.
+ *   `'willpower'` to restrict the format to a pvpoke-defined cup. Must have
+ *   a matching vendor/pvpoke/src/data/rankings/<cup>/overall/rankings-<cp>.json
+ *   file (see src/util/leagues.js's resolveFormat, which this calls).
+ * @returns {Promise<object>} ctx -- pass to buildPokemon/simBattle. Includes
+ *   `cup` and `eligibleSpeciesIds` (a `Set<string>` of pvpoke speciesIds
+ *   allowed in this cup, or `null` for `cup === 'all'`, meaning "no filter").
  */
 export async function initEngine(opts = {}) {
   const { context, GameMaster, Battle, Pokemon, vendorRoot } = loadPvpokeEngine(opts);
   const cp = opts.cp ?? GREAT_LEAGUE_CP;
+  const cup = opts.cup ?? DEFAULT_CUP;
 
   const gm = GameMaster.getInstance();
 
@@ -49,34 +56,95 @@ export async function initEngine(opts = {}) {
   gm.data = JSON.parse(readFileSync(gamemasterPath, 'utf8'));
   gm.createSearchMaps();
 
+  const format = resolveFormat({ cp, cup, vendorRoot });
+
   const rankingsPath = path.join(
     vendorRoot,
-    `src/data/rankings/all/overall/rankings-${cp}.json`
+    `src/data/rankings/${format.rankingsDir}/overall/rankings-${cp}.json`
   );
   let rankings;
   try {
     rankings = JSON.parse(readFileSync(rankingsPath, 'utf8'));
   } catch (err) {
     throw new Error(
-      `initEngine: no vendored rankings for cp=${cp} (expected ${rankingsPath}). ` +
-        `pvpoke ships 500/1500/2500/10000. (${err.message})`
+      `initEngine: no vendored rankings for cup=${cup} cp=${cp} (expected ${rankingsPath}). ` +
+        `(${err.message})`
     );
   }
   // Key format matches Pokemon.js's own selectRecommendedMoveset:
   // `cupName + category + battle.getCP()`.
-  gm.rankings[`alloverall${cp}`] = rankings;
+  gm.rankings[`${cup}overall${cp}`] = rankings;
 
   // One shared Battle instance, reused across every buildPokemon/simBattle
   // call -- mirrors pvpoke's own battle/rankers/Ranker.js, which keeps a
   // single `battle` alive across thousands of simulated matchups rather than
-  // constructing a fresh one per battle. setCP is always called (even for
-  // the 1500 default) so ctx.battle.getCP() -- and therefore
-  // buildPokemon's CP-cap search below -- always reflects the caller's
-  // chosen cap explicitly rather than relying on Battle()'s own default.
+  // constructing a fresh one per battle. setCup is called before setCP (order
+  // doesn't matter for cups without a levelCap, but matches the order a
+  // future levelCap cup would need) so ctx.battle.getCup()/getCP() --  and
+  // therefore buildPokemon's CP-cap search below -- always reflect the
+  // caller's chosen format explicitly rather than relying on Battle()'s own
+  // defaults. Battle#setCup silently no-ops (returns false) on an unknown id
+  // rather than throwing, so check it ourselves for a clear error.
   const battle = new Battle();
+  if (!gm.getCupById(cup)) {
+    throw new Error(`initEngine: unknown cup "${cup}"`);
+  }
+  battle.setCup(cup);
   battle.setCP(cp);
 
-  return { context, GameMaster, Battle, Pokemon, gm, battle, vendorRoot, rankings, cp };
+  // eligibleSpeciesIds: pvpoke's OWN eligibility filter
+  // (GameMaster.generateFilteredPokemonList), run once at init. `cup ===
+  // 'all'` skips it (eligibleSpeciesIds stays null, meaning "no filter") so
+  // the default path stays identical and free -- 'all' excludes only Mega
+  // Pokemon by tag, which every caller already handles separately.
+  let eligibleSpeciesIds = null;
+  if (cup !== DEFAULT_CUP) {
+    const cupObj = battle.getCup();
+    const eligible = gm.generateFilteredPokemonList(
+      battle,
+      cupObj.include ?? [],
+      cupObj.exclude ?? [],
+      rankings,
+      [],
+      false
+    );
+    eligibleSpeciesIds = new Set(eligible.map((p) => p.speciesId));
+  }
+
+  return {
+    context,
+    GameMaster,
+    Battle,
+    Pokemon,
+    gm,
+    battle,
+    vendorRoot,
+    rankings,
+    cp,
+    cup,
+    eligibleSpeciesIds,
+  };
+}
+
+/**
+ * Is `{ speciesId, shadow }` eligible for `ctx`'s cup? `ctx.eligibleSpeciesIds
+ * === null` (i.e. `cup === 'all'`) means "no filter" -- always true. speciesId
+ * must be the *base* id (never "..._shadow"); pass `shadow: true` alongside it,
+ * matching buildPokemon's own convention. pvpoke lists released Shadows as
+ * their own gamemaster entry ("<id>_shadow"), so a shadow mon is checked
+ * against that suffixed id (falling back to the base id's own eligibility --
+ * a cup's id-exclude filter strips the "_shadow"/"_xs" suffix before matching,
+ * per GameMaster.generateFilteredPokemonList, so a banned base species is
+ * banned as its Shadow too either way).
+ *
+ * @param {object} ctx - from initEngine
+ * @param {{ speciesId: string, shadow?: boolean }} mon
+ * @returns {boolean}
+ */
+export function isEligible(ctx, { speciesId, shadow = false }) {
+  if (!ctx.eligibleSpeciesIds) return true;
+  if (shadow && ctx.eligibleSpeciesIds.has(`${speciesId}_shadow`)) return true;
+  return ctx.eligibleSpeciesIds.has(speciesId);
 }
 
 function assertValidIVs(ivs) {

@@ -31,7 +31,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { DEFAULT_CP } from '../util/leagues.js';
+import { DEFAULT_CP, DEFAULT_CUP, rankingsPath, readVendoredJson } from '../util/leagues.js';
 
 const DEFAULT_SNAPSHOT_PATH = 'data/meta-roles.json';
 
@@ -40,12 +40,12 @@ const CATEGORY_FOLDER = { lead: 'leads', closer: 'closers', switch: 'switches' }
 const ROLES = Object.keys(CATEGORY_FOLDER);
 
 function readJson(filePath) {
-  return JSON.parse(readFileSync(filePath, 'utf8'));
+  return readVendoredJson(filePath);
 }
 
-/** Default vendored rankings file for one role at ctx's CP cap. */
+/** Default vendored rankings file for one role at ctx's CP cap + cup. */
 function defaultRankingsFile(ctx, role) {
-  return `src/data/rankings/all/${CATEGORY_FOLDER[role]}/rankings-${ctx.cp}.json`;
+  return rankingsPath(ctx, CATEGORY_FOLDER[role]);
 }
 
 /**
@@ -101,11 +101,13 @@ function loadRoleScoreBySpecies(ctx, opts, role) {
     : loadSnapshot(snapshotPath);
   if (snapshot) {
     const snapshotCp = snapshot.cp ?? DEFAULT_CP;
-    if (opts.snapshotCategories || snapshotCp === ctx.cp) {
+    const snapshotCup = snapshot.cup ?? DEFAULT_CUP;
+    if (opts.snapshotCategories || (snapshotCp === ctx.cp && snapshotCup === (ctx.cup ?? DEFAULT_CUP))) {
       return new Map(snapshot.categories[role].map((e) => [e.speciesId, e.score]));
     }
     process.stderr.write(
-      `loadRoleScores: ignoring ${snapshotPath} (cp ${snapshotCp}) for a cp-${ctx.cp} run -- using vendored rankings\n`
+      `loadRoleScores: ignoring ${snapshotPath} (cp ${snapshotCp}, cup ${snapshotCup}) for a cp-${ctx.cp}` +
+        ` cup-${ctx.cup ?? DEFAULT_CUP} run -- using vendored rankings\n`
     );
   }
 

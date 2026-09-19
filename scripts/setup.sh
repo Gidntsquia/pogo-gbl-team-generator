@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/pvpoke/pvpoke.git"
-PINNED_COMMIT="cc89274c1589574114cb3ba79c7fb24fb25b0468"
+PINNED_COMMIT="bc28b41e766db0597e6c2b4d5e01ca9dd4ab2471"
 SPARSE_PATHS=(src/js src/data)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
