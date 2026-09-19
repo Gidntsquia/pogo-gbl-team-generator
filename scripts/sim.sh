@@ -182,17 +182,9 @@ cmd=(node scripts/evolve.mjs "$csv"
 if [ "$meta" = 1 ]; then
   # --meta widens BOTH species pools to metapool; --pool is otherwise left
   # unset so evolve.mjs's own default (no cap, whole deduped collection) applies.
-  # --candidate-sample-alpha 1 (plans/PLAN.md Item 3/4, fitness-symmetry loop):
-  # under --meta the "collection" IS the meta (every species pvpoke ranks),
-  # so unlike a real player's collection there is no reason to prefer a mon's
-  # own 1v1-matrix score over the meta's usage weight when sampling candidate
-  # teams -- doing so just makes the two sides sample by different criteria
-  # over the same species universe. Real-collection runs (no --meta) keep
-  # DEFAULT_BLEND_ALPHA (0.5): there the user's own 1v1 performance SHOULD
-  # outweigh raw meta popularity. Measured: closes most of the candidate/
-  # opponent fitness gap (mean final blend gap -0.108 -> -0.027, mean final
-  # raw gap -0.137 -> -0.032, `ga` vs `sample-usage-only-v2` labels,
-  # plans/WORKER_NOTES.md).
+  # Both sides sample the same ranked field by pvpoke rank alone (1/(rank+20));
+  # there is no 1v1 scoring in evolve runs. Real-collection runs (no --meta)
+  # pool the player's mons and weight each by its own build's pvpoke rank.
   cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --meta-mode)
 fi
 [ -n "$ban" ] && cmd+=(--ban "$ban")

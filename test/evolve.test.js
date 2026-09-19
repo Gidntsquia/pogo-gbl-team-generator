@@ -22,8 +22,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  initPopulation,
-  nextGeneration,
+  initPopulation as initPopulationRaw,
+  nextGeneration as nextGenerationRaw,
   shadowBlindSignature,
   trailingFitness,
   DEFAULT_IMMIGRANT_FRACTION,
@@ -46,6 +46,21 @@ import {
   mirrorBattleResult,
   evaluateTeamsInOrder,
 } from '../scripts/evolve.mjs';
+
+import { loadUsageWeights } from '../src/meta/usage.js';
+
+/** pvpoke-rank weights for a fake matrix: species ranked in insertion order (shadow builds as `<id>_shadow`). */
+function rankWeights(matrix) {
+  const ids = Object.values(matrix.builtMons).map((b) => `${b.speciesId}${b.spec?.shadow ? '_shadow' : ''}`);
+  return loadUsageWeights({ vendorRoot: '' }, {
+    ignoreSnapshot: true,
+    rankingsEntries: ids.map((speciesId, i) => ({ speciesId, score: 100 - i * 0.01 })),
+    groupEntries: [],
+    trainingSpeciesIds: [],
+  });
+}
+const initPopulation = (params) => initPopulationRaw({ weights: rankWeights(params.matrix), ...params });
+const nextGeneration = (params) => nextGenerationRaw({ weights: rankWeights(params.matrix), ...params });
 
 /** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
 function mon(key, speciesId, score) {

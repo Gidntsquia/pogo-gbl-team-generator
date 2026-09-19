@@ -34,23 +34,23 @@ final top 10.
 git clone https://github.com/Gidntsquia/pogo-gbl-team-generator
 cd pogo-gbl-team-generator
 npm run setup                        # Downloads pvpoke's engine + data (required after every fresh clone)
-node src/cli.js your-collection.csv
+scripts/sim.sh your-collection.csv --name mine --threads 4 --hours 1
 ```
 
-The top teams are printed to the terminal, and the full report is written to
-`out/report.md` + `out/report.html`. A sample collection is included for
+The search runs in the background; its report is written to
+`out/evolve-mine/my-teams-evolve.md` (+ `.html`). A sample collection is included for
 trying it out:
 
 ```
-node src/cli.js fixtures/sample-pokegenie.csv
+node scripts/evolve.mjs fixtures/sample-pokegenie.csv --generations 2 --population 12 --opponents-per-gen 8 --threads 2
 ```
 
 Other common invocations:
 
 ```
-node src/cli.js my.csv --cp 2500 --threads 4          # Ultra League, battles on 4 threads
-node scripts/evolve.mjs my.csv --deadline-minutes 30  # genetic algorithm team search
-node src/cli.js --help                                # full flag list
+node scripts/evolve.mjs my.csv --cp 2500 --threads 4  # Ultra League, battles on 4 threads
+node scripts/evolve.mjs my.csv --deadline-minutes 30  # time-boxed search
+node scripts/evolve.mjs --help                        # full flag list
 ```
 
 ## Features 🔬

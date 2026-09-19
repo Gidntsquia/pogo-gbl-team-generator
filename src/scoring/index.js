@@ -403,6 +403,92 @@ export function computeLeadIn(ratingsBySpecies) {
 }
 
 /**
+ * Build every collection mon into a battle-ready pvpoke instance without
+ * fighting anything (no 1v1s): the build half of `scoreCollection`, also what
+ * evolve runs use on their own. Entries whose species is unknown, that sit
+ * over the CP cap at their own level, or that fail to build are skipped with
+ * a warning. `opts.currentMoves` applies each mon's own moveset.
+ *
+ * @param {object} ctx
+ * @param {object[]} mons - NormalizedMons.
+ * @param {{currentMoves?: boolean}} [opts]
+ * @returns {{built: object[], warnings: string[]}} `built` entries carry
+ *   `{key, speciesId, name, pokemon, spec, currentLevel, purified, lucky, lineageKey, evolution}`.
+ */
+export function buildCollection(ctx, mons, opts = {}) {
+  const { gm } = ctx;
+  const warnings = [];
+
+  const built = [];
+  for (const mon of mons) {
+    const key = `${mon.speciesId}#${mon.sourceRow}`;
+    try {
+      if (!gm.getPokemonById(mon.speciesId)) {
+        warnings.push(`skipped ${key}: speciesId not found in gamemaster`);
+        continue;
+      }
+      const spec = {
+        speciesId: mon.speciesId,
+        ivs: mon.ivs,
+        shadow: !!mon.shadow,
+        bestBuddy: !!mon.bestBuddy,
+      };
+      const pokemon = buildPokemon(ctx, spec);
+
+      // A copy already above the level buildPokemon solved for can never
+      // reach that build: power-ups only raise level and evolving preserves
+      // it, so its real CP sits over the league's cap. Keeping it would
+      // recommend a Pokemon the collection cannot legally field (applies to
+      // base rows and to src/evolution's evolved variants alike).
+      if (typeof mon.level === 'number' && mon.level > pokemon.level) {
+        warnings.push(
+          `skipped ${key}: over the CP cap at its own level (L${mon.level}; ` +
+            `the cap allows at most L${pokemon.level}, and levels can't go down)`
+        );
+        continue;
+      }
+
+      if (opts.currentMoves) {
+        if (mon.moves) {
+          applyGroupMoveset(pokemon, mon.moves);
+          spec.fastMove = mon.moves.fastMove;
+          spec.chargedMoves = mon.moves.chargedMoves;
+        } else {
+          warnings.push(
+            `${key}: current-moves mode requested but no resolvable moveset -- used pvpoke's recommended moveset instead`
+          );
+        }
+      }
+
+      built.push({
+        key,
+        speciesId: mon.speciesId,
+        name: mon.name,
+        pokemon,
+        spec,
+        // Build-cost inputs (team Stardust cost). Deliberately NOT part of
+        // `spec`: spec is the plain-data MonSpec that crosses the
+        // worker_thread boundary in src/engine/parallel.js and is consumed by
+        // buildPokemon, which has no notion of a mon's CURRENT level. These
+        // travel alongside it instead. `currentLevel` is whatever the CSV
+        // stated and is null when it stated nothing -- never guessed.
+        currentLevel: typeof mon.level === 'number' ? mon.level : null,
+        purified: !!mon.purified,
+        lucky: !!mon.lucky,
+        // Set by src/evolution/index.js when this entry is an evolved variant
+        // of a collection row. `lineageKey` is shared by every form of one
+        // physical Pokemon so a team can never field two of them.
+        lineageKey: mon.lineageKey ?? key,
+        evolution: mon.evolution ?? null,
+      });
+    } catch (err) {
+      warnings.push(`skipped ${key}: ${err.message}`);
+    }
+  }
+  return { built, warnings };
+}
+
+/**
  * Score a collection against the Great League meta.
  *
  * Builds every user mon and every meta mon exactly once, then reuses those
@@ -474,76 +560,8 @@ export function computeLeadIn(ratingsBySpecies) {
  *   builds once here.
  */
 export function scoreCollection(ctx, mons, opts = {}) {
-  const { gm } = ctx;
   const meta = opts.meta ?? loadMeta(ctx, opts);
-  const warnings = [];
-
-  const built = [];
-  for (const mon of mons) {
-    const key = `${mon.speciesId}#${mon.sourceRow}`;
-    try {
-      if (!gm.getPokemonById(mon.speciesId)) {
-        warnings.push(`skipped ${key}: speciesId not found in gamemaster`);
-        continue;
-      }
-      const spec = {
-        speciesId: mon.speciesId,
-        ivs: mon.ivs,
-        shadow: !!mon.shadow,
-        bestBuddy: !!mon.bestBuddy,
-      };
-      const pokemon = buildPokemon(ctx, spec);
-
-      // A copy already above the level buildPokemon solved for can never
-      // reach that build: power-ups only raise level and evolving preserves
-      // it, so its real CP sits over the league's cap. Keeping it would
-      // recommend a Pokemon the collection cannot legally field (applies to
-      // base rows and to src/evolution's evolved variants alike).
-      if (typeof mon.level === 'number' && mon.level > pokemon.level) {
-        warnings.push(
-          `skipped ${key}: over the CP cap at its own level (L${mon.level}; ` +
-            `the cap allows at most L${pokemon.level}, and levels can't go down)`
-        );
-        continue;
-      }
-
-      if (opts.currentMoves) {
-        if (mon.moves) {
-          applyGroupMoveset(pokemon, mon.moves);
-          spec.fastMove = mon.moves.fastMove;
-          spec.chargedMoves = mon.moves.chargedMoves;
-        } else {
-          warnings.push(
-            `${key}: current-moves mode requested but no resolvable moveset -- used pvpoke's recommended moveset instead`
-          );
-        }
-      }
-
-      built.push({
-        key,
-        speciesId: mon.speciesId,
-        name: mon.name,
-        pokemon,
-        spec,
-        // Build-cost inputs (team Stardust cost). Deliberately NOT part of
-        // `spec`: spec is the plain-data MonSpec that crosses the
-        // worker_thread boundary in src/engine/parallel.js and is consumed by
-        // buildPokemon, which has no notion of a mon's CURRENT level. These
-        // travel alongside it instead. `currentLevel` is whatever the CSV
-        // stated and is null when it stated nothing -- never guessed.
-        currentLevel: typeof mon.level === 'number' ? mon.level : null,
-        purified: !!mon.purified,
-        lucky: !!mon.lucky,
-        // Set by src/evolution/index.js when this entry is an evolved variant
-        // of a collection row. `lineageKey` is shared by every form of one
-        // physical Pokemon so a team can never field two of them.
-        lineageKey: mon.lineageKey ?? key,
-        evolution: mon.evolution ?? null,
-      });
-    } catch (err) {
-      warnings.push(`skipped ${key}: ${err.message}`);
-    }
-  }
+  const { built, warnings } = buildCollection(ctx, mons, opts);
 
   const ratings = {};
   const outMons = [];

@@ -154,6 +154,8 @@ test('a present+parseable snapshot is preferred over the vendored rankings file'
     );
     const weights = loadUsageWeights(ctx, { ...FAKE_UNIVERSE_OPTS, snapshotPath });
     assert.ok(weights.get('gamma') > weights.get('alpha'), 'snapshot scores (gamma>alpha) should win');
+    const ignored = loadUsageWeights(ctx, { ...FAKE_UNIVERSE_OPTS, snapshotPath, ignoreSnapshot: true });
+    assert.deepEqual(ignored, loadUsageWeights(ctx, FAKE_UNIVERSE_OPTS), 'ignoreSnapshot reads pure rankings');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

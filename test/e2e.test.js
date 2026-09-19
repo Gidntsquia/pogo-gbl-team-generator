@@ -11,8 +11,8 @@
 // scope, and the tests are assertions against those results.
 //
 // Parallelism comes from two places: the shared runs at module scope are
-// launched concurrently, and each is handed `threads`, which runPipeline
-// forwards to evaluateTeams' worker-pool executor -- so the battles inside a
+// launched concurrently, and each is handed `threads`, which runEvolution
+// forwards to its worker-pool executor -- so the battles inside a
 // run spread across cores instead of queueing on one.
 //
 // @slow -- the suite's only real-battle file; runs before a push.
@@ -24,8 +24,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runPipeline } from '../src/cli.js';
-import { renderReport } from '../src/report/index.js';
+import { runEvolution, renderEvolveReport } from '../scripts/evolve.mjs';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { runBattles } from '../src/engine/parallel.js';
@@ -91,22 +90,28 @@ async function evolutionHistory(count) {
   });
 }
 
-// Small enough to finish quickly, large enough to form >= 1 team.
-const SAMPLED_TINY = { candidates: 4, opponents: 2, pool: 6, scoreMeta: 4, top: 3, seed: 'e2e-test-seed' };
-const EXHAUSTIVE_TINY = { exhaustive: true, topK: 4, meta: 2, scoreMeta: 4, top: 3 };
-const ULTRA_TINY = { candidates: 3, opponents: 1, pool: 5, scoreMeta: 3, top: 2, seed: 'e2e-ultra-seed', cp: 2500 };
+// Small enough to finish quickly, large enough to form >= 1 team. No 1v1
+// scoring exists in an evolve run: the pool comes from pvpoke rank alone.
+const TINY = { generations: 2, population: 8, opponentsPerGen: 6, elites: 3, curatedRatio: 0, finalFresh: 0, noHtml: true, seed: 'e2e-test-seed' };
+const ULTRA_TINY = { ...TINY, cp: 2500, seed: 'e2e-ultra-seed' };
+const scratch = (name) => path.join(mkdtempSync(path.join(tmpdir(), `gbl-e2e-${name}-`)));
+
+/** One tiny evolve run, logging into an array so the tests can read the log. */
+function tinyRun(csv, opts, name) {
+  const log = [];
+  const outDir = scratch(name);
+  return runEvolution(csv, { ...opts, outDir, threads: 2, onLog: (m) => log.push(m) }).then((result) => ({ result, log, outDir }));
+}
 
 // ---------------------------------------------------------------- shared runs
 
-// Concurrent on purpose: each runPipeline builds its own engine context, so
-// they share no state, and `threads` puts the battles inside each one onto the
-// worker pool. `sampledRepeat` is the same config and seed as `sampled` --
+// Concurrent on purpose: each run builds its own engine context, so they
+// share no state. `sampledRepeat` is the same config and seed as `sampled` --
 // the determinism check compares the two.
-const [sampled, sampledRepeat, ultra, exhaustive, evolutionRun] = await Promise.all([
-  runPipeline(FIXTURE, { ...SAMPLED_TINY, threads: 2 }),
-  runPipeline(FIXTURE, { ...SAMPLED_TINY, threads: 2 }),
-  runPipeline(FIXTURE, ULTRA_TINY),
-  runPipeline(FIXTURE, EXHAUSTIVE_TINY),
+const [sampled, sampledRepeat, ultra, evolutionRun] = await Promise.all([
+  tinyRun(FIXTURE, TINY, 'a'),
+  tinyRun(FIXTURE, TINY, 'b'),
+  tinyRun(FIXTURE, ULTRA_TINY, 'ultra'),
   evolutionHistory(CONV_GENERATIONS),
 ]);
 
@@ -121,95 +126,42 @@ function team(ids) {
   return ids.map((speciesId) => buildPokemon(ctx, { speciesId, ivs: IVS }));
 }
 
-/** Write a report to a scratch dir the way the CLI does, and read it back. */
-function writeAndRead(report, prefix) {
-  const outPath = path.join(mkdtempSync(path.join(tmpdir(), prefix)), 'report.md');
-  writeFileSync(outPath, renderReport(report), 'utf8');
-  assert.ok(existsSync(outPath), 'report.md was written');
-  return readFileSync(outPath, 'utf8');
-}
-
 // ------------------------------------------------------------- the pipeline
 
-describe('pipeline: fixture CSV -> runPipeline -> report.md on disk', () => {
-  test('the sampled (default) path produces a well-formed report', () => {
-    assert.ok(sampled.monCount >= 3, 'scored several mons from the fixture');
-    assert.ok(sampled.rankedTeams.length >= 1, 'ranked at least one team');
-    assert.ok(sampled.rankedTeams.length <= SAMPLED_TINY.top, 'teamCount cap honored');
-    assert.equal(sampled.metaTeams.length, SAMPLED_TINY.opponents, 'opponent team count honored');
-    assert.equal(sampled.settings.mode, 'sampled', 'default path runs in sampled mode');
-
-    const top = sampled.rankedTeams[0];
+describe('pipeline: fixture CSV -> runEvolution -> report on disk', () => {
+  test('the run produces ranked, well-formed teams and writes its report', () => {
+    const { result } = sampled;
+    assert.ok(result.collectionMonCount >= 3, 'imported several mons from the fixture');
+    assert.ok(result.elites.length >= 1, 'ranked at least one team');
+    const top = result.elites[0];
     assert.equal(top.members.length, 3, 'a recommended team has 3 members');
     assert.equal(new Set(top.members.map((m) => m.speciesId)).size, 3, 'no duplicate species within a team');
     assert.ok(top.winRate >= 0 && top.winRate <= 1, 'win rate is a fraction');
+    assert.ok(existsSync(result.reportPath), 'report written to disk');
+    const onDisk = readFileSync(result.reportPath, 'utf8');
+    assert.match(onDisk, /# Great League Evolutionary Team Search Report/);
+    assert.ok(onDisk.includes(top.members[0].name), 'report names the top team');
+    assert.ok(renderEvolveReport(result).includes('## Top '), 'the report renderer works on the result');
   });
 
-  test('teams come back ranked, best first', () => {
-    for (let i = 1; i < sampled.rankedTeams.length; i++) {
-      assert.ok(
-        sampled.rankedTeams[i - 1].winRate >= sampled.rankedTeams[i].winRate,
-        `team ${i - 1} should not rank below team ${i}`
-      );
-    }
+  test('no 1v1 scoring runs: the log says mons were built, never scored', () => {
+    const text = sampled.log.join('\n');
+    assert.match(text, /mons built \(no 1v1 scoring\)/);
+    assert.doesNotMatch(text, /mons scored/);
   });
 
   test('a malformed fixture row is surfaced, not silently dropped', () => {
-    assert.ok(
-      sampled.warnings.some((w) => /freakemon/i.test(w)),
-      'unknown-species row surfaced as a collection warning'
-    );
+    assert.ok(sampled.result.importWarnings.some((w) => /freakemon/i.test(w)), 'unknown-species row surfaced as a collection warning');
   });
 
-  test('the report names its sections and its top team', () => {
-    const onDisk = writeAndRead(sampled, 'gbl-e2e-');
-    assert.match(onDisk, /# Great League Team Report/);
-    assert.match(onDisk, /## Recommended teams/);
-    assert.match(onDisk, /## Appendix: per-Pokemon 1v1 scores/);
-    assert.match(onDisk, /mode=sampled/);
-    assert.ok(
-      onDisk.includes(sampled.rankedTeams[0].members[0].name),
-      'report names the top recommended team'
-    );
-  });
-
-  test('a shadow member renders with the (Shadow) qualifier', () => {
-    const onDisk = writeAndRead(sampled, 'gbl-e2e-shadow-');
-    const shadows = sampled.rankedTeams.flatMap((t) => t.members).filter((m) => m.shadow);
-    // The fixture may or may not land a shadow on a recommended team; assert
-    // the rendering rule only when one is actually there.
-    for (const m of shadows) {
-      assert.match(m.name, /\(Shadow\)/, 'a shadow member carries the qualifier in its name');
-      assert.ok(onDisk.includes(m.name), 'the qualified name reaches the report');
-    }
-  });
-
-  test('--cp 2500 runs Ultra League end to end and labels the report', () => {
-    assert.ok(ultra.rankedTeams.length >= 1, 'ranked at least one team');
-    assert.equal(ultra.settings.cp, 2500, 'cp carried into settings');
-
-    const onDisk = writeAndRead(ultra, 'gbl-e2e-ultra-');
-    assert.match(onDisk, /# Ultra League Team Report/);
-    assert.match(onDisk, /cp=2500/);
-    assert.ok(onDisk.includes(ultra.rankedTeams[0].members[0].name), 'report names the top team');
-  });
-
-  test('--exhaustive runs the older combinatorial path', () => {
-    assert.ok(exhaustive.rankedTeams.length >= 1, 'ranked at least one team');
-    assert.equal(exhaustive.metaTeams.length, EXHAUSTIVE_TINY.meta, 'meta team count honored');
-    assert.equal(exhaustive.settings.mode, 'exhaustive', '--exhaustive runs in exhaustive mode');
-
-    const markdown = renderReport(exhaustive);
-    assert.match(markdown, /# Great League Team Report/);
-    assert.doesNotMatch(markdown, /mode=sampled/, 'exhaustive report does not claim sampled mode');
+  test('--cp 2500 runs Ultra League end to end', () => {
+    assert.ok(ultra.result.elites.length >= 1, 'ranked at least one team');
+    assert.equal(ultra.result.config.cp, 2500);
   });
 
   test('same seed and settings reproduce the same ranking', () => {
-    assert.deepEqual(
-      sampledRepeat.rankedTeams.map((t) => [t.members.map((m) => m.key), t.winRate]),
-      sampled.rankedTeams.map((t) => [t.members.map((m) => m.key), t.winRate]),
-      'a repeat run at the same seed ranks identically'
-    );
+    const shape = (r) => r.result.elites.map((t) => [t.members.map((m) => m.key), t.winRate]);
+    assert.deepEqual(shape(sampledRepeat), shape(sampled));
   });
 });
 

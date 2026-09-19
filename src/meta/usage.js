@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import { DEFAULT_CP, leagueForCp } from '../util/leagues.js';
 
-// Default snapshot path, relative to the process cwd -- mirrors src/cli.js's
+// Default snapshot path, relative to the process cwd -- mirrors the removed CLI's
 // "out/report.md" convention (both assume the CLI/tests run from repo root).
 const DEFAULT_SNAPSHOT_PATH = 'data/meta-usage.json';
 
@@ -141,8 +141,12 @@ function loadSnapshot(snapshotPath) {
 function loadScoreBySpecies(ctx, opts) {
   const snapshotPath = opts.snapshotPath ?? DEFAULT_SNAPSHOT_PATH;
   const snapshot = opts.snapshotEntries
+  // `ignoreSnapshot`: evolve runs sample by pure pvpoke rank, so a
+  // data/meta-usage.json freshness snapshot must not reorder them.
     ? { entries: opts.snapshotEntries }
-    : loadSnapshot(snapshotPath);
+    : opts.ignoreSnapshot
+      ? null
+      : loadSnapshot(snapshotPath);
   if (snapshot) {
     // scripts/refresh-usage.mjs only ever fetches Great League
     // scores, so a snapshot is only valid for the cap it was fetched for (a
@@ -199,6 +203,7 @@ function loadScoreBySpecies(ctx, opts) {
  *   corresponding vendor/snapshot file entirely (testability, mirrors
  *   src/scoring/index.js's `groupEntries` pattern). `snapshotPath` overrides
  *   the default `data/meta-usage.json` (also testability, e.g. pointing at a
+ *   ignoreSnapshot?: boolean,
  *   temp file to test the snapshot-preference / corrupt-snapshot-fallback
  *   rules without touching the repo's committed snapshot).
  * @returns {Map<string, number>} speciesId -> normalized positive weight.
@@ -226,3 +231,22 @@ export function loadUsageWeights(ctx, opts = {}) {
   }
   return weights;
 }
+}
+
+/**
+ * Sampling weight of a build pvpoke does not rank for this format: last place,
+ * i.e. the weight of the rank one past the last ranked build (rank N+1, so
+ * 1/(N+1+k)^alpha, normalised like the rest of `weights`). Derived from the
+ * map itself: the smallest weight belongs to rank N.
+ *
+ * @param {Map<string, number>} weights - from loadUsageWeights.
+ * @param {{rankAlpha?: number, rankOffset?: number}} [opts] - the same values loadUsageWeights was given.
+ * @returns {number}
+ */
+export function lastPlaceWeight(weights, opts = {}) {
+  const alpha = opts.rankAlpha ?? DEFAULT_RANK_ALPHA;
+  const k = opts.rankOffset ?? DEFAULT_RANK_OFFSET;
+  if (weights.size === 0) return 0;
+  const n = weights.size;
+  const minWeight = Math.min(...weights.values());
+  return minWeight * Math.pow((n + k) / (n + 1 + k), alpha);

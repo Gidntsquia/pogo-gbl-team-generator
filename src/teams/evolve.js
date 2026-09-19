@@ -40,8 +40,7 @@ import { rngFromSeed, pickWeighted } from '../util/rng.js';
 import {
   sampleCandidateTeams,
   buildScoredPool,
-  makeBlendedWeightFn,
-  DEFAULT_BLEND_ALPHA,
+  makeRankWeightFn,
 } from './sample.js';
 import { candidateProfiles, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../meta/archetypes.js';
 import { createSimilarity } from '../engine/similarity.js';
@@ -205,26 +204,19 @@ function assignLead(team, rng) {
 }
 
 /**
- * Gen 0: delegate straight to `sampleCandidateTeams` for WHICH 3 species
- * make up each team (`initPopulation` is deliberately a thin
- * wrapper -- the weighted 1v1-score / meta-usage blend that seeds candidate
- * teams elsewhere in the app is exactly what should seed generation zero
- * too), then assign each team a seeded-random lead (locked
- * leads) -- `sampleCandidateTeams` already guarantees unique species-sets,
- * and a single lead-assignment per gen-0 team can't collide with itself, so
- * no retry loop is needed here.
+ * Gen 0: delegate straight to `sampleCandidateTeams` for WHICH 3 species make
+ * up each team (pvpoke-rank weighted, same draw every later generation's
+ * immigrants use), then assign each team a seeded-random lead.
+ * `sampleCandidateTeams` already guarantees unique species-sets, so no retry
+ * loop is needed here.
  *
- * @param {{matrix:object, pool:string[], weights?:Map<string,number>,
- *   count:number, seed?:number|string, excludeSpecies?:string[], alpha?:number}} params
- *   `alpha` (plans/PLAN.md Item 4 test-only switch, `--candidate-sample-alpha`
- *   in scripts/evolve.mjs): overrides `DEFAULT_BLEND_ALPHA` for gen-0
- *   sampling too, so a kept-row-5 measurement run samples generation zero
- *   with the same alpha `nextGeneration` uses for every later generation.
+ * @param {{matrix:object, pool:string[], weights:Map<string,number>,
+ *   count:number, seed?:number|string, excludeSpecies?:string[]}} params
  * @returns {string[][]} up to `count` unique 3-userMonKey teams, each with
  *   `team[0]` as its designated lead.
  */
-export function initPopulation({ matrix, pool, weights, count, seed, excludeSpecies, alpha, perBuild }) {
-  const teams = sampleCandidateTeams({ matrix, pool, weights, count, seed, excludeSpecies, alpha, perBuild });
+export function initPopulation({ matrix, pool, weights, count, seed, excludeSpecies }) {
+  const teams = sampleCandidateTeams({ matrix, pool, weights, count, seed, excludeSpecies });
   const rng = rngFromSeed(seed, 'initPopulation-lead');
   return teams.map((team) => assignLead(team, rng));
 }
@@ -235,7 +227,7 @@ export function initPopulation({ matrix, pool, weights, count, seed, excludeSpec
  * lead's species still counts as a member swap; the dedicated
  * lead-ROTATION mutation below is the one that changes only WHO leads, not
  * WHICH species are on the team), replace it with a DIFFERENT eligible pool
- * mon (P(new mon) proportional to the score/usage blend), retrying a
+ * mon (P(new mon) proportional to its build's pvpoke-rank weight), retrying a
  * bounded number of times if the result collides with an already-used team
  * signature (`usedSignatures`) or no eligible replacement exists for the
  * chosen slot. Returns `{team, swappedSlot}` or `null` if no valid mutant
@@ -325,12 +317,12 @@ function buildShadowFlip(parentTeam, shadowTwins, accept, rng, maxAttempts) {
  *   fitness: number[],
  *   pool: string[],
  *   matrix: object,
- *   weights?: Map<string, number>,
+ *   weights: Map<string, number>, - loadUsageWeights (pvpoke-rank weights),
  *   seed?: number|string,
  *   opts?: {
  *     deathRate?: number, mutationFloor?: number, mutationCeil?: number,
  *     leadRotationRate?: number, shadowFlipRate?: number,
- *     immigrantFraction?: number, alpha?: number,
+ *     immigrantFraction?: number,
  *     excludeSpecies?: string[],
  *     targetSize?: number, - size of the RETURNED population (default: the
  *       input population's length, i.e. hold steady). Cull/growth accounting
@@ -389,7 +381,6 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   const leadRotationRate = opts.leadRotationRate ?? DEFAULT_LEAD_ROTATION_RATE;
   const shadowFlipRate = opts.shadowFlipRate ?? DEFAULT_SHADOW_FLIP_RATE;
   const immigrantFraction = opts.immigrantFraction ?? DEFAULT_IMMIGRANT_FRACTION;
-  const alpha = typeof opts.alpha === 'number' ? opts.alpha : DEFAULT_BLEND_ALPHA;
   const excludeSpecies = opts.excludeSpecies ?? [];
   const coreRivalry = opts.coreRivalry ?? DEFAULT_CORE_RIVALRY;
   const similarRivalry = opts.similarRivalry ?? DEFAULT_SIMILAR_RIVALRY;
@@ -402,9 +393,8 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
   // side. This side's adapter: a team is an array of matrix keys identified by
   // teamSignature; mutants/immigrants come from the collection `pool`.
   const excludeSet = new Set(excludeSpecies);
-  const perBuild = !!opts.perBuild;
-  const scoredPool = buildScoredPool(matrix, pool, excludeSet, { perBuild });
-  const weightFn = makeBlendedWeightFn(scoredPool, weights, alpha);
+  const scoredPool = buildScoredPool(matrix, pool, excludeSet);
+  const weightFn = makeRankWeightFn(weights);
   const shadowTwins = buildShadowTwins(matrix, pool, excludeSet);
   const adapter = {
     profilesOf: (team) => candidateProfiles(matrix, team),
@@ -426,7 +416,7 @@ export function nextGeneration({ population, fitness, pool, matrix, weights, see
     // check, since identity is lead-aware.
     *immigrants(budget, irng) {
       const drawn = sampleCandidateTeams({
-        matrix, pool, weights, count: budget, seed: Math.floor(irng() * 0xffffffff), excludeSpecies, alpha, perBuild,
+        matrix, pool, weights, count: budget, seed: Math.floor(irng() * 0xffffffff), excludeSpecies,
         allowRepeatSets: true, // dedupe is evolveStep's job (lead-aware), same as the opponent side
       });
       for (const team of drawn) yield assignLead(team, irng);

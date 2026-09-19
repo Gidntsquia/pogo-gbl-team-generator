@@ -44,8 +44,9 @@ import { filterEligibleMons } from '../src/util/eligibility.js';
 import { initEngine } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor } from '../src/engine/parallel.js';
-import { scoreCollection } from '../src/scoring/index.js';
-import { dedupeBestPerSpecies } from '../src/teams/index.js';
+import { buildCollection } from '../src/scoring/index.js';
+import { dedupeByRank } from '../src/teams/rankedPool.js';
+import { loadUsageWeights } from '../src/meta/usage.js';
 import { rehydrateOpponentPool } from '../src/meta/opponentPool.js';
 import { loadMetaTeams } from '../src/meta/teams.js';
 import { baseIdOf } from '../src/meta/sampleTeams.js';
@@ -62,7 +63,7 @@ function readCheckpointFile(dir, gen) {
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
-/** Candidate's own recommended moveset for a built matrix entry, read off the live pvpoke Pokemon instance (never stored as plain fields -- src/scoring/index.js's scoreCollection doesn't apply an explicit moveset unless --current-moves). */
+/** Candidate's own recommended moveset for a built matrix entry, read off the live pvpoke Pokemon instance (never stored as plain fields -- src/scoring/index.js's buildCollection doesn't apply an explicit moveset unless --current-moves). */
 function candidateMoveset(built) {
   return {
     fastMove: built.pokemon.fastMove.moveId,
@@ -110,8 +111,9 @@ async function main(argv) {
   const ctx = await initEngine({ cp: config.cp, cup: config.cup });
   const expanded = config.evolutions ? expandEvolutions(ctx, importedMons) : { mons: importedMons, warnings: [] };
   const eligible = filterEligibleMons(ctx, expanded.mons);
-  const matrix = scoreCollection(ctx, eligible.mons, { metaLimit: config.scoreMeta });
-  const deduped = dedupeBestPerSpecies(matrix, { keepShadowVariants: true });
+  const allBuilt = {};
+  for (const { key, ...rest } of buildCollection(ctx, eligible.mons, { currentMoves: config.metaMode }).built) allBuilt[key] = rest;
+  const deduped = { builtMons: dedupeByRank(allBuilt, loadUsageWeights(ctx, { ignoreSnapshot: true })) };
   const banBaseIds = new Set(config.banSpecies ?? []);
   const curatedPool = filterBannedCuratedTeams(loadMetaTeams(ctx), banBaseIds);
 

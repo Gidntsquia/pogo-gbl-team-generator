@@ -17,10 +17,11 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 
 Feed in a Pokemon GO collection CSV, get back the best 3-mon GO Battle League
 teams buildable from it, ranked by real 3v3 battles run through pvpoke's
-vendored engine. The pipeline (wired end-to-end in `src/cli.js`):
+vendored engine. The pipeline (wired end-to-end in `scripts/evolve.mjs`):
 
-**import CSV → 1v1-score to prune → sample candidate teams → 3v3-battle them
-against a meta opponent pool → rank → report (`out/report.md` + `.html`)**
+**import CSV → build mons → sample candidate teams by pvpoke rank → 3v3-battle them
+against an evolving opponent pool (both sides run a GA) → rank → report
+(`my-teams-evolve.md` + `.html` in the run's out dir)**
 
 The GitHub wiki documents every feature in depth (flags, sampling weights, the
 GA, cost math) — go there for behavior questions; the map below is for finding
@@ -36,12 +37,10 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 
 | command | what it runs |
 |---|---|
-| `node src/cli.js <collection.csv>` | the main pipeline above (`--cp 2500` for Ultra League; `--help` for all flags) |
 | `scripts/sim.sh <collection.csv>` | **preferred way to launch an evolve run** — wraps evolve.mjs with the established recipe (pop 300, 100 gens, opponents 120, pool 70, elites 12), `--ban a,b`, `--hours H` budget, detached nohup with `out/evolve-<name>{,.log,.pid}` naming; `scripts/sim.sh status` lists runs, live pids, and checkpoint progress. Compose raw evolve.mjs commands only when the recipe genuinely doesn't fit |
 | | **Resuming a run:** pass the exact same flag set the run started with, or evolve.mjs silently starts fresh (log says `starting fresh` instead of `resuming -- N generation(s) already complete`) and overwrites the checkpoints. Read `config` from the latest `out/evolve-<name>/evolve-gen*.json` first, and check for flags the recipe omits (e.g. `meta-vs-meta-newseason` uses `--curated-ratio 0`). Extra flags with a value MUST go after `--` (`scripts/sim.sh --meta --name X -- --curated-ratio 0`); a bare `--curated-ratio 0` makes sim.sh treat the `0` as a collection path. Watch the log for the `resuming` line before walking away. Only `--threads` can change freely between resumes (default 8; drop it only when the user needs the memory for other work on the machine) |
 | `scripts/evolve.mjs` | genetic-algorithm team search; both sides evolve (`src/teams/evolve.js` + `src/meta/opponentPool.js`), checkpoints/resumes in `out/`; `--ban a,b` removes species format-wide, both sides (cup rules) |
 | `scripts/build-shared-collection.mjs` | intersects two collection CSVs into a shared-pool CSV of mons both players can build (weaker side's best specimen per base species) |
-| `scripts/tournament.mjs` | large offline sampled runs |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
 | `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `side-bias-study.mjs`, `symmetry-study.mjs` | one-off benchmarks/analyses, not part of the pipeline |
@@ -60,11 +59,15 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   `similarity.js` (pvpoke's own "Similar Pokemon" score, normalised 0..1, for
   archetypes.js's core-rivalry penalty).
   **Has its own README.md** for engine internals and determinism history.
-- `scoring/` — the 1v1 pruning matrix (`scoreCollection`), shield-scenario
-  weighted. Prunes candidates only; never the final ranking.
-- `teams/` — the candidate side: `index.js` (3v3 evaluation + ranking,
-  `dedupeBestPerSpecies` lineage collapse), `sample.js` (weighted candidate
-  sampler), `evolve.js` (GA core).
+- `scoring/` — `buildCollection` (mons → battle-ready pvpoke instances, no
+  battles; what evolve runs use), `buildMetaMon` (opponent builds), and
+  `scoreCollection` (the 1v1 matrix; only `build-shared-collection.mjs` and
+  `shield-weight-review.mjs` still use it -- evolve runs never fight 1v1s).
+- `teams/` — the candidate side: `rankedPool.js` (`dedupeByRank` lineage/build
+  collapse, `buildRankedPool` species cap, both by pvpoke rank), `sample.js`
+  (candidate sampler, weight 1/(rank+20) per species+shadow build, last place
+  when unranked), `evolve.js` (GA core), `index.js` (legacy 3v3 evaluator used
+  by one-off scripts).
 - `meta/` — the opponent side: `teams.js` (curated pvpoke presets +
   `data/meta-teams-community.json`, tier weights), `sampleTeams.js` (weighted
   opponent sampler), `usage.js` (per-species usage weights, rank-position
@@ -81,7 +84,7 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   possible evolutions (default on; `--no-evolutions`).
 - `cost/` — `powerup.js` (Stardust/Candy build cost, pure arithmetic) +
   `evolutionCandy.json` (generated).
-- `report/` — Markdown + HTML report rendering, pure (no engine).
+- `report/` — chart/theme helpers for the evolve report (`raceChart.js`, `podiumTheme.js`); the reports themselves render in `scripts/evolve.mjs`.
 - `util/` — `leagues.js` (CP cap + cup → format identity), `eligibility.js`
   (candidate-side cup filtering, applied after evolution expansion), `rng.js`
   (seeded PRNG + weighted sampling; the only randomness source in the repo).
@@ -108,7 +111,7 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   ranking is what's trusted, absolute win% carries a small side offset).
 - `members[0]` of any team is its designated lead, everywhere.
 - One lineage (a CSV row + its evolutions) contributes at most one candidate
-  pool entry (`dedupeBestPerSpecies`).
+  pool entry (`dedupeByRank`).
 - Battle math is never reimplemented — only pvpoke's vendored code fights.
 - Tests map ~1:1 to modules (`test/<area>.test.js`); `test/e2e.test.js` is
   the only file running real battles (see Tests below).

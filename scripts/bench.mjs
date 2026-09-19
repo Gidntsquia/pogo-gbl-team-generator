@@ -4,7 +4,7 @@
 // Benchmark harness for battleTeams throughput. Times N repeated,
 // fully deterministic battles between two fixed, competitively-matched teams
 // (built ONCE and reused -- battleTeams.fullReset()s them per call, same as
-// evaluateTeams/tournament.mjs's own build-once-battle-many usage pattern) and
+// evaluateTeams/the removed tournament script's own build-once-battle-many usage pattern) and
 // reports ms/battle plus a coarse phase breakdown (one-time engine setup vs
 // per-battle time). No battle math is touched or reimplemented -- this file
 // only calls the existing public battleTeams/buildPokemon/initEngine API and
@@ -33,7 +33,7 @@
 // flagged as unmeasured (bench.mjs previously only ever made one runBattles()
 // call per process, so every measurement paid pool-boot cost exactly once
 // per invocation regardless of N; this mode shows what real multi-call
-// callers like scripts/tournament.mjs and a future evolve driver
+// callers like the removed tournament script and a future evolve driver
 // actually experience: boot cost paid ONCE, then amortized across every
 // subsequent batch). --batches is ignored (and --threads alone reproduces
 // the earlier one-shot runBattles() behavior byte-for-byte) unless > 1.

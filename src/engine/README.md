@@ -158,7 +158,7 @@ whole-batch-reject semantics `runBattles` has always had. With
 `{ok: true, value}` (`value` = exactly what `battleTeams`/`runBattles` return
 per spec today) or `{ok: false, error: {message}}`, and a bad spec never
 aborts the rest of that call's batch -- callers that want skip-and-continue
-semantics (like `scripts/tournament.mjs`'s per-battle error handling) no
+semantics (like `the removed tournament script`'s per-battle error handling) no
 longer need to batch small to bound the blast radius of one bad spec (see
 the per-candidate-batching workaround below, which `continueOnError` now
 makes unnecessary for a caller that adopts it).
@@ -257,7 +257,7 @@ above for the full `continueOnError`/worker-crash contract, which
 worker is terminated before the promise settles, so a failure surfaces as a
 rejection, never a hang. `runBattles` does not retry or skip-and-continue on
 a bad spec -- callers that want skip-with-warning semantics at the `runBattles`
-granularity (like `scripts/tournament.mjs`'s per-battle error handling)
+granularity (like `the removed tournament script`'s per-battle error handling)
 validate/catch at their own layer, same as they already do around a serial
 `battleTeams` call; a caller using `createExecutor` directly can instead opt
 into `continueOnError: true` and get that isolation from the executor itself.
@@ -335,7 +335,7 @@ collects every battle across every candidate into one flat spec list and runs
 it through a single `runBattles()` call.
 
 **Tournament integration.** The same executor is wired into
-`scripts/tournament.mjs`, which drives `battleTeams` directly rather than
+`the removed tournament script`, which drives `battleTeams` directly rather than
 through `evaluateTeams` (its 3-stage
 funnel needs per-battle skip-and-continue error handling across all three
 stages, which `evaluateTeams` doesn't have). `runFunnelStage`'s `opts.threads`
@@ -347,7 +347,7 @@ worth of battles; batching per candidate instead means a batch failure only
 costs that one candidate (counted as errors, logged, and skipped, same
 skip-and-continue spirit as the serial path, just at coarser granularity).
 The spec-carrying plumbing already in place (`matrix.builtMons[key].spec`,
-every meta/sampled team member's `.spec`) covers everything `tournament.mjs`
+every meta/sampled team member's `.spec`) covers everything `the removed tournament script`
 needs -- no additional plumbing was required.
 
 ## Resolved: battle order and reused-instance state (history; was "Known limitation")
@@ -396,7 +396,7 @@ only; stable from the second call onward).
 
 This is a **pre-existing pvpoke engine characteristic**, not something this
 package introduced -- it applies to *any* reuse of a Pokemon instance across
-sequential battles, which today's serial `evaluateTeams`/`tournament.mjs`
+sequential battles, which today's serial `evaluateTeams`/`the removed tournament script`
 already do constantly (a candidate's `teamA` instances are built once and
 battle every meta team in a loop; a meta team's `teamB` instances are built
 once and battle every candidate). Serial execution is self-consistent only
@@ -409,7 +409,7 @@ a small amount** between a serial and a threaded run of the same inputs.
 **CORRECTION (found by executing a larger real run than the original
 test covered):** the original claim here -- that win/loss outcomes and team
 win rates are *unaffected* by threading -- does not hold in general; it only
-held at that smaller test scale. A real `scripts/tournament.mjs` run at
+held at that smaller test scale. A real `the removed tournament script` run at
 larger scale (4 finalists x 4 opponents x 9 pairings = 144 stage-3 battles,
 `test/tournament.test.js`) hit a case where the SAME mechanism above (a
 reused instance's `bestChargedMove` tie-break depending on which battles that
@@ -534,7 +534,7 @@ here:
 
 `scripts/bench.mjs` times repeated `battleTeams` calls between two fixed,
 competitively-matched teams (built once, battled many times — the same
-build-once/battle-many pattern `evaluateTeams` and `tournament.mjs` already
+build-once/battle-many pattern `evaluateTeams` and `the removed tournament script` already
 use) and reports ms/battle. Sandbox baseline: **~172ms/battle** (Jaxon's
 local machine measured ~73-68ms/battle in earlier runs — faster
 hardware, same code).

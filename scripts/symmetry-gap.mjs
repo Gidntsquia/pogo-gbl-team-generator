@@ -28,7 +28,7 @@
  *   final-gen gap), for blend and raw, with mean and SE. Requires the same
  *   seed set in both labels.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -48,8 +48,6 @@ const BASE_FLAGS = [
   '--population', '60',
   '--opponents-per-gen', '60',
   '--generations', '8',
-  '--pool', '70',
-  '--opponent-meta-pool', '70',
   '--fitness', 'battle-reality',
   '--archetype-beta', '0.5',
   '--random-opponent-lead',
@@ -226,7 +224,11 @@ function seedDirsForLabel(label) {
   if (!existsSync(OUT_DIR)) return [];
   return readdirSync(OUT_DIR)
     .filter((name) => name.startsWith(`evolve-symgap-${label}-`) && !name.endsWith('.log'))
-    .map((name) => ({ seed: name.slice(`evolve-symgap-${label}-`.length), dir: join(OUT_DIR, name) }));
+    .map((name) => ({ seed: name.slice(`evolve-symgap-${label}-`.length), dir: join(OUT_DIR, name) }))
+    // Only run directories that hold generation checkpoints: a leftover
+    // directory with just final-report files (e.g. a rerun that never got past
+    // setup) is not a measurement and is skipped, not reported.
+    .filter(({ dir }) => statSync(dir).isDirectory() && readdirSync(dir).some((n) => /^evolve-gen\d+\.json$/.test(n)));
 }
 
 function cmdReport(opts) {

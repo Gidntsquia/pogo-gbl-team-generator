@@ -8,7 +8,7 @@
 // output is buildable by both players (the stronger player's version, by
 // definition, also clears that bar).
 //
-// Pipeline per collection mirrors src/cli.js's default (sampled) path
+// Pipeline per collection mirrors the removed CLI's default (sampled) path
 // exactly, up through the 1v1 matrix:
 //
 //   importCollection -> expandEvolutions (evolutions on, the default) ->
@@ -72,7 +72,7 @@ import { leagueForCp, DEFAULT_CP, SUPPORTED_CPS } from '../src/util/leagues.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// Fixed to match src/cli.js's default 1v1-pruning meta size exactly (its
+// Fixed to match the removed CLI's default 1v1-pruning meta size exactly (its
 // `--score-meta` default) -- not exposed as a flag here, since this script's
 // whole job is "score exactly like the main pipeline does by default", not
 // to explore pruning depth.
@@ -105,7 +105,7 @@ function say(line = '') {
   process.stdout.write(`${line}\n`);
 }
 
-/** Parse a positive integer flag; throws a clear error on bad input (mirrors src/cli.js). */
+/** Parse a positive integer flag; throws a clear error on bad input (mirrors the removed CLI). */
 function intFlag(value, name, fallback) {
   if (value === undefined) return fallback;
   const n = Number(value);
@@ -246,7 +246,7 @@ export function toGenericCsv(mons) {
 
 /**
  * Import + expand + score + dedupe one collection, mirroring
- * src/cli.js's runPipeline default path exactly through dedupeBestPerSpecies.
+ * the removed CLI's runPipeline default path exactly through dedupeBestPerSpecies.
  *
  * @param {object} ctx - from initEngine.
  * @param {string} csvPath
@@ -376,7 +376,7 @@ async function main(argv) {
   const labels = { A: path.basename(collectionAPath), B: path.basename(collectionBPath) };
 
   // pvpoke's vendored engine prints a few debug lines during init/scoring
-  // (mirrors src/cli.js's console silencing).
+  // (mirrors the removed CLI's console silencing).
   const realLog = console.log;
   console.log = () => undefined;
   console.info = () => undefined;

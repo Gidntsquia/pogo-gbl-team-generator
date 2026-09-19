@@ -13,13 +13,15 @@ they don't say.
   the planner/worker/evaluator loop (`plans/PLAN.md`) the worker commits, one commit per item,
   only the files its work touches, with `git add <paths>` -- the evaluator only sees commits.
 - Never kill, resume, or restart an evolve run unless the task says so.
-- Known invariant (v15, measured 2026-09-19, `docs/fitness-symmetry.md`): every pairing is
-  battled from both seats (`mirrorBattleResult`), and both GA sides advance through one
-  function, `evolveStep` in `src/ga/core.js`; side-specific behaviour belongs in its adapters
-  only. Under `--meta-mode` (set by `scripts/sim.sh --meta`, part of the run config) the mean
-  candidate-minus-opponent fitness gap is within 0.02, blend and raw: label `final`, 5 seeds,
-  blend -0.0074 (SE 0.0098), raw -0.0130 (SE 0.0101). Check with
-  `node scripts/symmetry-gap.mjs report --label <label>` (exit 0 = inside the bound) or
+- Known invariant (v16, `docs/fitness-symmetry.md`): every pairing is battled from both
+  seats (`mirrorBattleResult`), and both GA sides advance through one function,
+  `evolveStep` in `src/ga/core.js`; side-specific behaviour belongs in its adapters only.
+  Evolve runs do no 1v1 scoring: both sides sample by pvpoke rank alone (1/(rank+20) per
+  species+shadow build; unranked = last place), and under `--meta-mode` (set by
+  `scripts/sim.sh --meta`) both draw the whole ranked field. The 0.02 gap bound was
+  measured on v15 (label `final`, 5 seeds, blend -0.0074 SE 0.0098, raw -0.0130 SE 0.0101);
+  v16 has only a short sanity run, not a proof of the bound. Check with
+  `node scripts/symmetry-gap.mjs report --label <label>` or
   `node scripts/fitness-sides.mjs out/evolve-<name>`. Real-collection runs differ between
   sides on purpose; a gap there is not evidence of a bug.
 - Workers must run `bash scripts/setup.sh` first on a fresh clone.

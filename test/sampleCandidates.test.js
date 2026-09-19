@@ -9,7 +9,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sampleCandidateTeams } from '../src/teams/sample.js';
+import { sampleCandidateTeams as sampleRaw } from '../src/teams/sample.js';
+import { loadUsageWeights } from '../src/meta/usage.js';
+
+/** Rank weights for the fake matrix, species ranked in insertion order (earlier = better). */
+function rankWeights(matrix) {
+  const ids = Object.values(matrix.builtMons).map((b) => b.speciesId);
+  return loadUsageWeights({ vendorRoot: '' }, {
+    ignoreSnapshot: true,
+    rankingsEntries: [...new Set(ids)].map((speciesId, i) => ({ speciesId, score: 100 - i * 0.01 })),
+    groupEntries: [],
+    trainingSpeciesIds: [],
+  });
+}
+const sampleCandidateTeams = (params) => sampleRaw({ weights: rankWeights(params.matrix), ...params });
 
 /** A fake mon entry: uniform ratings so computeWeightedScore == score exactly. */
 function mon(key, speciesId, score) {
@@ -82,11 +95,11 @@ test('every returned team has 3 distinct keys and is unique across the batch', (
 });
 
 test('no duplicate species within a team, even when the pool has duplicate species', () => {
-  // Two keys share "azumarill" (defensive dedupe should collapse to the
-  // higher-scoring one before sampling), so no team can ever contain both.
+  // Two keys share the "azumarill" build (the sampler keeps the lexicographically
+  // first key), so no team can ever contain both.
   const mons = [
     mon('a1', 'azumarill', 900),
-    mon('a2', 'azumarill', 400), // weaker duplicate -- should lose the dedupe
+    mon('a2', 'azumarill', 400), // duplicate build -- loses to the earlier key
     mon('b', 'registeel', 850),
     mon('c', 'altaria', 800),
     mon('d', 'medicham', 750),
@@ -96,7 +109,7 @@ test('no duplicate species within a team, even when the pool has duplicate speci
   const teams = sampleCandidateTeams({ matrix, pool, count: 20, seed: 'dedupe-check' });
 
   for (const team of teams) {
-    assert.ok(!team.includes('a2'), 'the weaker duplicate should never be sampled');
+    assert.ok(!team.includes('a2'), 'the duplicate build should never be sampled');
     const species = team.map((key) => matrix.builtMons[key].speciesId);
     assert.equal(new Set(species).size, 3, `team ${team} should have 3 distinct species`);
   }
@@ -143,18 +156,11 @@ test('a pool smaller than 3 species returns no teams rather than throwing', () =
   assert.deepEqual(teams, []);
 });
 
-test('a species missing from `weights` is treated as usage weight 0, not a crash', () => {
+test('a species missing from `weights` is treated as last place, not a crash', () => {
   const matrix = fakeMatrix(TEN_MONS);
   const pool = poolKeys(TEN_MONS);
   const weights = new Map([['azumarill', 0.9]]); // every other species is absent
   const teams = sampleCandidateTeams({ matrix, pool, weights, count: 10, seed: 'sparse-weights' });
-  assert.ok(teams.length > 0);
-});
-
-test('an entirely omitted `weights` degrades to pure 1v1-score sampling without crashing', () => {
-  const matrix = fakeMatrix(TEN_MONS);
-  const pool = poolKeys(TEN_MONS);
-  const teams = sampleCandidateTeams({ matrix, pool, count: 10, seed: 'no-weights' });
   assert.ok(teams.length > 0);
 });
 

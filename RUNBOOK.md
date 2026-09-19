@@ -6,14 +6,16 @@ Run every command from `/home/jaxon/files/pogo-gbl-team-generator` in WSL.
 
 What the app does: take a Pokemon GO collection CSV, find the best 3-mon GO
 Battle League teams buildable from it, ranked by real 3v3 battles run through
-pvpoke's vendored engine. Two front doors:
+pvpoke's vendored engine. The one front door is the evolutionary search:
 
 | Want | Run | Time |
 | --- | --- | --- |
-| Quick answer, small sample | `node src/cli.js <csv>` | ~1-3 min |
+| Quick smoke test | `node scripts/evolve.mjs <csv> --generations 2 --population 12 --opponents-per-gen 8 --threads 2` | ~1 min |
 | Real answer, evolutionary search (the normal case) | `scripts/sim.sh <csv> --name NAME --threads 8 --mutation-floor-start 0.15 --mutation-ceil-start 0.6` | ~8 h |
 
-Everything else in this file supports the second row.
+Everything else in this file supports these rows. There is no 1v1 scoring: candidate
+sampling is by pvpoke rank alone (1/(rank+20) per species+shadow build; a build pvpoke
+does not rank is last place).
 
 ## 1. Preflight (every session, every scheduled run)
 
@@ -725,18 +727,6 @@ League Podium". Republish to the same artifact URL when updating.
 
 ## 6. Other tasks
 
-### Quick sampled run (no GA)
-
-```bash
-node src/cli.js "$COLLECTION" --threads 12 [--cp 2500] [--top 10] [--exclude a,b] [--current-moves] [--no-evolutions]
-# → out/report.md, out/report.html   (change with --out / --html)
-```
-
-Defaults: 15 candidate teams × 7 opponents, pool 30, seed
-`pogo-gbl-team-generator`. `--exhaustive --topK K --meta M` swaps in all C(K,3)
-candidates against a fixed curated list. Good for smoke tests and Ultra League
-collections too small for a GA.
-
 ### Shared collection for two players
 
 ```bash
@@ -748,22 +738,13 @@ Keeps, per base species both can field, the weaker player's copy, so every
 output mon is buildable by both. Then run `sim.sh` on the output. Note the
 script's positional defaults reference old filenames; always pass both paths.
 
-### Multi-stage offline tournament (alternative to the GA, rarely used)
-
-```bash
-node scripts/tournament.mjs "$COLLECTION" --threads 12 --deadline-minutes 450 --out-dir out/tournament-NAME
-```
-
-Three-stage funnel (500×50×3, 100×200×3, 10×500×9 battles at defaults);
-stages 2-3 self-tune to the deadline. Report: `<out-dir>/my-teams-tournament.md`.
-
 ### Refresh usage weights (deliberate, human-triggered only)
 
 ```bash
 node scripts/refresh-usage.mjs        # writes data/meta-usage.json from live pvpoke GL rankings
 ```
 
-Currently no `data/meta-usage.json` or `data/meta-roles.json` exists, so usage
+Evolve runs ignore `data/meta-usage.json` (sampling is pure pvpoke rank). Currently none or `data/meta-roles.json` exists, so usage
 and role priors come from the pinned pvpoke rankings. Community-curated teams in
 `data/meta-teams-community.json` are a separate local source; changing the pin
 does not update them.

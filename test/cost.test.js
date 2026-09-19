@@ -11,7 +11,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { powerUpCost, teamBuildCost, MAX_PAID_LEVEL, MAX_LEVEL } from '../src/cost/powerup.js';
-import { renderReport, renderReportHtml, renderSummary } from '../src/report/index.js';
 
 test('level 1 -> 40 matches the published 270,000 Stardust / 304 Candy total', () => {
   const c = powerUpCost(1, 40);
@@ -149,85 +148,4 @@ test('teamBuildCost flags an evolution the published data does not price', () =>
   assert.equal(cost.unpricedEvolutions, 1);
   assert.equal(cost.complete, false);
   assert.equal(cost.members[0].evolvePriced, false);
-});
-
-// --------------------------------------------------------------- reporting --
-//
-// The report is a pure formatter, so these render a hand-built TeamResult
-// rather than running the pipeline.
-
-function reportInput(buildCost) {
-  return {
-    collectionPath: 'x.csv',
-    monCount: 3,
-    metaTeams: [{ id: 'a', name: 'A' }],
-    warnings: [],
-    settings: { topK: 5, candidateCount: 1, scoreMeta: 10 },
-    monScores: [],
-    rankedTeams: [
-      {
-        members: [{ name: 'Chandelure' }, { name: 'Stunfisk' }, { name: 'Trevenant' }],
-        winRate: 0.72,
-        avgHpMargin: 12.4,
-        bestLead: { name: 'Stunfisk', winRate: 0.8 },
-        perMeta: [],
-        hardestTeams: [],
-        ...(buildCost ? { buildCost } : {}),
-      },
-    ],
-  };
-}
-
-const SAMPLE_COST = teamBuildCost([
-  { key: 'chandelure#1', name: 'Chandelure', currentLevel: 11, targetLevel: 24.5 },
-  { key: 'stunfisk#2', name: 'Stunfisk', currentLevel: 6, targetLevel: 27, shadow: true },
-  {
-    key: 'trevenant#3',
-    name: 'Trevenant',
-    currentLevel: null,
-    targetLevel: 30,
-    evolution: { fromName: 'Phantump', steps: 1, candy: 200, items: [], buddyKm: null },
-  },
-]);
-
-test('renderSummary shows the build cost under each team', () => {
-  const summary = renderSummary(reportInput(SAMPLE_COST));
-  assert.match(summary, /build cost: [\d,]+ Stardust \+ [\d,]+ Candy/);
-  assert.match(summary, /excludes 1 member whose collection row stated no level/);
-});
-
-test('renderReport tables the per-member build cost and a team total', () => {
-  const md = renderReport(reportInput(SAMPLE_COST));
-  assert.match(md, /\*\*Build cost:\*\*/);
-  assert.match(md, /\| Member \| Evolve \| Level \| Stardust \| Candy \| Candy XL \|/);
-  assert.match(md, /\| Chandelure \| - \| 11 → 24\.5 \|/);
-  assert.match(md, /\| Trevenant \| from Phantump \(200 candy\) \| \? → 30 \| unknown \| 200 \| unknown \|/);
-  assert.match(md, new RegExp(`\\*\\*${SAMPLE_COST.stardust.toLocaleString('en-US')}\\*\\*`));
-  assert.match(md, /plus the Candy to evolve it/);
-});
-
-test('renderReportHtml tables the per-member build cost', () => {
-  const html = renderReportHtml(reportInput(SAMPLE_COST));
-  assert.match(html, /<th>Stardust<\/th><th>Candy<\/th><th>Candy XL<\/th>/);
-  assert.match(html, /Chandelure<\/td><td>&mdash;<\/td><td>11 &rarr; 24\.5<\/td>/);
-  assert.match(html, /plus the Candy to evolve it/);
-});
-
-test('a team with no buildCost renders exactly as before (no cost markup)', () => {
-  const md = renderReport(reportInput(null));
-  const html = renderReportHtml(reportInput(null));
-  const summary = renderSummary(reportInput(null));
-  for (const text of [md, html, summary]) {
-    assert.ok(!/Build cost|build cost/.test(text), 'no build-cost markup without buildCost');
-  }
-});
-
-test('a fully-built team reads as "already built", not as a zero bill', () => {
-  const cost = teamBuildCost([
-    { key: 'a#1', name: 'A', currentLevel: 30, targetLevel: 25 },
-    { key: 'b#2', name: 'B', currentLevel: 25, targetLevel: 25 },
-    { key: 'c#3', name: 'C', currentLevel: 40, targetLevel: 40 },
-  ]);
-  const summary = renderSummary(reportInput(cost));
-  assert.match(summary, /build cost: none -- already built/);
 });

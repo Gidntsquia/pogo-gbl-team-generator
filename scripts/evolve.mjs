@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 // JavaScript Document
 //
-// Evolutionary team search driver ("survival of the fittest"), sibling of
-// scripts/tournament.mjs (which stays -- this is an alternate search strategy,
-// not a replacement). Where the tournament funnel narrows a WIDE fixed sample
-// down through progressively deeper opponent pools, this runs a CO-EVOLUTIONARY
+// Evolutionary team search driver ("survival of the fittest") -- the only team
+// search in the repo. It runs a CO-EVOLUTIONARY
 // genetic algorithm: a population of candidate teams and a population of
 // opponent teams are repeatedly battled against each other, and BOTH sides
 // cull, mutate and take in immigrants -- so compute concentrates on already
@@ -14,7 +12,7 @@
 // All GA bookkeeping is in two pure modules with no battles inside:
 // src/teams/evolve.js (candidate side) and src/meta/opponentPool.js (opponent
 // side). This file's only job is the battle-driving glue: shared collection->
-// matrix setup (mirrors scripts/tournament.mjs's sampled path exactly), running
+// build setup (no 1v1 scoring; pvpoke rank alone picks pool and weights), running
 // every pairing through the persistent executor, checkpointing, and rendering
 // the report. No battle math is reimplemented anywhere here -- every win/loss/
 // HP number comes from battleTeams (src/engine/teamBattle.js, pvpoke's own
@@ -107,7 +105,7 @@
 // measured as real and separate.
 //
 // (Superseded fixed-side convention, kept for context: same as scripts/
-// tournament.mjs / src/teams/index.js -- outside this file's two-direction
+// the removed tournament script / src/teams/index.js -- outside this file's two-direction
 // path, a population member is still always battled as team A, so pvpoke
 // emulate mode's small residual seat bias there is a constant offset shared
 // by every team and cancels in the RELATIVE ranking.)
@@ -126,7 +124,7 @@
 // report prints both). Measured rates vary by machine (~18ms/battle threaded
 // on Jaxon's Mac) -- size --population/--opponents-per-gen/--generations to
 // your own time budget; --deadline-minutes is a simple stop-before-the-next
-// -generation safety net, not a self-tuning scaler (unlike tournament.mjs's
+// -generation safety net, not a self-tuning scaler (unlike the removed tournament script's
 // stage 2/3 tuning).
 //
 // GA TUNABLES: the candidate side's rates (--death-rate / --mutation-floor /
@@ -177,7 +175,7 @@
 // generation 0; a checkpoint whose `config` deep-equals this run's resolved
 // config is accepted and the run continues from its stored `nextPopulation`
 // at generation+1 -- the first missing/mismatched checkpoint stops the scan
-// (mirrors scripts/tournament.mjs's per-stage resume, but sequential since
+// (mirrors the removed tournament script's per-stage resume, but sequential since
 // each generation depends on the last). CHECKPOINT FORMAT VERSIONING
 // (added when the prior fire's locked-lead representation change made
 // this a real risk, not a hypothetical one): a checkpoint's `config` schema
@@ -208,7 +206,7 @@ import { teamBuildCost } from '../src/cost/powerup.js';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams } from '../src/engine/teamBattle.js';
 import { createExecutor, defaultThreadCount } from '../src/engine/parallel.js';
-import { scoreCollection, computeWeightedScore, buildMetaMon, applyGroupMoveset } from '../src/scoring/index.js';
+import { buildCollection, buildMetaMon, applyGroupMoveset } from '../src/scoring/index.js';
 import { loadUsageWeights } from '../src/meta/usage.js';
 import { loadMovesetPool, DEFAULT_META_POOL_SIZE, baseIdOf, composeSampledOpponent } from '../src/meta/sampleTeams.js';
 import { archetypeGroups, archetypeWeights, DEFAULT_ARCHETYPE_BETA, DEFAULT_CORE_RIVALRY, DEFAULT_SIMILAR_RIVALRY, DEFAULT_SIMILAR_FLOOR } from '../src/meta/archetypes.js';
@@ -226,7 +224,8 @@ import {
   DEFAULT_OPPONENT_MUTATION_FLOOR,
   DEFAULT_OPPONENT_MUTATION_CEIL,
 } from '../src/meta/opponentPool.js';
-import { dedupeBestPerSpecies } from '../src/teams/index.js';
+import { dedupeByRank, buildRankedPool } from '../src/teams/rankedPool.js';
+import { usageIdOf } from '../src/teams/sample.js';
 import {
   initPopulation,
   nextGeneration,
@@ -254,7 +253,6 @@ const DEFAULTS = Object.freeze({
   cp: 1500,
   cup: 'all',
   elites: 10,
-  scoreMeta: 20,
   // 0.66 (Jaxon 2026-08-26, down from the 0.70 his real runs were passing).
   // Curated teams are the only OBSERVED-reality anchor in the opponent pool,
   // so they stay the majority; the extra 4 points go to the evolving half,
@@ -525,7 +523,7 @@ function recentWindowSize(generationsRun) {
 }
 
 // Used only if a generation somehow measures 0 battles (every battle errored)
-// -- keeps timing math finite. Mirrors tournament.mjs's own fallback figure.
+// -- keeps timing math finite. Mirrors the removed tournament script's own fallback figure.
 const FALLBACK_MS_PER_BATTLE = 200;
 const SPECIES_STATS_CAP = 25; // report/analytics-JSON cap on how many species rows are kept per generation (documented, not silent -- see renderEvolveReport).
 const TOP_CORES_CAP = 15;
@@ -636,7 +634,7 @@ const BATTLE_CACHE_MAX_ENTRIES = 2_000_000;
 const CHECKPOINT_FORMAT_VERSION = 3;
 
 // ---------------------------------------------------------------------------
-// Small pure formatting helpers (duplicated from scripts/tournament.mjs --
+// Small pure formatting helpers (duplicated from the removed tournament script --
 // both files are small, standalone CLI scripts with no shared "funnel utils"
 // module in this codebase; see src/teams/sample.js/sampleTeams.js for the
 // same duplicated-small-helper pattern elsewhere).
@@ -803,7 +801,7 @@ function formatDuration(ms) {
 // Lead-pairing schemes -- LOCKED LEADS: the
 // candidate's own lead is always `team[0]` (never averaged over its 3
 // members any more; see the header's LOCKED LEADS note). This intentionally
-// diverges from scripts/tournament.mjs, which still
+// diverges from the removed tournament script, which still
 // runs its own averaged-own-lead scheme.
 // ---------------------------------------------------------------------------
 
@@ -936,8 +934,13 @@ function leadExchangeLoser(summary) {
  * (src/teams/typeCoverage.js) now keys by build (species+moveset) instead
  * of matrix key, so an opponent lead gets real coverage relief for the
  * first time instead of always reading the empty-map fallback.
+ *
+ * v16 (2026-09-19): no 1v1 scoring matrix. Candidate pool, draw weights and
+ * specimen choice come from pvpoke rank alone (1/(rank+20) per species+shadow
+ * build, last place when unranked); meta mode draws the whole ranked field on
+ * both sides. Which teams get sampled changed, so v15 checkpoints cannot resume.
  */
-const FITNESS_SEMANTICS = 'core-pair-archetypes-v15';
+const FITNESS_SEMANTICS = 'core-pair-archetypes-v16';
 const TYPE_COVERAGE_META_SIZE = 200;
 // Closer/consistency disabled for now (weights zeroed rather than removed,
 // so they're a one-line revert away). Snowball is opt-in via
@@ -1349,7 +1352,7 @@ function anyBaseIdBanned(speciesIds, banBaseIds) {
 }
 
 /**
- * Every concrete speciesId present in `builtMons` (a scoreCollection/dedupe
+ * Every concrete speciesId present in `builtMons` (a buildCollection/dedupe
  * -shaped `{key: {speciesId}}` map, e.g. `dedupeBestPerSpecies`'s output)
  * whose base id (baseIdOf) is banned. Used to expand a `--ban` base-id list
  * into the exact-match `excludeSpecies` candidate teams already honor end to
@@ -1414,7 +1417,7 @@ export function filterBannedMovesetPool(pool, banBaseIds) {
 /**
  * Canonical JSON-serializable REQUESTED inputs for a run -- compared against
  * a checkpoint's `config` on resume (same key-order-stable, deliberately-
- * conservative approach as scripts/tournament.mjs's buildRunConfig).
+ * conservative approach as the removed tournament script's buildRunConfig).
  * `deadlineMinutes`, `threads` and `battleCache` are excluded on purpose:
  * none changes what any generation COMPUTES (deadline only decides whether to
  * stop before starting the next one; threads and the memo cache are pure
@@ -1432,13 +1435,12 @@ function buildRunConfig(csvPath, opts) {
   }
   return {
     csvPath: path.resolve(csvPath),
-    scoreMeta: opts.scoreMeta ?? DEFAULTS.scoreMeta,
     // Meta mode forces expansion off: the meta collection already lists every
     // ranked build as its own row, and expansion would fold a ranked
     // pre-evolution (Morgrem, Zweilous, ...) into its evolved form's lineage,
     // deleting a build the opponent side still fields.
     evolutions: opts.metaMode ? false : opts.evolutions ?? true,
-    // undefined = no cap, whole deduped collection (buildSamplingPool).
+    // undefined = no cap, whole deduped collection (buildRankedPool).
     pool: opts.pool ?? undefined,
     seed: String(opts.seed ?? DEFAULTS.seed),
     cp: opts.cp ?? DEFAULTS.cp,
@@ -1466,7 +1468,8 @@ function buildRunConfig(csvPath, opts) {
     // species a composed opponent can be made of), so both are part of the
     // checkpoint fingerprint.
     populationFinalRatio: opts.populationFinalRatio ?? DEFAULTS.populationFinalRatio,
-    opponentMetaPool: opts.opponentMetaPool ?? DEFAULTS.opponentMetaPool,
+    // Meta mode: both sides draw the whole ranked field unless a cap is passed (0 = no cap).
+    opponentMetaPool: opts.opponentMetaPool ?? (opts.metaMode ? 0 : DEFAULTS.opponentMetaPool),
     // Part of the fingerprint -- resuming a 'classic' run's
     // checkpoints under 'battle-reality' (or vice versa) would silently graft
     // a different generation's fitness semantics onto a population that was
@@ -1480,18 +1483,9 @@ function buildRunConfig(csvPath, opts) {
     // selected/mutated under the old one.
     archetypeBeta: opts.archetypeBeta ?? DEFAULTS.archetypeBeta,
     opponentFitnessNormalised: opts.opponentFitnessNormalised ?? DEFAULTS.opponentFitnessNormalised,
-    // plans/PLAN.md Item 4 test-only switch (row 5): buildRunConfig is a
-    // whitelist -- a field opts carries but this function never copies never
-    // reaches `config`, so it's a silent no-op everywhere `config.<field>` is
-    // read. candidateSampleAlpha was missing here (caught this session: a
-    // measurement run with --candidate-sample-alpha 0 produced byte-identical
-    // output to the unflagged run because config.candidateSampleAlpha stayed
-    // undefined the whole time despite the flag parsing correctly). undefined
-    // here still means "no override" (DEFAULT_BLEND_ALPHA applies).
-    candidateSampleAlpha: opts.candidateSampleAlpha ?? (opts.metaMode ? 1 : undefined),
     // Meta-vs-meta mode: both sides share one species universe, so the
-    // candidate side picks its species pool by pvpoke rank and samples by
-    // usage weight only, like the opponent side. Part of the fingerprint.
+    // candidate side draws from the whole ranked field, like the opponent
+    // side. Part of the fingerprint.
     metaMode: !!opts.metaMode,
     // Changes what a composed opponent's lead IS, not just a weighting --
     // resuming under a different value would silently regenerate every
@@ -1852,34 +1846,6 @@ function writeGenerationsAnalytics(outDir, generationRecords) {
 }
 
 // ---------------------------------------------------------------------------
-// Sampling pool (verbatim duplicate of scripts/tournament.mjs's private
-// buildSamplingPool -- pure list-ranking, no battle math, no engine calls).
-// ---------------------------------------------------------------------------
-
-// `poolSize` counts SPECIES, not keys: `deduped` may hold both a shadow and a
-// non-shadow key of one species (dedupeBestPerSpecies with keepShadowVariants),
-// and both ride along once the species makes the cut on its better key, so a
-// shadow twin never crowds a different species out of the pool. The sampler
-// (src/teams/sample.js buildScoredPool) still draws one key per species; the
-// twin is reachable only through the GA's shadow-flip mutation.
-function buildSamplingPool(deduped, poolSize, excludeSpecies) {
-  const exclude = new Set(excludeSpecies);
-  const scored = Object.keys(deduped.ratings)
-    .filter((key) => !exclude.has(deduped.builtMons[key].speciesId))
-    .map((key) => ({ key, speciesId: deduped.builtMons[key].speciesId, score: computeWeightedScore(deduped.ratings[key]) }))
-    .sort((a, b) => b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  // No poolSize (--pool not passed) or <= 0 means no cap -- the whole
-  // (deduped) collection.
-  if (!poolSize || poolSize <= 0) return scored.map((m) => m.key);
-  const keptSpecies = new Set();
-  for (const m of scored) {
-    if (keptSpecies.size >= poolSize && !keptSpecies.has(m.speciesId)) break;
-    keptSpecies.add(m.speciesId);
-  }
-  return scored.filter((m) => keptSpecies.has(m.speciesId)).map((m) => m.key);
-}
-
-// ---------------------------------------------------------------------------
 // Species-set helpers + per-generation analytics (cheap -- it's
 // just counting: computed entirely from data a generation's battles and
 // src/teams/evolve.js's nextGeneration already produce; no extra battles).
@@ -2107,7 +2073,7 @@ function computeGenerationAnalytics({ matrix, population, fitness, lineage, resu
 }
 
 // ---------------------------------------------------------------------------
-// Battle runner. Mirrors scripts/tournament.mjs's runFunnelStage's
+// Battle runner. Mirrors the removed tournament script's runFunnelStage's
 // threaded-executor structure; the differences are no candidate narrowing
 // (every generation battles its WHOLE population), preserved input order, and
 // the memo cache above.
@@ -2644,7 +2610,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
       entry.coreBreakExposure = computeCoreBreakExposure(perMeta);
     }
 
-    results.push(entry); // positional -- NOT sorted, unlike tournament.mjs's runFunnelStage
+    results.push(entry); // positional -- NOT sorted, unlike the removed tournament script's runFunnelStage
   }
 
   return {
@@ -3259,7 +3225,7 @@ export function renderEvolveReportHtml(result) {
 
   out.push(
     `<p class="foot">${escapeHtml(path.basename(result.outDir ?? '.'))} &middot; seed <code>${escapeHtml(config.seed)}</code> ` +
-      `&middot; ${collectionBase}${result.collectionMonCount ? ` (${result.collectionMonCount} mons${result.scoredMonCount && result.scoredMonCount !== result.collectionMonCount ? `, ${result.scoredMonCount} scored with evolutions` : ''})` : ''} ` +
+      `&middot; ${collectionBase}${result.collectionMonCount ? ` (${result.collectionMonCount} mons${result.scoredMonCount && result.scoredMonCount !== result.collectionMonCount ? `, ${result.scoredMonCount} with evolutions` : ''})` : ''} ` +
       `&middot; simulated ${escapeHtml(new Date().toISOString().slice(0, 10))} with pvpoke's own battle engine &middot; ` +
       `full details in <code>${escapeHtml(result.reportPath ?? 'my-teams-evolve.md')}</code></p>`
   );
@@ -3301,7 +3267,7 @@ function renderDoneMarker(result) {
  * Run the full evolutionary search and write per-generation checkpoints, the
  * rolling analytics file, the final report, and the DONE marker. Exported so
  * a test could drive it in-process (the dedicated evolve test was folded into test/e2e.test.js; same pattern as
- * scripts/tournament.mjs's runTournament / src/cli.js's runPipeline).
+ * the removed tournament script's runTournament / the removed CLI's runPipeline).
  *
  * @param {string} csvPath
  * @param {{
@@ -3379,7 +3345,7 @@ function renderDoneMarker(result) {
  *     instead of the default hard error (see the resume-refusal check).
  *   outDir?:string, out?:string, - out = Markdown report path.
  *   html?:string, noHtml?:boolean, - HTML report path (default
- *     <outDir>/my-teams-evolve.html) and an opt-out (mirrors src/cli.js's
+ *     <outDir>/my-teams-evolve.html) and an opt-out (mirrors the removed CLI's
  *     --html/--no-html).
  *   onProgress?:(p:{generation:number, completed:number, total:number, startedAt:number})=>void,
  *   onLog?:(msg:string)=>void,
@@ -3388,7 +3354,7 @@ function renderDoneMarker(result) {
  */
 /**
  * Everything a meta-vs-meta run needs before its first battle: collection
- * import, evolution expansion, cup eligibility, the 1v1 scoring matrix, the
+ * import, evolution expansion, cup eligibility, the collection build, the
  * candidate sampling pool, and the opponent side's curated/moveset pools and
  * (optional) shared-weakness context -- exactly the block `runEvolution` used
  * to inline before its generation loop. Extracted (plans/WORKER_NOTES.md
@@ -3432,14 +3398,14 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
   // One pvpoke similarity scorer (memoised per species/moveset pair) shared by both GAs' core rivalry.
   const similarity = createSimilarity();
   const league = resolveFormat({ cp: config.cp, cup: config.cup });
-  // Same expansion src/cli.js does: each mon also competes as anything it can
+  // Same expansion the removed CLI does: each mon also competes as anything it can
   // evolve into, so the GA can pick a form you don't own yet. Part of the run
   // config below, so flipping it starts a new checkpoint rather than resuming
   // one whose population was bred from a different candidate pool.
   const expanded = config.evolutions
     ? expandEvolutions(ctx, importedMons)
     : { mons: importedMons, warnings: [] };
-  // Same cup eligibility filter src/cli.js applies, always after evolution
+  // Same cup eligibility filter the removed CLI applies, always after evolution
   // expansion (see src/util/eligibility.js's header for why order matters).
   const eligible = filterEligibleMons(ctx, expanded.mons);
   const mons = eligible.mons;
@@ -3454,12 +3420,21 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
       if (ranked) mon.moves = { fastMove: ranked.fastMove, chargedMoves: ranked.chargedMoves };
     }
   }
-  const matrix = scoreCollection(ctx, mons, { metaLimit: config.scoreMeta, currentMoves: config.metaMode });
-  // keepShadowVariants: the GA's shadow-flip mutation needs both the shadow and
-  // the non-shadow specimen of a species on hand to swap between; the sampler
-  // itself still sees one key per species (see buildSamplingPool).
-  const deduped = dedupeBestPerSpecies(matrix, { keepShadowVariants: true });
-  const weights = loadUsageWeights(ctx);
+  // No 1v1 scoring anywhere in an evolve run: mons are only BUILT here, and
+  // both the pool and every sampling weight come from pvpoke's own rank for
+  // the build (`weights`). A data/meta-usage.json snapshot is ignored on
+  // purpose -- sampling is pure pvpoke rank.
+  const { built, warnings: buildWarnings } = buildCollection(ctx, mons, { currentMoves: config.metaMode });
+  const allBuilt = {};
+  for (const b of built) {
+    const { key, ...rest } = b;
+    allBuilt[key] = rest;
+  }
+  const weights = loadUsageWeights(ctx, { ignoreSnapshot: true });
+  // keepShadowVariants is implicit: dedupeByRank keys by (species, shadow), so
+  // the GA's shadow-flip mutation still has both specimens of a species.
+  const deduped = { builtMons: dedupeByRank(allBuilt, weights), warnings: buildWarnings };
+  const matrix = { mons: built, warnings: buildWarnings };
   const banBaseIds = new Set(config.banSpecies);
   // --ban is format-wide: on the candidate side it is folded into
   // excludeSpecies (expanded from base ids to every concrete speciesId the
@@ -3470,10 +3445,10 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
     ? [...new Set([...config.excludeSpecies, ...expandBanToCandidateSpeciesIds(deduped.builtMons, banBaseIds)])]
     : config.excludeSpecies;
   // --meta-mode (meta-vs-meta): the collection IS the ranked field, so the
-  // candidate species pool is chosen by the SAME criterion as the opponent's
-  // (pvpoke overall rank, top --pool) instead of by 1v1 matrix score. A
-  // real-collection run keeps the matrix-score pool: a player's own mons have
-  // no pvpoke rank of their own (IVs, levels, legacy moves differ).
+  // candidate pool is the SAME set as the opponent's (every ranked build, or
+  // the top --pool of them). A real-collection run pools the player's mons and
+  // ranks each by its own species+shadow build's pvpoke rank (last place when
+  // pvpoke does not rank it).
   let pool;
   if (config.metaMode) {
     const rankedEntries = filterBannedMovesetPool(loadMovesetPool(ctx, { metaPoolSize: config.pool ?? 0 }), banBaseIds);
@@ -3482,7 +3457,7 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
     pool = Object.keys(deduped.builtMons)
       .filter((key) => {
         const b = deduped.builtMons[key];
-        return !exclude.has(b.speciesId) && rankedIds.has(`${b.speciesId}${b.spec?.shadow ? '_shadow' : ''}`);
+        return !exclude.has(b.speciesId) && rankedIds.has(usageIdOf(b));
       })
       .sort();
     log(`evolve: meta mode -- candidate species pool = ${pool.length} of pvpoke's top ${rankedIds.size} ranked builds`);
@@ -3510,7 +3485,7 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
     log(`evolve: meta mode -- build parity: ${rankedEntries.length - mismatches.length}/${rankedEntries.length} ranked builds identical on both sides`);
     for (const m of mismatches.slice(0, 20)) log(`evolve: meta mode -- build mismatch: ${m}`);
   } else {
-    pool = buildSamplingPool(deduped, config.pool, candidateExcludeSpecies);
+    pool = buildRankedPool(deduped.builtMons, weights, config.pool, candidateExcludeSpecies);
   }
   const roleScores = loadRoleScores(ctx); // lead/closer/switch priors, cheap local-file read
   // Fed to composeSampledOpponent (initOpponentPool/nextOpponentPool/
@@ -3558,7 +3533,7 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
   }
   const battleCache = opts.battleCache === false ? createNullBattleCache() : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
   log(
-    `evolve: shared setup done -- ${matrix.mons.length} mons scored, sampling pool of ${pool.length} species, ` +
+    `evolve: shared setup done -- ${matrix.mons.length} mons built (no 1v1 scoring), sampling pool of ${pool.length} species, ` +
       `${curatedPool.length} curated opponent teams, opponent meta pool of ${movesetPool.length} species, league=${league.name}`
   );
   log(`evolve: fitness semantics ${FITNESS_SEMANTICS}, meta mode ${config.metaMode ? 'on' : 'off'}`);
@@ -3720,8 +3695,6 @@ export async function runEvolution(csvPath, opts = {}) {
         count: populationAt(0, config),
         seed: `${config.seed}-gen0`,
         excludeSpecies: candidateExcludeSpecies,
-        alpha: config.candidateSampleAlpha,
-        perBuild: config.metaMode,
       });
       opponentPool = initOpponentPool(ctx, {
         size: opponentsAt(0, config),
@@ -3908,8 +3881,6 @@ export async function runEvolution(csvPath, opts = {}) {
             excludeSpecies: candidateExcludeSpecies,
             targetSize: populationAt(generation + 1, config),
             deathRate: config.deathRate,
-            alpha: config.candidateSampleAlpha,
-            perBuild: config.metaMode,
             // Annealed per generation (constant when no start value is set)
             // -- see mutationRatesAt.
             ...mutationRatesAt(generation, config),
@@ -4447,9 +4418,8 @@ Options:
                             fought during the run -- kept low/off by default,
                             these are essentially random legal teams, not
                             opponent-GA-selected ones (default ${DEFAULTS.finalFresh}, or ${FINAL_FRESH_WHEN_NO_CURATED} at --curated-ratio 0)
-  --score-meta S           1v1-pruning meta size                      (default ${DEFAULTS.scoreMeta})
   --pool P                 candidate sampling pool size, in species (top P
-                            by 1v1 score)               (default: no cap, whole deduped collection)
+                            by pvpoke rank)             (default: no cap, whole deduped collection)
   --curated-ratio R        curated-vs-evolved opponent mix             (default ${DEFAULTS.curatedRatio})
   --population-final-ratio R  candidate population at the LAST generation as
                             a fraction of --population; the opponent count
@@ -4457,7 +4427,7 @@ Options:
                             battle grid flat                           (default ${DEFAULTS.populationFinalRatio})
   --opponent-meta-pool N   composed opponents are built from the top N species
                             of pvpoke's own overall ranking (0 = the full
-                            field, the pre-2026-08-26 behavior)        (default ${DEFAULTS.opponentMetaPool})
+                            field; default: the full field under --meta-mode)  (default ${DEFAULTS.opponentMetaPool})
   --no-battle-cache        re-simulate every pairing instead of memoizing
                             identical ones (identical pairings are
                             deterministic, so the memo returns the same
@@ -4661,7 +4631,6 @@ export function parseEvolveArgs(argv) {
         'selection-trailing': { type: 'string' },
         'final-archive': { type: 'string' },
         'final-fresh': { type: 'string' },
-        'score-meta': { type: 'string' },
         pool: { type: 'string' },
         'curated-ratio': { type: 'string' },
         'population-final-ratio': { type: 'string' },
@@ -4677,7 +4646,6 @@ export function parseEvolveArgs(argv) {
         'out-dir': { type: 'string' },
         fitness: { type: 'string' },
         'death-rate': { type: 'string' },
-        'candidate-sample-alpha': { type: 'string' },
         'meta-mode': { type: 'boolean' },
         'mutation-floor': { type: 'string' },
         'mutation-ceil': { type: 'string' },
@@ -4763,14 +4731,15 @@ export function parseEvolveArgs(argv) {
     // Left undefined when not passed (rather than defaulted here) so
     // finalFreshDefault's curated-ratio-aware fallback applies.
     finalFresh: values['final-fresh'] !== undefined ? intFlag(values['final-fresh'], 'final-fresh', undefined) : undefined,
-    scoreMeta: intFlag(values['score-meta'], 'score-meta', DEFAULTS.scoreMeta),
     evolutions: !values['no-evolutions'],
     // Left undefined when not passed (rather than defaulted here) so
-    // buildSamplingPool's own "no cap" fallback applies.
+    // buildRankedPool's own "no cap" fallback applies.
     pool: values.pool !== undefined ? intFlag(values.pool, 'pool', undefined) : undefined,
     curatedRatio: fractionFlag(values['curated-ratio'], 'curated-ratio', DEFAULTS.curatedRatio),
     populationFinalRatio: fractionFlag(values['population-final-ratio'], 'population-final-ratio', DEFAULTS.populationFinalRatio),
-    opponentMetaPool: intFlag(values['opponent-meta-pool'], 'opponent-meta-pool', DEFAULTS.opponentMetaPool),
+    opponentMetaPool: values['opponent-meta-pool'] !== undefined
+      ? intFlag(values['opponent-meta-pool'], 'opponent-meta-pool', undefined)
+      : undefined, // buildRunConfig: default 100, or the full field under --meta-mode
     battleCache: !values['no-battle-cache'],
     excludeSpecies: values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [],
     banSpecies: values.ban ? values.ban.split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -4781,21 +4750,7 @@ export function parseEvolveArgs(argv) {
     noHtml: !!values['no-html'],
     fitness: fitnessFlag(values.fitness),
     deathRate: fractionFlag(values['death-rate'], 'death-rate', undefined),
-    // plans/PLAN.md Item 4 test-only switch (row 5, sampling weights):
-    // overrides src/teams/sample.js's DEFAULT_BLEND_ALPHA on the candidate
-    // side only, for both gen-0 (initPopulation) and every later generation
-    // (nextGeneration). makeBlendedWeightFn's blend is
-    // (1-alpha)*normScore + alpha*normUsage, so alpha=1 (not 0) is
-    // usage-weight-only, matching the opponent side's
-    // src/meta/sampleTeams.js weighting exactly, to measure how much of the
-    // fitness gap this one formula difference accounts for. undefined (flag
-    // omitted) is a no-op: DEFAULT_BLEND_ALPHA (0.5) applies as before. Not
-    // part of any evolve recipe.
     metaMode: !!values['meta-mode'],
-    candidateSampleAlpha:
-      values['candidate-sample-alpha'] !== undefined
-        ? fractionFlag(values['candidate-sample-alpha'], 'candidate-sample-alpha', undefined)
-        : undefined,
     mutationFloor: fractionFlag(values['mutation-floor'], 'mutation-floor', undefined),
     mutationCeil: fractionFlag(values['mutation-ceil'], 'mutation-ceil', undefined),
     mutationFloorStart: fractionFlag(values['mutation-floor-start'], 'mutation-floor-start', undefined),

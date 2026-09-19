@@ -100,7 +100,7 @@ function buildOrderings(baseline, shuffleCount, seed) {
  * shared with another ordering's run -- otherwise one ordering's battle
  * history would contaminate the next, defeating the whole point of isolating
  * order effects). Instances ARE reused across every battle WITHIN this one
- * ordering, same as evaluateTeams/tournament.mjs's real build-once-battle-
+ * ordering, same as evaluateTeams/the removed tournament script's real build-once-battle-
  * many usage pattern -- that reuse is exactly what the resetMoves()
  * order-sensitivity needs to manifest.
  *
