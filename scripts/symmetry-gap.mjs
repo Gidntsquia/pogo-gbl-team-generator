@@ -79,6 +79,9 @@ const BASE_FLAGS = [
   '--opponent-immigrant-fraction', '0.08',
   '--immigrant-fraction', '0.08',
   '--population-final-ratio', '1',
+  // Meta mode (Item 3): both sides draw from one species universe. Labels `base`..`finalv14`
+  // predate it and were run without; `meta3`, `final`, `real` passed it as an extra flag.
+  '--meta-mode',
   '--threads', '8',
 ];
 

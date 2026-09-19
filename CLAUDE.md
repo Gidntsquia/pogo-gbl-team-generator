@@ -44,7 +44,8 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
 | `scripts/tournament.mjs` | large offline sampled runs |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
-| `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `side-bias-study.mjs`, `symmetry-study.mjs`, `symmetry-gap.mjs` | one-off benchmarks/analyses, not part of the pipeline |
+| `scripts/bench.mjs`, `alignment-study.mjs`, `variance-study.mjs`, `shield-weight-review.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `side-bias-study.mjs`, `symmetry-study.mjs` | one-off benchmarks/analyses, not part of the pipeline |
+| `scripts/symmetry-gap.mjs` | `run --label L` / `report --label L [--minus B]`: multi-seed candidate-vs-opponent fitness gap for meta-vs-meta runs; `report` exits 0 when within 0.02 (`docs/fitness-symmetry.md`) |
 
 ### Module map (`src/`)
 
@@ -72,6 +73,10 @@ https://github.com/Gidntsquia/pokemon-go-video-to-csv.
   two-species core so a crowded bred core doesn't out-vote a lone one in fitness math,
   plus the core-rivalry penalty both GAs rank with: identical or pvpoke-similar
   cores, per `engine/similarity.js`, compete for seats).
+- `ga/` — `core.js`: the one generation step both GAs run (`evolveStep`: rivalry
+  ranking, cull, mutation roll, seat split, fill, dedupe) plus shared crowding
+  weights and trailing fitness. `teams/evolve.js` and `meta/opponentPool.js` are
+  thin callers supplying adapters; side-specific rules go in an adapter, not here.
 - `evolution/` — expands a collection so each mon also competes as its
   possible evolutions (default on; `--no-evolutions`).
 - `cost/` — `powerup.js` (Stardust/Candy build cost, pure arithmetic) +
