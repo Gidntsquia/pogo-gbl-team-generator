@@ -83,9 +83,9 @@ export const DEFAULT_SIMILAR_RIVALRY = 1;
 /** pvpoke similarity (src/engine/similarity.js, 0..1) at or below which two different species count as unrelated. */
 export const DEFAULT_SIMILAR_FLOOR = 0.35;
 /** Similarity of a shadow to its own non-shadow (same species, the other shadow flag): the top of the scale short of identity. */
-export const DEFAULT_SHADOW_SIMILARITY = 0.9;
+const DEFAULT_SHADOW_SIMILARITY = 0.9;
 /** Extra load a better team adds per unit of WHOLE-TEAM similarity (on top of its core load), see coreRivalryFitness. */
-export const DEFAULT_TWIN_RIVALRY = 2;
+const DEFAULT_TWIN_RIVALRY = 2;
 
 /**
  * @typedef {object} MemberProfile

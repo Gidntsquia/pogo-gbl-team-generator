@@ -15,10 +15,9 @@
 // changes here to be reused across many run() calls. One notable side effect
 // worth knowing about: cacheA/cacheB (below) now persist for the pool's
 // entire lifetime rather than just one runBattles() call, so a long-lived
-// executor reused across many batches (e.g. a future multi-stage tournament
-// run) will build any given mon at most once per worker ever, not once per
+// executor reused across many batches (e.g. a multi-stage run) will build any given mon at most once per worker ever, not once per
 // batch -- a nice bonus. But an evolve.mjs run keeps ONE executor alive for
-// its ENTIRE 100-generation run (see scripts/evolve.mjs), and mutation means
+// its ENTIRE 100-generation run (see src/evolve/run.js), and mutation means
 // every generation introduces candidates with new IVs/movesets -- there is no
 // natural ceiling on the number of distinct mons a worker will ever see, so
 // an unbounded cache here grows for as long as the run does. This was the
@@ -108,8 +107,8 @@ function monKey(m) {
  * mon spec. A cache is per-side (see below) so this worker doesn't rebuild
  * an identical mon on every battle -- teamA is very often the same candidate
  * across many opponents, and teamB is very often the same opponent across
- * many candidates (mirrors how src/teams/index.js and the removed tournament script
- * already drive battleTeams).
+ * many candidates (mirrors how src/evolve/evaluate.js
+ * already drives battleTeams).
  */
 function buildTeam(ctx, cache, monSpecs) {
   return monSpecs.map((m) => {

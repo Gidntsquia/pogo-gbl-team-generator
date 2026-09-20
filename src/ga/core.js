@@ -102,7 +102,7 @@ export function computeChurn({ liveCount, contenders, targetSize, deathRate }) {
  *   `immigrantReserve` is the planned reserve; call {@link finalizeImmigrantCount}
  *   once mutants are actually built to get the real immigrant draw count.
  */
-export function allocateNewSlots({ openSlots, immigrantFraction, targetSize, rolls }) {
+function allocateNewSlots({ openSlots, immigrantFraction, targetSize, rolls }) {
   const immigrantReserve = Math.min(openSlots, Math.floor(immigrantFraction * targetSize));
   let mutantSlots = Math.max(0, openSlots - immigrantReserve);
   if (mutantSlots === 0 && openSlots > 0 && rolls.length > 0) mutantSlots = 1;
@@ -117,7 +117,7 @@ export function allocateNewSlots({ openSlots, immigrantFraction, targetSize, rol
  * See {@link allocateNewSlots}: the immigrant draw target once the caller
  * knows how many of `chosenRolls` actually built successfully.
  */
-export function finalizeImmigrantCount({ openSlots, builtMutantCount }) {
+function finalizeImmigrantCount({ openSlots, builtMutantCount }) {
   return Math.max(0, openSlots - builtMutantCount);
 }
 

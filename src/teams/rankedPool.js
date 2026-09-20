@@ -13,7 +13,7 @@ import { lastPlaceWeight } from '../meta/usage.js';
 import { usageIdOf } from './sample.js';
 
 /** Weight of one built mon's build: its pvpoke-rank weight, last place when unranked. */
-export function rankWeightOf(built, weights, fallback = lastPlaceWeight(weights)) {
+function rankWeightOf(built, weights, fallback = lastPlaceWeight(weights)) {
   return weights.get(usageIdOf(built)) ?? fallback;
 }
 

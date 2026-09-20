@@ -23,7 +23,7 @@ test('loads the curated Great League meta teams (>=8, all 3v3)', () => {
   // Vendor-preset-specific invariants (species-joined id/name format) --
   // scoped to includeCommunity: false since the community teams carry
   // their own human-authored names/ids instead (see the community tests below).
-  const teams = loadMetaTeams(ctx, { includeCommunity: false });
+  const teams = loadMetaTeams(ctx, { includeVendor: true, includeCommunity: false });
   assert.ok(teams.length >= 8, `expected >=8 meta teams, got ${teams.length}`);
   for (const team of teams) {
     assert.equal(team.members.length, 3, `${team.id} should have 3 members`);
@@ -35,7 +35,7 @@ test('loads the curated Great League meta teams (>=8, all 3v3)', () => {
 });
 
 test('every member is a battle-ready built pvpoke Pokemon', () => {
-  const teams = loadMetaTeams(ctx, { limit: 6 });
+  const teams = loadMetaTeams(ctx, { includeVendor: true, limit: 6 });
   for (const team of teams) {
     for (const m of team.members) {
       const p = m.pokemon;
@@ -55,8 +55,8 @@ test('every member is a battle-ready built pvpoke Pokemon', () => {
 });
 
 test('ids and names are stable across reloads and match member speciesIds', () => {
-  const a = loadMetaTeams(ctx);
-  const b = loadMetaTeams(ctx);
+  const a = loadMetaTeams(ctx, { includeVendor: true });
+  const b = loadMetaTeams(ctx, { includeVendor: true });
   assert.deepEqual(
     a.map((t) => t.id),
     b.map((t) => t.id),
@@ -73,16 +73,16 @@ test('ids and names are stable across reloads and match member speciesIds', () =
 });
 
 test('vendor preset ids match their members\' speciesIds (species-joined format)', () => {
-  const teams = loadMetaTeams(ctx, { includeCommunity: false });
+  const teams = loadMetaTeams(ctx, { includeVendor: true, includeCommunity: false });
   for (const team of teams) {
     assert.equal(team.id, team.members.map((m) => m.speciesId).join('-'));
   }
 });
 
 test('limit caps how many teams are built', () => {
-  const three = loadMetaTeams(ctx, { limit: 3 });
+  const three = loadMetaTeams(ctx, { includeVendor: true, limit: 3 });
   assert.equal(three.length, 3);
-  const full = loadMetaTeams(ctx);
+  const full = loadMetaTeams(ctx, { includeVendor: true });
   // limit slices the head, preserving source order.
   assert.deepEqual(three.map((t) => t.id), full.slice(0, 3).map((t) => t.id));
 });
@@ -179,8 +179,8 @@ test('a bogus speciesId in a temp-file copy drops that team with a warning, not 
 });
 
 test('loadMetaTeams merges vendor presets with community teams, lightest tier ordered last', () => {
-  const merged = loadMetaTeams(ctx, { communityFile: COMMUNITY_FILE });
-  const vendorOnly = loadMetaTeams(ctx, { includeCommunity: false });
+  const merged = loadMetaTeams(ctx, { includeVendor: true, communityFile: COMMUNITY_FILE });
+  const vendorOnly = loadMetaTeams(ctx, { includeVendor: true, includeCommunity: false });
   assert.ok(merged.length > vendorOnly.length, 'merged pool is bigger than vendor-only');
 
   const community = merged.filter((t) => t.id.startsWith('community:'));
@@ -207,7 +207,7 @@ test('curatedTierWeight grades ladder-observed above recommended above off-meta'
 });
 
 test('a small limit on loadMetaTeams stays within the vendor pool (documented off-meta cap)', () => {
-  const small = loadMetaTeams(ctx, { limit: 5 });
+  const small = loadMetaTeams(ctx, { includeVendor: true, limit: 5 });
   assert.equal(small.length, 5);
   assert.ok(
     small.every((t) => !t.id.startsWith('community:')),
@@ -268,7 +268,7 @@ test('a jaxon-ladder team and a legacy community team both battle with members[0
 });
 
 test('a loaded meta team is usable as a side of a real 3v3 battle', () => {
-  const [teamX, teamY] = loadMetaTeams(ctx, { limit: 2 });
+  const [teamX, teamY] = loadMetaTeams(ctx, { includeVendor: true, limit: 2 });
   const result = battleTeams(ctx, {
     teamA: teamX.members.map((m) => m.pokemon),
     teamB: teamY.members.map((m) => m.pokemon),
@@ -388,8 +388,8 @@ test('a member object with no speciesId drops its team, like an unknown id', () 
 
 test('under a cup, a vendor preset with an ineligible member is dropped', async () => {
   const wpCtx = await initEngine({ cp: 1500, cup: 'willpower' });
-  const glTeams = loadMetaTeams(ctx, { includeCommunity: false });
-  const wpTeams = loadMetaTeams(wpCtx, { includeCommunity: false });
+  const glTeams = loadMetaTeams(ctx, { includeVendor: true, includeCommunity: false });
+  const wpTeams = loadMetaTeams(wpCtx, { includeVendor: true, includeCommunity: false });
   assert.ok(glTeams.length > wpTeams.length, 'willpower vendor pool should be far smaller than GL');
   for (const team of wpTeams) {
     for (const member of team.members) {
@@ -415,4 +415,11 @@ test('communityEntries option bypasses the cup file-match check', async () => {
     communityEntries: [{ id: 'fine', members: ['medicham', 'sableye', 'annihilape'] }],
   });
   assert.deepEqual(teams.map((t) => t.id), ['community:fine']);
+});
+
+test('loadMetaTeams leaves vendor presets out unless includeVendor is set', () => {
+  const without = loadMetaTeams(ctx, { includeCommunity: false });
+  const withVendor = loadMetaTeams(ctx, { includeCommunity: false, includeVendor: true });
+  assert.equal(without.length, 0);
+  assert.ok(withVendor.length > 0);
 });

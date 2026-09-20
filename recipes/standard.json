@@ -4,5 +4,6 @@
   "snowball-weight": 0.2,
   "closer-weight": 0.1,
   "consistency-weight": 0.1,
-  "shared-weakness-weight": 0.2
+  "shared-weakness-weight": 0.2,
+  "core-rivalry": 0.2
 }

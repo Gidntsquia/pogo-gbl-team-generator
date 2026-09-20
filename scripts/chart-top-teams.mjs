@@ -3,7 +3,7 @@
 // Usage:
 //   node scripts/chart-top-teams.mjs <out-dir> [--top N] [--out PATH]
 //
-// <out-dir> is a scripts/evolve.mjs checkpoint directory. The teams charted
+// <out-dir> is a src/evolve checkpoint directory. The teams charted
 // are EVERY team that cracked any generation's top N by fitness
 // (analytics.topTeams), so the chart shows challengers rising and dying, not
 // just the survivors. Teams that also hold a spot in evolve-ranking.json (the
@@ -14,7 +14,7 @@
 // JS, opens via file://) with play/pause and a scrubber.
 //
 // The series-extraction core and the chart's markup/script live in
-// src/report/raceChart.js, shared with scripts/evolve.mjs's own HTML report
+// src/report/raceChart.js, shared with src/evolve/reportHtml.js's own HTML report
 // (which embeds the same chart straight from a just-finished run's in-memory
 // generationRecords, with no file reads at all). This file's own job is
 // purely the file-reading CLI wrapper.

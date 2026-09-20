@@ -3,7 +3,7 @@
 // The "Championship" report theme shared by the two podium-style HTML
 // reports: the main CLI's out/report.html (src/report/index.js's
 // renderReportHtml) and the GA's my-teams-evolve.html
-// (scripts/evolve.mjs's renderEvolveReportHtml). Pure strings -- no engine,
+// (src/evolve/reportHtml.js's renderEvolveReportHtml). Pure strings -- no engine,
 // no I/O.
 //
 // Ported as directly as possible from out/artifact-sources/podium-report.html

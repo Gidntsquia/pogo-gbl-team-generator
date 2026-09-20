@@ -28,4 +28,4 @@ they don't say.
 - Plans for the planner/worker/evaluator loop live in `plans/` (gitignored); completed rounds
   are archived under `plans/archive/<date>-<topic>/`.
 - Any change to what a generation's fitness number means must bump `FITNESS_SEMANTICS` in
-  `scripts/evolve.mjs` so stale checkpoints refuse to resume instead of mixing scales.
+  `src/evolve/fitness.js` so stale checkpoints refuse to resume instead of mixing scales.

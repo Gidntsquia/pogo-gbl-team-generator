@@ -9,8 +9,9 @@
 // (LEAD-AWARE identity: same species-set + different lead = different
 // individual) + exactly at the target size with the immigrant floor
 // respected, and excludeSpecies is honored end to end (initPopulation +
-// nextGeneration). The convergence detector is asserted in test/e2e.test.js,
-// against a generation history built from real battles.
+// nextGeneration). The convergence detector is asserted below against a
+// generation history built from RECORDED real battle outcomes (see
+// REAL_OUTCOMES) -- no battles run here.
 //
 // Also covers scripts/evolve.mjs's `--ban` (format-wide species ban) pure
 // helpers -- no dedicated test file exists for that driver script (it has no
@@ -25,27 +26,22 @@ import {
   initPopulation as initPopulationRaw,
   nextGeneration as nextGenerationRaw,
   shadowBlindSignature,
+  hasConverged,
+  DEFAULT_CONVERGENCE_TRAILING,
+  DEFAULT_CONVERGENCE_WINDOW,
   trailingFitness,
   DEFAULT_IMMIGRANT_FRACTION,
 } from '../src/teams/evolve.js';
 
-import {
-  assertCollectionMatchesCheckpoint,
-  buildOpponentArchive,
-  configsMatch,
-  expandBanToCandidateSpeciesIds,
-  filterBannedCuratedTeams,
-  filterBannedMovesetPool,
-  mutationRatesAt,
-  opponentMutationRatesAt,
-  renderEvolveReportHtml,
-  computeBlendFitness,
-  computeConsistencyScore,
-  computeCandidateWeights,
-  runEvolution,
-  mirrorBattleResult,
-  evaluateTeamsInOrder,
-} from '../scripts/evolve.mjs';
+import { computeCandidateWeights } from '../src/evolve/analytics.js';
+import { expandBanToCandidateSpeciesIds, filterBannedCuratedTeams, filterBannedMovesetPool } from '../src/evolve/bans.js';
+import { assertCollectionMatchesCheckpoint, configsMatch } from '../src/evolve/config.js';
+import { evaluateTeamsInOrder } from '../src/evolve/evaluate.js';
+import { buildOpponentArchive } from '../src/evolve/finalPass.js';
+import { computeBlendFitness, computeConsistencyScore, mirrorBattleResult } from '../src/evolve/fitness.js';
+import { renderEvolveReportHtml } from '../src/evolve/reportHtml.js';
+import { runEvolution } from '../src/evolve/run.js';
+import { mutationRatesAt, opponentMutationRatesAt } from '../src/evolve/schedule.js';
 
 import { loadUsageWeights } from '../src/meta/usage.js';
 
@@ -1206,4 +1202,48 @@ test('configsMatch rejects a v12 checkpoint against the current (v13) fitnessSem
   const v13 = { seed: 's', population: 200, curatedRatio: 0, fitnessSemantics: 'core-pair-archetypes-v13' };
   const v12 = { ...v13, fitnessSemantics: 'core-pair-archetypes-v12' };
   assert.ok(!configsMatch(v12, v13));
+});
+
+// ------------------------------------------------------------- convergence
+
+// What the detector has to survive: a generation's fitness is a win rate over
+// one opponent subsample, so the raw ranking reshuffles every generation even
+// though the teams' true quality never changes.
+//
+// REAL_OUTCOMES is 12 candidate teams x 8 opponent teams (row-major), 1 = the
+// candidate won, recorded once from real pvpoke 3v3 battles (Great League
+// staples at 0/15/15 IVs, leads 0/0, seeds 0..95, via runBattles). A
+// "generation" is a win rate over a 5-of-8 opponent draw, which is what a real
+// generation is. Nothing is synthesized; the noise is pvpoke's.
+const REAL_OUTCOMES = [
+  1,0,1,1,0,0,1,1, 0,1,1,0,1,1,0,1, 0,0,0,0,1,0,0,1, 0,0,1,0,1,1,0,0,
+  1,0,0,1,1,0,1,0, 1,0,0,0,1,0,0,1, 1,0,1,0,0,1,0,1, 0,0,1,1,1,1,0,0,
+  1,0,0,0,0,1,0,0, 1,0,0,0,1,0,1,0, 1,0,0,0,0,1,0,0, 1,1,1,0,0,0,1,0,
+];
+const CONV_TEAMS = Array.from({ length: 12 }, (_, i) => [`a${i}`, `b${i}`, `c${i}`]);
+const CONV_GENERATIONS = DEFAULT_CONVERGENCE_TRAILING + DEFAULT_CONVERGENCE_WINDOW;
+const convHistory = (count) =>
+  Array.from({ length: count }, (_, g) => {
+    const drawn = [0, 1, 2, 3, 4].map((k) => (g * 5 + k * 3) % 8);
+    return {
+      population: CONV_TEAMS,
+      fitness: CONV_TEAMS.map((_, i) => drawn.reduce((sum, o) => sum + REAL_OUTCOMES[i * 8 + o], 0) / drawn.length),
+    };
+  });
+
+test('hasConverged on real outcomes: fires on a plateau only once tolerance allows the raw top-N to churn, and not before it has the history', () => {
+  const history = convHistory(CONV_GENERATIONS);
+  const rawTop = (g) =>
+    history[g].population.map((_, i) => i).sort((a, b) => history[g].fitness[b] - history[g].fitness[a] || a - b).slice(0, 5).join(',');
+  assert.ok(history.some((_, g) => g > 0 && rawTop(g) !== rawTop(g - 1)), 'resampling must actually reshuffle the raw top-5, or this proves nothing');
+
+  assert.deepEqual(hasConverged(history.slice(0, CONV_GENERATIONS - 1)), { converged: false, reason: null }, 'holds off until it has trailing + window generations');
+
+  // Default maxChurn is 0 (top-10 must hold IDENTICAL for the whole window): a
+  // fixed 12-team roster has a noisy rank-10 boundary, so the strict default
+  // must NOT fire here. Allowing one swap per generation, it does.
+  assert.equal(hasConverged(history).converged, false, 'strict default refuses a churning top-10');
+  const lenient = hasConverged(history, { maxChurn: 1 });
+  assert.equal(lenient.converged, true, 'a plateaued run converges once churn is tolerated');
+  assert.match(lenient.reason, /mean win rate/);
 });

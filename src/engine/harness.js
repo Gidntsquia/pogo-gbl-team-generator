@@ -7,7 +7,7 @@
 // number in the returned results comes from executing vendor/pvpoke's own
 // code.
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { loadPvpokeEngine } from './pvpokeLoader.js';
 import { resolveFormat, DEFAULT_CUP } from '../util/leagues.js';

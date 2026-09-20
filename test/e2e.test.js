@@ -15,22 +15,27 @@
 // forwards to its worker-pool executor -- so the battles inside a
 // run spread across cores instead of queueing on one.
 //
+// There is exactly ONE evolve run in this file (`sampled`), and every test
+// that needs a full simulation reads it. A second run for determinism or for
+// another league was dropped on purpose: same config, same seed is already
+// pinned at the battle level (serial vs threaded below, repeated battleTeams).
+//
 // @slow -- the suite's only real-battle file; runs before a push.
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runEvolution, renderEvolveReport } from '../scripts/evolve.mjs';
+import { renderEvolveReport } from '../src/evolve/reportMd.js';
+import { runEvolution } from '../src/evolve/run.js';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { runBattles } from '../src/engine/parallel.js';
 import { loadCommunityTeams } from '../src/meta/teams.js';
-import { hasConverged, DEFAULT_CONVERGENCE_TRAILING, DEFAULT_CONVERGENCE_WINDOW } from '../src/teams/evolve.js';
-import { mirrorBattleResult } from '../scripts/evolve.mjs';
+import { mirrorBattleResult } from '../src/evolve/fitness.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, '..', 'fixtures', 'sample-pokegenie.csv');
@@ -41,59 +46,9 @@ const IVS = { atk: 0, def: 15, hp: 15 };
 const STRONG_IDS = ['azumarill', 'registeel', 'altaria'];
 const WEAK_IDS = ['magikarp', 'sunkern', 'feebas'];
 
-// A generation history for the convergence detector, built from real battles.
-// 12 candidate teams x 8 opponent teams = 96 battles, run once; a "generation"
-// is then a win rate over a 5-of-8 subsample of those opponents, which is what
-// a real generation is. Nothing here is synthesized -- the noise under test is
-// the sampling noise of real pvpoke outcomes.
-const CONV_CANDIDATES = [
-  ['azumarill', 'registeel', 'altaria'], ['medicham', 'bastiodon', 'swampert'],
-  ['skarmory', 'umbreon', 'whiscash'], ['lanturn', 'venusaur', 'quagsire'],
-  ['toxapex', 'trevenant', 'sableye'], ['carbink', 'azumarill', 'medicham'],
-  ['registeel', 'swampert', 'venusaur'], ['altaria', 'whiscash', 'skarmory'],
-  ['bastiodon', 'umbreon', 'lanturn'], ['galvantula', 'sableye', 'carbink'],
-  ['trevenant', 'toxapex', 'azumarill'], ['swampert', 'skarmory', 'medicham'],
-];
-const CONV_OPPONENTS = [
-  ['azumarill', 'registeel', 'altaria'], ['medicham', 'swampert', 'skarmory'],
-  ['bastiodon', 'umbreon', 'whiscash'], ['lanturn', 'venusaur', 'sableye'],
-  ['toxapex', 'carbink', 'trevenant'], ['galvantula', 'azumarill', 'swampert'],
-  ['registeel', 'medicham', 'venusaur'], ['altaria', 'umbreon', 'toxapex'],
-];
-const CONV_GENERATIONS = DEFAULT_CONVERGENCE_TRAILING + DEFAULT_CONVERGENCE_WINDOW;
-
-/** 96 real battles -> `count` generations of real, resampled win rates. */
-async function evolutionHistory(count) {
-  const specs = [];
-  for (const teamAIds of CONV_CANDIDATES) {
-    for (const [o, teamBIds] of CONV_OPPONENTS.entries()) {
-      specs.push({
-        teamA: teamAIds.map((speciesId) => ({ speciesId, ivs: IVS })),
-        teamB: teamBIds.map((speciesId) => ({ speciesId, ivs: IVS })),
-        leadA: 0,
-        leadB: 0,
-        seed: specs.length,
-      });
-    }
-  }
-  const results = await runBattles(specs, { threads: 2 });
-  const points = results.map((r) => (r.winner === 'a' ? 1 : r.winner === 'tie' ? 0.5 : 0));
-  const O = CONV_OPPONENTS.length;
-  return Array.from({ length: count }, (_, g) => {
-    // A different 5-of-8 opponent draw each generation -- the resampling that
-    // makes one generation's win rate a noisy estimate of a team's quality.
-    const drawn = [0, 1, 2, 3, 4].map((k) => (g * 5 + k * 3) % O);
-    return {
-      population: CONV_CANDIDATES,
-      fitness: CONV_CANDIDATES.map((_, i) => drawn.reduce((sum, o) => sum + points[i * O + o], 0) / drawn.length),
-    };
-  });
-}
-
 // Small enough to finish quickly, large enough to form >= 1 team. No 1v1
 // scoring exists in an evolve run: the pool comes from pvpoke rank alone.
 const TINY = { generations: 2, population: 8, opponentsPerGen: 6, elites: 3, curatedRatio: 0, finalFresh: 0, noHtml: true, seed: 'e2e-test-seed' };
-const ULTRA_TINY = { ...TINY, cp: 2500, seed: 'e2e-ultra-seed' };
 const scratch = (name) => path.join(mkdtempSync(path.join(tmpdir(), `gbl-e2e-${name}-`)));
 
 /** One tiny evolve run, logging into an array so the tests can read the log. */
@@ -105,15 +60,8 @@ function tinyRun(csv, opts, name) {
 
 // ---------------------------------------------------------------- shared runs
 
-// Concurrent on purpose: each run builds its own engine context, so they
-// share no state. `sampledRepeat` is the same config and seed as `sampled` --
-// the determinism check compares the two.
-const [sampled, sampledRepeat, ultra, evolutionRun] = await Promise.all([
-  tinyRun(FIXTURE, TINY, 'a'),
-  tinyRun(FIXTURE, TINY, 'b'),
-  tinyRun(FIXTURE, ULTRA_TINY, 'ultra'),
-  evolutionHistory(CONV_GENERATIONS),
-]);
+// The one evolve run. The engine ctx below is separate (loose-battle tests).
+const sampled = await tinyRun(FIXTURE, TINY, 'a');
 
 let ctx;
 before(async () => {
@@ -153,47 +101,6 @@ describe('pipeline: fixture CSV -> runEvolution -> report on disk', () => {
   test('a malformed fixture row is surfaced, not silently dropped', () => {
     assert.ok(sampled.result.importWarnings.some((w) => /freakemon/i.test(w)), 'unknown-species row surfaced as a collection warning');
   });
-
-  test('--cp 2500 runs Ultra League end to end', () => {
-    assert.ok(ultra.result.elites.length >= 1, 'ranked at least one team');
-    assert.equal(ultra.result.config.cp, 2500);
-  });
-
-  test('same seed and settings reproduce the same ranking', () => {
-    const shape = (r) => r.result.elites.map((t) => [t.members.map((m) => m.key), t.winRate]);
-    assert.deepEqual(shape(sampledRepeat), shape(sampled));
-  });
-});
-
-// ------------------------------------------------------------- convergence
-
-// What the detector has to survive, on real data: a generation's fitness is a
-// win rate over one opponent subsample, so the raw ranking reshuffles every
-// generation even though the teams and their true quality never change. The
-// predecessor rule demanded that the raw top-N be IDENTICAL for 3 generations
-// and therefore never fired -- 0 times in 383 generations of real runs.
-describe('hasConverged on a real generation history', () => {
-  const rawTop = (g, n = 5) =>
-    evolutionRun[g].population
-      .map((_, i) => i)
-      .sort((a, b) => evolutionRun[g].fitness[b] - evolutionRun[g].fitness[a] || a - b)
-      .slice(0, n)
-      .join(',');
-
-  test('fires on a plateaued run whose raw top-N never holds still, and not before it has the history to judge', () => {
-    const churned = evolutionRun.some((_, g) => g > 0 && rawTop(g) !== rawTop(g - 1));
-    assert.ok(churned, 'real resampling must actually reshuffle the raw top-5, or this proves nothing');
-
-    assert.deepEqual(
-      hasConverged(evolutionRun.slice(0, CONV_GENERATIONS - 1)),
-      { converged: false, reason: null },
-      'holds off until it has trailing + window generations'
-    );
-
-    const converged = hasConverged(evolutionRun);
-    assert.equal(converged.converged, true, 'a plateaued run converges once there is enough history');
-    assert.match(converged.reason, /mean win rate/);
-  });
 });
 
 // ------------------------------------------------------------ battle engine
@@ -203,7 +110,7 @@ describe('battleTeams: the 3v3 driver', () => {
     // Two evenly matched teams so the AI's lookaheads actually steer switches
     // and shields; run once with the context memo (warm from earlier tests in
     // this file) and once bypassing it.
-    const args = () => ({ teamA: team(STRONG_IDS), teamB: team(CONV_OPPONENTS[0]), leadA: 1, leadB: 2, seed: 7 });
+    const args = () => ({ teamA: team(STRONG_IDS), teamB: team(STRONG_IDS), leadA: 1, leadB: 2, seed: 7 });
     const memoized = battleTeams(ctx, { ...args(), scenarioMemo: true });
     const memo = ctx.__teamBattle.scenarioMemo;
     assert.ok(memo && memo.hits + memo.misses > 0, 'the memo saw this battle\'s lookaheads');

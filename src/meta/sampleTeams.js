@@ -32,7 +32,7 @@
 // carries `members[0] === the lead` and an explicit `leadIndex: 0`. Curated
 // teams already worked that way (src/meta/teams.js's file-wide
 // member-index-0-is-lead doctrine). A sampled team's lead used to be picked
-// by whichever driver consumed it (scripts/evolve.mjs seeded a random one off
+// by whichever driver consumed it (the evolve driver seeded a random one off
 // the team id); it is now chosen HERE, at composition time, from pvpoke's own
 // published `leads` role rankings when the caller supplies `roleScores` (the
 // member with the highest lead prior is rotated into slot 0), and by a seeded
@@ -130,7 +130,7 @@ export function loadMovesetPool(ctx, opts = {}) {
  * @param {() => number} rng
  * @returns {number}
  */
-export function pickLeadIndex(members, roleScores, rng) {
+function pickLeadIndex(members, roleScores, rng) {
   if (!roleScores) return Math.floor(rng() * members.length) % members.length;
   let bestIdx = 0;
   let bestScore = -Infinity;
@@ -178,7 +178,7 @@ export function describeSampledTeam(ctx, members) {
  *   surviving two members already carry).
  * @returns {import('./teams.js').MetaMon[]} exactly `size` (default TEAM_SIZE) built members.
  */
-export function composeSampledTeam(ctx, rng, pool, weights, opts = {}) {
+function composeSampledTeam(ctx, rng, pool, weights, opts = {}) {
   const size = opts.size ?? TEAM_SIZE;
   let available = pool.filter((e) => (weights.get(e.speciesId) ?? 0) > 0);
   const chosenBaseIds = new Set(opts.excludeBaseIds ?? []);
@@ -242,7 +242,7 @@ export function composeSampledOpponent(ctx, rng, pool, weights, roleScores) {
  *   rankingsEntries?: Array<object>,
  * }} params
  *   `curatedRatio` (default 0.4) is the target
- *   fraction of `count` drawn from `curated` (default: loadMetaTeams(ctx));
+ *   fraction of `count` drawn from `curated` (default: loadMetaTeams(ctx, { includeVendor: true }));
  *   the remainder is composed by weighted sampling. Both halves are
  *   gracefully capped (curated draw capped at `curated.length`; the sampled
  *   half can't run out since the meta pool is `metaPoolSize` species deep).
@@ -271,7 +271,7 @@ export function sampleOpponentTeams(ctx, params) {
   } = params;
   const rng = rngFromSeed(seed, 'sampleOpponentTeams');
 
-  const curatedPool = curated ?? loadMetaTeams(ctx);
+  const curatedPool = curated ?? loadMetaTeams(ctx, { includeVendor: true });
   const curatedCount = Math.min(Math.round(count * curatedRatio), curatedPool.length, count);
   // A curated team draws at its tier's relative weight: full for a
   // ladder-observed (untagged/meta) team, reduced for a second-hand

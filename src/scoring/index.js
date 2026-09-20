@@ -14,7 +14,6 @@
 // See src/engine/README.md for the engine API (buildPokemon/simBattle) this
 // module builds on.
 
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildPokemon, simBattle } from '../engine/harness.js';
 import { resolveFormat, DEFAULT_CUP, readVendoredJson } from '../util/leagues.js';

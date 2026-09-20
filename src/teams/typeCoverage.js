@@ -8,7 +8,6 @@
 
 import { buildMetaMon } from '../scoring/index.js';
 
-const SUPER_EFFECTIVE = 1.6;
 const DOUBLE_SEVERITY = 2;
 const LEAD_WEIGHT_SINGLE = 1.6;
 const LEAD_WEIGHT_DOUBLE = 2.56;
@@ -195,7 +194,7 @@ export function buildTypeCoverageContext(ctx, builtMons, rankedEntries, speciesW
  * Coverage scores for a lead build, from the context's cache or computed (and
  * cached) on a miss, so both sides get the same relief for the same build.
  */
-export function leadCoverageFor(context, built) {
+function leadCoverageFor(context, built) {
   const cache = context?.leadCoverageByKey;
   if (!cache) return null;
   const key = coverageBuildKey(built);

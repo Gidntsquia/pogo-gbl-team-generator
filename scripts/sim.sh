@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Launch (or inspect) an evolve.mjs run with the settings real runs use.
 #
-# Wraps the recipe previously reassembled by hand each session: ensure
-# vendor/pvpoke, echo the configuration, launch detached via nohup with the
+# Wraps the recipe previously reassembled by hand each session: check
+# vendor/pvpoke exists, validate the flags, echo the configuration, launch detached via nohup with the
 # out/evolve-<name>{,.log,.pid} convention, and print how to monitor it.
 # Memory safety is the box's earlyoom (see RUNBOOK.md section 1): a run that
 # outgrows the machine is SIGTERMed, the in-flight generation is lost, and
@@ -29,6 +29,9 @@
 #                     with --meta also picks the collection (meta-collection-CUP-CP.csv)
 #   --name NAME       run name -> out/evolve-NAME/ (default: <csv-stem>-<HHMM>)
 #   --ban a,b         species banned format-wide, both sides  (default: none)
+#   --quick           a few-minute trial run: 3 generations, population 24, 12
+#                     opponents, foreground (implies --fg; try it on
+#                     fixtures/sample-pokegenie.csv)
 #   --generations G   generation cap                          (default 100)
 #   --population N    GA population                           (default 300)
 #   --hours H         wall-clock budget -> --deadline-minutes (default: none)
@@ -60,7 +63,9 @@
 # A passthrough --config overrides recipes/standard.json entirely (evolve.mjs
 # only accepts one --config), and any individual passthrough flag (e.g.
 # --snowball-weight 0) overrides that one key from the recipe file.
-# (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions)
+# (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions,
+#  and sets snowball 0.4 / closer 0.1 / consistency 0.2 / shared-weakness 0.2
+#  identically on BOTH sides via the --opponent-*-weight flags)
 #
 # When a run finishes (evolve-DONE marker in its out dir), reports land in
 # out/evolve-<name>/my-teams-evolve.{md,html}; render the race chart with
@@ -70,7 +75,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
-usage() { sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 status() {
   shopt -s nullglob
@@ -106,6 +111,7 @@ population=300
 hours=""
 threads=""
 fg=0
+quick=0
 dryrun=0
 passthrough=()
 while [ $# -gt 0 ]; do
@@ -121,6 +127,7 @@ while [ $# -gt 0 ]; do
     --population) population="$2"; shift 2 ;;
     --hours) hours="$2"; shift 2 ;;
     --threads) threads="$2"; shift 2 ;;
+    --quick) quick=1; shift ;;
     --fg) fg=1; shift ;;
     --dry-run) dryrun=1; shift ;;
     --) shift; passthrough+=("$@"); break ;;
@@ -152,17 +159,32 @@ if [ "$meta" = 1 ]; then
     fi
   fi
 fi
-if [ -z "$csv" ]; then usage; exit 2; fi
+if [ -z "$csv" ]; then
+  echo "error: no collection CSV given" >&2
+  echo "fix:   scripts/sim.sh <collection.csv> [options]   (try fixtures/sample-pokegenie.csv --quick; all options: --help)" >&2
+  exit 2
+fi
 
 if [ ! -d vendor/pvpoke ]; then
-  echo "[sim] vendor/pvpoke missing -- running scripts/setup.sh"
-  bash scripts/setup.sh
+  echo "error: vendor/pvpoke is missing (pvpoke's battle engine and data)" >&2
+  echo "fix:   npm run setup   (or: bash scripts/setup.sh)" >&2
+  exit 1
+fi
+if [ "$quick" = 1 ]; then
+  generations=3
+  population=24
+  fg=1
+  passthrough=(--opponents-per-gen 12 --elites 5 ${passthrough[@]+"${passthrough[@]}"})
 fi
 if [ "$meta" = 1 ] && [ ! -f "$csv" ]; then
   mkdir -p "$(dirname "$csv")"
   node scripts/build-meta-collection.mjs --cp "$cp" --cup "$cup" --out "$csv"
 fi
-if [ ! -f "$csv" ]; then echo "error: collection not found: $csv" >&2; exit 2; fi
+if [ ! -f "$csv" ]; then
+  echo "error: collection file not found: $csv" >&2
+  echo "fix:   check the path; a sample collection is at fixtures/sample-pokegenie.csv" >&2
+  exit 1
+fi
 
 if [ -z "$name" ]; then
   name="$(basename "$csv" .csv | sed 's/-gl-collection//;s/-collection//')-$(date +%H%M)"
@@ -186,11 +208,19 @@ if [ "$meta" = 1 ]; then
   # there is no 1v1 scoring in evolve runs. Real-collection runs (no --meta)
   # pool the player's mons and weight each by its own build's pvpoke rank.
   cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --meta-mode)
+  # Both sides play the same game, so both get the same fitness weights.
+  # Candidate-only bonus terms inflated candidate fitness ~5.5 pts over the
+  # opponents' plain win rate in meta-vs-meta-retro-2 (2026-09-19).
+  cmd+=(--snowball-weight 0.4 --closer-weight 0.1 --consistency-weight 0.2 --shared-weakness-weight 0.2
+        --opponent-snowball-weight 0.4 --opponent-closer-weight 0.1 --opponent-consistency-weight 0.2 --opponent-shared-weakness-weight 0.2)
 fi
 [ -n "$ban" ] && cmd+=(--ban "$ban")
 [ -n "$threads" ] && cmd+=(--threads "$threads")
 [ -n "$hours" ] && cmd+=(--deadline-minutes "$(awk "BEGIN{printf \"%d\", $hours*60}")")
 cmd+=(${passthrough[@]+"${passthrough[@]}"})
+
+# Validate flags and inputs now, so a typo fails here instead of in a detached log.
+"${cmd[@]}" --check > /dev/null
 
 echo "[sim] run:         $name"
 echo "[sim] collection:  $csv"

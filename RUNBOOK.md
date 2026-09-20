@@ -96,6 +96,11 @@ Test fixtures for dry runs without personal data: `fixtures/*.csv`.
 
 ### The recipe every recent real run used
 
+Updated 2026-09-19: core-rivalry raised 0.1 -> 0.2 in `recipes/standard.json`
+(standard and `--meta` runs alike). Runs started earlier at 0.1 (e.g.
+`meta-vs-meta-retro-3`) must resume with `-- --core-rivalry 0.1` or evolve.mjs
+refuses on config mismatch.
+
 Updated 2026-09-15 (`meta-vs-meta-v6`): snowball-weight raised 0.2 -> 0.4 and
 consistency-weight raised 0.1 -> 0.2, per the user directly. Carries forward
 the 2026-09-12 (`jaxon-standard-2`, flags from `shared-standard-3-fitness`)
@@ -104,7 +109,7 @@ fitness blends snowball + closer + consistency, core-rivalry uses the
 similarity-aware terms, and shared-weakness-weight is on. Treat this as the
 default unless told otherwise. `sim.sh` already bakes in
 `--config recipes/standard.json` (opponents-per-gen 120, elites 15, baseline
-weights 0.2/0.1/0.1/0.2 -- see `sim.sh` reference below), so the weight flags
+weights 0.2/0.1/0.1/0.2, core-rivalry 0.2 -- see `sim.sh` reference below), so the weight flags
 below just override those baseline values with this recipe's raised ones:
 
 ```bash
@@ -297,7 +302,7 @@ were the same ~40,000 battles per generation read from opposite sides of one
 scoreboard -- when candidates won 45%, opponents "won" the other 55% by
 definition, and that 55% was what got stored as opponent fitness.
 
-**Root-cause experiment (`scripts/side-bias-study.mjs`, plans/WORKER_NOTES.md
+**Root-cause experiment (a since-removed side-bias study script, plans/WORKER_NOTES.md
 Item 1, gen 44 of willpower-3, K=60 sampled teams/side, 7200 battles, run
 twice, byte-identical):** the ~4.3pt gap (F-0.5 = -0.0433) decomposed as
 side bias S = -0.0192 (candidate-as-A read ~1.9pts worse than opponent-as-A
@@ -338,8 +343,8 @@ only about half the gap; P (population-strength asymmetry, unaddressed by
 this fix) remains. Read this as: the side-bias half of the artifact is fixed
 structurally (S is gone by construction, not by measurement), but "opponent
 fitness > candidate fitness" can still mean a real population-strength gap --
-check `verdict` from `side-bias-study.mjs` on your own run before assuming
-it's still S.
+check the candidate-vs-opponent gap on your own run (`scripts/symmetry-gap.mjs`)
+before assuming it's still S.
 
 **Result (2026-09-19, `docs/fitness-symmetry.md`, `FITNESS_SEMANTICS` v15):**
 the two sides now run one shared generation step (`src/ga/core.js`
@@ -356,6 +361,14 @@ difference is left in place under `--meta-mode`; real-collection runs keep
 their own pool, weights and movesets on purpose, so equal fitness is not
 expected there. `--meta-mode` is part of the run config: a resume must pass it
 too (sim.sh `--meta` does).
+
+**Fitness weights are symmetric too (2026-09-19, Jaxon).** `sim.sh --meta` passes
+snowball 0.4 / closer 0.1 / consistency 0.2 / shared-weakness 0.2 to both the
+candidate flags and the `--opponent-*-weight` flags. Before this, runs such as
+`meta-vs-meta-retro-2` gave the bonus terms to candidates only (opponent weights
+default to 0), which put ~5.5 of the ~9.6-point candidate-over-opponent fitness
+gap in the bonuses; compare `rawWinRate` for those older runs, not blend fitness.
+Runs started before this change can't be resumed with sim.sh (config mismatch).
 
 Check your own run:
 
@@ -413,6 +426,38 @@ no `evolve-DONE`, stopped at generation 19) -- if a run under this recipe
 stops short, check `journalctl -u earlyoom` per section 1 before assuming it
 just finished.
 
+### New meta: curated teams from a meta-vs-meta run
+
+Repeat this when a new cup or season starts and `data/meta-teams-community.json`
+has nothing (or stale teams) for it. The meta-vs-meta run is the source of the
+curated opponents for real-collection runs.
+
+1. **Meta-vs-meta run.** `scripts/sim.sh --meta --name meta-vs-meta-<cup>-N --cup <cup> ...`
+   (flags as in the meta-vs-meta recipe above; `--meta` supplies `--meta-mode`,
+   the symmetric weights and the pool). Wait for `evolve-DONE`. Example:
+   `meta-vs-meta-retro-3` (50 generations, population 100 vs 100).
+2. **Archive the old file.** The loader reads only `data/meta-teams-community.json`,
+   so the old pool must move out of the way:
+   `git mv data/meta-teams-community.json data/archive/meta-teams-community-<label>.json`.
+3. **Generate the new file** from the last checkpoint:
+   `node scripts/build-curated-from-meta.mjs out/evolve-<meta-run> --cup <cup> [--candidates 50] [--opponents 50]`.
+   It takes the top N candidate teams by `selectionFitness` and the top M
+   opponent teams by `opponentSelectionFitness` (deduped by lead + species),
+   writes species only (`members[0]` = lead, shadow as `<id>_shadow`), and
+   stamps `"cup"` in the file. Vendor GL presets are not merged in by default
+   (`loadMetaTeams` takes `includeVendor: true` to opt in), so the pool is exactly
+   the file. Opponent-side movesets are not carried over; the loader builds pvpoke's recommended moveset. It refuses to overwrite an
+   existing file. Candidate teams are included on purpose: the run's own
+   winners are what the new meta looks like.
+4. **Check the load.** Start the real run and read the `shared setup done` log
+   line: `N curated opponent teams` should equal the file's team count. A cup mismatch loads zero.
+5. **Launch a standard run** with `--cup <cup>` (section 3 recipe). Curated
+   teams enter at `--curated-ratio 0.66`. Set `--opponent-meta-pool` to about
+   the cup's field size (retro: 200, as the meta-vs-meta run used).
+
+First use: `jaxon-retro-1` (2026-09-19), 50 candidates + 50 opponents from
+`meta-vs-meta-retro-3` gen 49 -> 100 curated, no vendor presets.
+
 ### `sim.sh` reference
 
 Options (anything else is passed through to `evolve.mjs`):
@@ -432,7 +477,7 @@ Options (anything else is passed through to `evolve.mjs`):
 The launcher always adds `--config recipes/standard.json --seed NAME
 --out-dir out/evolve-NAME`. `recipes/standard.json` holds the baked
 defaults -- `opponents-per-gen 120`, `elites 15`, weights
-`snowball/closer/consistency/shared-weakness 0.2/0.1/0.1/0.2` -- edit that
+`snowball/closer/consistency/shared-weakness 0.2/0.1/0.1/0.2`, `core-rivalry 0.2` -- edit that
 file, not `sim.sh`, to change them for every future run. A passthrough flag
 of the same name overrides its `--config` value; a passthrough `--config
 other.json` replaces `recipes/standard.json` wholesale (evolve.mjs only
@@ -473,9 +518,10 @@ priors, meta group) to the named pvpoke cup -- `--cp` still applies alongside
 it (a cup and its CP cap are looked up together; e.g. `--cup little --cp 500`
 for Little Cup). Two things to expect, both correct, not bugs:
 
-- **Curated opponents are usually empty.** The vendor "GO Battle League"
-  preset file is a Great-League-meta pool; every preset with an
-  ineligible member is dropped, which under most cups is all of them. Opponent
+- **Curated opponents are usually empty** unless a curated file for the cup
+  exists. Vendor presets are off by default (`includeVendor`); when opted in,
+  the vendor "GO Battle League" file is a Great-League-meta pool and every
+  preset with an ineligible member is dropped, which under most cups is all of them. Opponent
   quality then rests entirely on the composed/sampled half of the pool
   (`src/meta/sampleTeams.js`), drawn from the cup's own rankings -- consider
   raising `--opponent-meta-pool` toward the cup's full field size (it's
@@ -777,7 +823,7 @@ Resolved settings for `scripts/sim.sh <csv> --name NAME --threads 12`:
 | Composed opponents | built from pvpoke's overall top 100 species |
 | Opponent archetype grouping | opponents are grouped by their dominant two-species core (the pair of base species most common across the pool; no transitive chaining, since 2026-09-09) (`--archetype-beta`, default 0.5); a group of size s counts for `s^(1-beta)` total votes, both as candidate-side opponent weight and as the divisor of each candidate's consistency score (since 2026-09-08, see `docs/plans/2026-09-08-fitness-restructure.md`) |
 | Opponent-strength weighting | each opponent's vote in a candidate's win rate (and inside its archetype for consistency) is scaled by (that opponent's own win rate against the population)^`--opponent-strength-gamma` (default 1; 0 = off), computed from the same generation's battles in a second pass -- beating a weak singleton earns little, beating a strong team earns most (since 2026-09-09) |
-| Core rivalry | `--core-rivalry R` (default 0.1; 0 = off): in both the candidate population and the opponent pool, every better team sharing any two base species costs a team R x (the field's max-min fitness) before the cull and mutation ranking, so trailing near-duplicates of a core are culled first while a second variant that fights well on its own survives; raw fitness in checkpoints is untouched (since 2026-09-09). The same function scores shadow twins: a shadow and its base have member similarity 0.9 (the top of the scale short of identity), and a team that is a better team's shadow variant (candidate side: same lead, same backs; opponent side: same species slot for slot) pays a whole-team twin load of 2 x 0.9 on top of its core load -- 2.8 steps against a plain same-core variant's 1, so the weaker twin is pushed toward the cull but a twin that out-fights the field's tail survives. Only an exact duplicate (whole-team similarity 1, possible only from opponent-side draws) dies outright, whatever R is; it is counted in the plain death tolls, not tracked separately. Candidate shadow-flip mutations are 20% of mutation successes (since 2026-09-10; was 15%) and flip a uniformly random non-empty combination of the team's flippable members, so a two- or three-shadow variant is one mutation away, not a walk through intermediates that may each die |
+| Core rivalry | `--core-rivalry R` (evolve.mjs default 0.1; `recipes/standard.json` sets 0.2 for `sim.sh` runs since 2026-09-19; 0 = off): in both the candidate population and the opponent pool, every better team sharing any two base species costs a team R x (the field's max-min fitness) before the cull and mutation ranking, so trailing near-duplicates of a core are culled first while a second variant that fights well on its own survives; raw fitness in checkpoints is untouched (since 2026-09-09). The same function scores shadow twins: a shadow and its base have member similarity 0.9 (the top of the scale short of identity), and a team that is a better team's shadow variant (candidate side: same lead, same backs; opponent side: same species slot for slot) pays a whole-team twin load of 2 x 0.9 on top of its core load -- 2.8 steps against a plain same-core variant's 1, so the weaker twin is pushed toward the cull but a twin that out-fights the field's tail survives. Only an exact duplicate (whole-team similarity 1, possible only from opponent-side draws) dies outright, whatever R is; it is counted in the plain death tolls, not tracked separately. Candidate shadow-flip mutations are 20% of mutation successes (since 2026-09-10; was 15%) and flip a uniformly random non-empty combination of the team's flippable members, so a two- or three-shadow variant is one mutation away, not a walk through intermediates that may each die |
 | Similar-core rivalry | `--similar-rivalry S` (default 1) / `--similar-floor F` (default 0.35; 0 similar-rivalry = exact cores only): a better team whose core is a *similar*, not identical, pair adds a fraction of an identical-core rival to the core-rivalry load, scored by pvpoke's own "Similar Pokemon" metric (`src/engine/similarity.js`, `calculateSimilarity` -- shared types, moves, and traits, normalised 0..1). Matches at or below the floor count as unrelated (0); above it the score scales linearly up to `similar` at 1.0 (Feraligatr/Empoleon ~0.55 loads ~0.3, Charizard/Blaziken ~0.62 loads ~0.4, Annihilape/Mimikyu ~0.33 loads nothing at the default floor). Each better team counts once, through its best-matching core, and a team is charged only for its single most crowded core, so carrying two or three popular cores does not stack the penalty (since 2026-09-09; pvpoke metric adopted 2026-09-09) |
 | Opponent fitness | frequency-normalised by default (`--no-opponent-fitness-normalised` to disable): each candidate's contribution to an opponent's win-rate ledger is weighted down by its most-common member's population share (clamped [0.2, 5]), so a crowded counter-bred core no longer collects N× the credit for beating it |
 | Fitness | `battle-reality` = 0.45 win rate + 0.20 consistency (25th-percentile per-archetype win rate) + 0.25 decided lead-exchange win rate + 0.10 mean closer prior of the back line |

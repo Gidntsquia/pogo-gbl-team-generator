@@ -4,7 +4,7 @@
 // src/teams/evolve.js, which evolves the CANDIDATE side; this file evolves
 // the pool those candidates are measured against.
 //
-// WHY THIS EXISTS. scripts/evolve.mjs used to draw a fresh opponent pool
+// WHY THIS EXISTS. src/evolve/ used to draw a fresh opponent pool
 // every generation from src/meta/sampleTeams.js: a curated majority (real
 // teams, a fixed pool of ~110) plus a randomly-composed minority. Two things
 // went wrong with that.
@@ -31,7 +31,7 @@
 //
 // FITNESS. An opponent's fitness is simply how badly it beat the candidate
 // population this generation: `1 - (mean candidate win rate against it)`. It
-// costs no extra battles -- scripts/evolve.mjs already fights every candidate
+// costs no extra battles -- src/evolve/evaluate.js already fights every candidate
 // against every opponent and just has to tally the other side of the ledger.
 //
 // No battle math here. This module composes and re-composes teams out of
@@ -62,7 +62,7 @@ const BACK_SLOTS = [1, 2];
  * Deliberately far gentler than the candidate GA's DEFAULT_DEATH_RATE (1/3):
  * the opponent pool is a measuring instrument, not a search. Churning it hard
  * would make a candidate's win rate mean something different every
- * generation, which is exactly the noise scripts/evolve.mjs's
+ * generation, which is exactly the noise src/evolve/'s
  * last-N-generation averaging is there to damp out.
  */
 export const DEFAULT_OPPONENT_DEATH_RATE = 0.15;
@@ -87,10 +87,10 @@ export const DEFAULT_OPPONENT_MUTATION_CEIL = 0.2;
  * variant. The curated parent itself always survives regardless (see the
  * WHAT IS PROTECTED note above).
  */
-export const DEFAULT_CURATED_MUTATION_RATE = 0.03;
+const DEFAULT_CURATED_MUTATION_RATE = 0.03;
 
 /** Of the mutations that fire, this share are lead rotations (promote a back to lead) rather than member swaps -- same split and same rationale as src/teams/evolve.js's DEFAULT_LEAD_ROTATION_RATE. */
-export const DEFAULT_OPPONENT_LEAD_ROTATION_RATE = 0.3;
+const DEFAULT_OPPONENT_LEAD_ROTATION_RATE = 0.3;
 
 /**
  * Of the mutations that fire (after the lead-rotation roll), this share
@@ -102,7 +102,7 @@ export const DEFAULT_OPPONENT_LEAD_ROTATION_RATE = 0.3;
  * opponent could only ever arise from a fresh sampled/immigrant draw, never
  * from mutating an already-successful build the way a candidate can).
  */
-export const DEFAULT_OPPONENT_SHADOW_FLIP_RATE = 0.2;
+const DEFAULT_OPPONENT_SHADOW_FLIP_RATE = 0.2;
 
 /** Share of the evolvable portion always reserved for fresh immigrants, so the gene pool never closes even if nothing mutates. */
 export const DEFAULT_OPPONENT_IMMIGRANT_FRACTION = 0.08;
@@ -207,7 +207,7 @@ export function initOpponentPool(ctx, params) {
  * backs sorted -- the same rule as src/teams/evolve.js teamSignature, so both
  * sides agree on when two teams are the same individual.
  */
-export function opponentSignature(entry) {
+function opponentSignature(entry) {
   const ids = entry.members.map((m) => m.speciesId);
   return `${ids[0]}||${ids.slice(1).sort().join('|')}`;
 }
@@ -418,7 +418,7 @@ export function nextOpponentPool(ctx, params) {
   }
   // Curated entries are never culled, but they also cannot overflow a pool the
   // caller asked to shrink below the curated headcount (only reachable by
-  // reconfiguring a run mid-flight -- scripts/evolve.mjs's schedule only ever
+  // reconfiguring a run mid-flight -- src/evolve/schedule.js's schedule only ever
   // grows the opponent pool). Trim from the tail, which is the most recently
   // topped-up (and therefore lowest-priority) end.
   const curatedOut = [...curatedKept, ...curatedAdded].slice(0, Math.max(0, targetSize));
@@ -478,7 +478,7 @@ export function nextOpponentPool(ctx, params) {
 }
 
 /**
- * Plain-JSON form of an opponent pool, for a scripts/evolve.mjs checkpoint.
+ * Plain-JSON form of an opponent pool, for a src/evolve checkpoint.
  * Built pvpoke Pokemon instances cannot be serialized, so each member is
  * reduced to the (speciesId, resolved moveset) triple `buildMetaMon` needs to
  * rebuild it byte-identically.

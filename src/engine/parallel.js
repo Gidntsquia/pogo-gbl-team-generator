@@ -1,162 +1,41 @@
 // JavaScript Document
 //
-// Cross-core parallel battle executor. No battle
-// math, engine, or vendor changes live here -- this module only decides HOW
-// MANY OS threads drive independent battleTeams() calls, how work is handed
-// out between them, and how the worker pool's lifetime relates to
-// callers' individual batches of work. Every battle result still comes from
-// vendor/pvpoke's own code, executed unmodified inside each worker's own
-// headless engine context (see parallelWorker.js).
+// Cross-core parallel battle executor. No battle math or vendor changes live
+// here: this module decides how many worker threads drive independent
+// battleTeams() calls, how specs are handed out, and how the pool's lifetime
+// relates to callers' batches. Every result comes from vendor/pvpoke's own
+// code, run unmodified in each worker's own headless engine context
+// (parallelWorker.js). History and measurements: src/engine/README.md.
 //
-// Why this is safe to parallelize: every battleTeams() call's WINNER is
-// deterministic given its own (teams, leads, difficulty, seed) --
-// src/engine/teamBattle.js resets a fresh Battle + virtual clock + seeded RNG
-// per call. Running independent battles on independent engine contexts (one
-// per worker thread, each its own V8 isolate) therefore produces the same
-// winners as running them serially on one context; results are always placed
-// back into spec order before a run resolves, so callers never observe
-// worker-assignment reordering.
+// Determinism. A battle's result depends only on its own spec and seed, so
+// serial and threaded runs of the same specs give bit-identical result arrays
+// at any thread count, always returned in spec order (asserted in
+// test/parallel.test.js and test/e2e.test.js).
 //
-// CORRECTION (see src/engine/README.md's "Known
-// limitation" section): this is NOT quite "bit-identical per battle" -- a
-// Pokemon INSTANCE reused across several battles carries a subtle pvpoke
-// engine artifact (Pokemon#resetMoves()'s bestChargedMove tie-break reads a
-// stale battle-slot index) that makes exact HP totals sensitive to which
-// order that instance's battles ran in. Since a worker's per-spec build cache
-// reuses instances in the order specs happen to land on that worker, threaded
-// and serial runs can therefore differ in HP margin even though win/loss
-// outcomes (verified empirically) very rarely do. This affects any REUSE of a
-// Pokemon instance across sequential battles, so it already existed in
-// today's serial evaluateTeams/the removed tournament script too. The vendor-is-read-only
-// rule (never reimplement battle math) means this is documented as a
-// known engine characteristic, not "fixed" here -- the harness-level
-// bench-member state stamp in src/engine/teamBattle.js is what addresses it
-// directly.
+// Team building happens per worker. pvpoke Pokemon instances live in one V8
+// isolate's vm context and cannot cross a worker boundary, so specs carry
+// plain-data mon descriptors (speciesId/ivs/shadow/bestBuddy) and each worker
+// rebuilds and caches its own instances through buildPokemon().
 //
-// Team-building happens PER WORKER, not on the main thread: pvpoke Pokemon
-// instances live inside a specific vm context tied to one V8 isolate, so they
-// cannot be handed to a worker_thread at all (postMessage's structured clone
-// doesn't preserve class instances/methods, and even if it tried, the result
-// would be disconnected from that worker's Battle/GameMaster singletons).
-// Specs therefore carry plain-data mon descriptors (speciesId/ivs/shadow/
-// bestBuddy); each worker rebuilds + caches its own Pokemon instances via the
-// same buildPokemon() every other caller uses (see parallelWorker.js).
+// Persistent executor. `createExecutor(opts)` boots its pool lazily on the
+// first non-empty `run(specs)` and keeps it until `close()`, so pool and
+// engine boot cost (parsing gamemaster.json once per worker) is paid once per
+// run instead of once per batch. `runBattles(specs, opts)` is the one-shot
+// wrapper: create, run one batch, close.
+//   * run() calls are serialized: a second call waits for the first batch to
+//     resolve, so per-run bookkeeping never overlaps.
+//   * A worker crash always rejects the in-flight run(), even under
+//     `continueOnError` (which only isolates exceptions caught inside a
+//     worker's own try/catch). The whole pool is torn down and the next
+//     run() boots a fresh one; only close() is terminal.
 //
-// --- Persistent executor ----------------------------------------------------
-//
-// Originally, `runBattles()` built a fresh worker pool (N workers, each
-// booting its own headless engine context) for every call and tore it down
-// before resolving -- correct, but it means pool+engine boot cost (dominated
-// by parsing/indexing gamemaster.json once per worker) is paid again on every
-// single call, which is exactly why the removed tournament script had to batch big
-// runs per-candidate rather than pay that cost once for the whole run.
-//
-// `createExecutor(opts)` splits pool lifecycle from individual batches of
-// work: `run(specs)` can be called many times against the SAME pool, which
-// boots once (lazily, on the first non-empty `run()` call) and stays alive
-// until `close()`. `runBattles(specs, opts)` is now a thin wrapper that
-// creates an executor, runs one batch, and closes it -- so its own behavior
-// (one pool per call, torn down before the returned promise settles) is
-// unchanged; the new amortization only benefits callers that adopt
-// `createExecutor` directly and call `run()` repeatedly (the removed tournament script
-// and src/teams/index.js's evaluateTeams).
-//
-// **run() concurrency policy: serialized, not parallel-dispatched.** Multiple
-// `run()` calls against one executor are safe to issue without awaiting each
-// other, but they execute ONE AT A TIME, in call order, against the shared
-// pool -- the second call's battles are not dispatched until the first call's
-// entire batch has resolved. This was chosen over interleaving two batches'
-// specs across the same workers because it keeps the per-run bookkeeping
-// (results array, per-worker partition cursors, idle-worker counting, fault
-// handling)
-// completely independent between batches with no shared mutable state to get
-// wrong -- a batch either fully owns the pool or isn't running yet. The cost
-// is that concurrent callers don't get extra parallelism from overlapping
-// their batches (the pool is already using all its threads on the batch in
-// front, so there is little to gain from interleaving anyway); if a future
-// caller needs true cross-batch interleaving, this is the place to revisit.
-//
-// **Worker crash policy: always fatal to the in-flight run(), never a
-// per-spec fault -- even under `continueOnError`.** `continueOnError`
-// isolates BATTLE exceptions caught inside a worker's own try/catch (the
-// worker survives, only that one spec is bad); a worker crash/unexpected exit
-// is an infrastructure fault with no way to know what state the crashed
-// battle was in, so it always rejects the run it occurred in. When that
-// happens the whole pool is torn down (every worker terminated, even
-// survivors -- partial-pool "healing" was judged not worth the complexity),
-// and the executor transparently boots a FRESH pool on the next `run()` call
-// (the executor is not permanently broken by a crash -- only `close()` is
-// terminal). See "createExecutor" below for the full contract.
-//
-// --- Deterministic spec -> worker partitioning -----------------------------
-//
-// Originally, a worker asked for its NEXT spec the instant it finished its
-// previous one (`assignNext` handed out `active.nextIndex++` on demand) --
-// correct (results are always placed back in spec order), but WHICH worker
-// processed WHICH spec depended on real wall-clock timing: a worker that
-// happens to finish a fast battle first "steals" the next spec in line. Since
-// each worker keeps its own per-spec build cache and reuses Pokemon instances
-// across the specs it personally handles (see parallelWorker.js), and reusing
-// an instance across sequential battles has pvpoke's own known order-
-// sensitivity (src/engine/README.md's "Known limitation"),
-// two runs of the SAME (specs, threads) could produce a worker-assignment
-// that differs run to run -- so even though every individual battle's winner
-// is still deterministic given its own spec, the exact sequence of battles
-// any one worker's Pokemon instances see was not reproducible.
-//
-// `createExecutor` therefore partitions specs into CONTIGUOUS chunks, one per
-// worker, computed once per `run()` call from nothing but `specs.length` and
-// the pool's (fixed-at-boot) worker count -- see `partitionContiguous` below.
-// A worker takes the next spec inside ITS OWN chunk, so the sequence of specs
-// (and therefore the sequence of reused-Pokemon-instance battles) a given
-// worker index processes is, for as long as its chunk lasts, a pure function
-// of (specs, threads) rather than of real execution timing.
-//
-// Contiguous chunks (worker 0 gets specs [0, n/threads), worker 1 the next
-// slice, etc.) were chosen over striping (worker i gets every i-th spec)
-// because callers (evaluateTeams, the removed tournament script) build their flat spec lists
-// in an order that already groups a given team's/candidate's battles
-// together (all 9 lead pairings against one meta team are adjacent, etc.) --
-// contiguous chunks keep that locality inside one worker's build cache, while
-// striping would spread every team's battles evenly across every worker,
-// diluting cache hits for no benefit.
-//
-// --- Tail work-stealing, and what "reproducible" means now (2026-08-26) -----
-//
-// The paragraph above USED to end by claiming two runs of the same (specs,
-// threads) are bit-for-bit reproducible BECAUSE the assignment is timing-
-// independent, and accepted the cost that names itself: "a pathologically
-// uneven batch could in principle leave one worker's chunk running long after
-// the others finish theirs". Measurement (2026-08-26, evolve-scale batches at
-// threads=7) put that at a 3.7% median / 7.7% mean wall-clock loss -- not
-// pathological at all, just the ordinary spread of per-battle cost, made
-// worse by E-core/P-core asymmetry.
-//
-// It is also a cost paid for a guarantee that is no longer load-bearing. The
-// order-sensitivity that motivated the static partition -- a reused Pokemon
-// instance carrying a `resetMoves()` tie-break artifact between battles -- was
-// root-caused and FIXED on 2026-08-22 (uninitialized bench-member
-// `baitShields`/`farmEnergy`/`priority`/`hasActed`; see README.md's "Net
-// effect: the doctrine is retired"). A battle's result now depends on its own
-// spec and seed and nothing else -- not on what its worker ran before it, not
-// on which worker ran it, not on how many workers there are.
-//
-// So a worker that exhausts its own chunk now STEALS the tail of the busiest
-// remaining chunk instead of idling (`stealNext` below), and the honest
-// statement of the guarantee changes shape:
-//   * RESULTS are reproducible, and always were once the 2026-08-22 fix
-//     landed: same specs + same seed -> same results array, bit for bit,
-//     serial or threaded, at any thread count. That is what callers depend
-//     on and it is asserted by test/parallel.test.js's serial-vs-parallel
-//     tests, test/tournament.test.js's and test/teams.test.js's
-//     threaded-vs-serial bit-identity tests.
-//   * WHICH WORKER ran which spec is no longer a pure function of (specs,
-//     threads) once stealing starts. Nothing observable depends on it, and no
-//     test asserts it.
-// Steals take from the victim's tail so the victim keeps its own forward run
-// of adjacent specs, which is what its build cache is warm for -- locality is
-// preserved for the common case and given up only for the specs that would
-// otherwise have been the straggler's.
+// Partitioning. Specs are split into contiguous chunks, one per worker, from
+// nothing but `specs.length` and the worker count (`partitionContiguous`):
+// callers group a team's battles next to each other, so contiguous chunks keep
+// a worker's build cache warm. A worker that exhausts its chunk steals the
+// tail of the busiest remaining chunk (`stealNext`) instead of idling
+// (measured at 3.7% median / 7.7% mean wall-clock otherwise, threads=7), so
+// which worker runs which spec is not reproducible -- and nothing depends on it.
 
 import { Worker } from 'node:worker_threads';
 import os from 'node:os';

@@ -35,7 +35,7 @@ export function mulberry32(seed) {
  * @param {string} str
  * @returns {number} a 32-bit unsigned integer.
  */
-export function seedFromString(str) {
+function seedFromString(str) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);

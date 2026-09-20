@@ -269,7 +269,7 @@ function readCommunityEntries(ctx, opts) {
  * screenshots' own ordering for the pre-lead-index entries; Jaxon's directly
  * -observed opponent lead for the 'jaxon-ladder-*' entries). Every returned
  * team is stamped `leadIndex: 0` so a downstream driver's own opponent-lead
- * -resolution hook (e.g. scripts/evolve.mjs's `opponentLeadIndex()`) reads it
+ * -resolution hook (e.g. src/evolve/fitness.js's `opponentLeadIndex()`) reads it
  * as explicit declared data instead of falling through to its own default.
  *
  * @param {object} ctx - from initEngine (src/engine/harness.js)
@@ -343,7 +343,10 @@ export function loadCommunityTeams(ctx, opts = {}) {
  *
  * @param {object} ctx - from initEngine (src/engine/harness.js)
  * @param {{ limit?: number, teamsFile?: string, communityFile?: string,
- *           communityEntries?: CommunityTeamEntry[], includeCommunity?: boolean }} [opts]
+ *           communityEntries?: CommunityTeamEntry[], includeCommunity?: boolean,
+ *           includeVendor?: boolean }} [opts]
+ *   `includeVendor` (default false) merges pvpoke's vendor GL presets in ahead
+ *   of the community teams; off, the pool is the curated file alone.
  *   `limit` caps how many teams are built (default: all), sliced off the
  *   merged (vendor + community) list -- see the ordering note above.
  *   `teamsFile` overrides which pvpoke training-teams file is read (default:
@@ -357,7 +360,7 @@ export function loadCommunityTeams(ctx, opts = {}) {
  */
 export function loadMetaTeams(ctx, opts = {}) {
   const teamsFile = opts.teamsFile ?? defaultTeamsFile(ctx);
-  const vendorTeams = buildVendorTeams(ctx, teamsFile);
+  const vendorTeams = opts.includeVendor ? buildVendorTeams(ctx, teamsFile) : [];
 
   const includeCommunity = opts.includeCommunity ?? ctx.cp === COMMUNITY_FILE_CP;
   const community = includeCommunity ? loadCommunityTeams(ctx, opts) : [];

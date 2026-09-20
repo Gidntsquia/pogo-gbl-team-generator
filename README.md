@@ -34,8 +34,11 @@ final top 10.
 git clone https://github.com/Gidntsquia/pogo-gbl-team-generator
 cd pogo-gbl-team-generator
 npm run setup                        # Downloads pvpoke's engine + data (required after every fresh clone)
+scripts/sim.sh --quick your-collection.csv     # ~minute-scale smoke run: 3 generations, prints the report path
 scripts/sim.sh your-collection.csv --name mine --threads 4 --hours 1
 ```
+
+`scripts/sim.sh --help` and `node scripts/evolve.mjs --help` list every flag; bad input (missing CSV, unknown flag, bad league or cup) gets a one- or two-line message saying how to fix it.
 
 The search runs in the background; its report is written to
 `out/evolve-mine/my-teams-evolve.md` (+ `.html`). A sample collection is included for

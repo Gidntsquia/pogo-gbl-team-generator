@@ -4,7 +4,7 @@
 // was a later addition). Pure generational
 // logic -- selection, mutation, immigration, convergence -- with NO battles
 // inside, so it is unit-testable against fake fitness arrays without booting
-// the pvpoke engine. `scripts/evolve.mjs` is the driver that actually
+// the pvpoke engine. `src/evolve/` is the driver that actually
 // runs battles (via the persistent executor) to produce each generation's
 // `fitness` array and feeds it back into `nextGeneration`.
 //
@@ -32,7 +32,7 @@
 // steps against the better one -- high, but not a death sentence, so a twin
 // that fights well still lives; the final ranking keeps one per signature).
 // Downstream battle-driving
-// code (scripts/evolve.mjs) deciding to evaluate a team ONLY at its own
+// code (src/evolve/) deciding to evaluate a team ONLY at its own
 // `team[0]` lead (a ~3x battle-count saving) is NOT this module's
 // concern -- this module only defines and evolves the representation.
 
@@ -64,7 +64,7 @@ export const DEFAULT_MUTATION_CEIL = 0.4;
 // -assignment is genuinely explored by evolution, but member-swap (which
 // still explores species composition, including at the lead slot) stays the
 // majority of mutations, matching its pre-existing primacy.
-export const DEFAULT_LEAD_ROTATION_RATE = 0.3;
+const DEFAULT_LEAD_ROTATION_RATE = 0.3;
 // Of the mutation successes, this share become a SHADOW-FLIP (swap a random
 // non-empty subset of the flippable members for their opposite-shadow twins
 // -- same species, same lead, only shadow flags change). Rolled AFTER
@@ -78,7 +78,7 @@ export const DEFAULT_LEAD_ROTATION_RATE = 0.3;
 // (see `buildShadowTwins`); when the chosen parent has no flippable slot the
 // roll falls through to a member-swap, so a collection with no shadow twins
 // evolves exactly as it did before this type was added.
-export const DEFAULT_SHADOW_FLIP_RATE = 0.2;
+const DEFAULT_SHADOW_FLIP_RATE = 0.2;
 // A floor of ~10% of P fresh IMMIGRANT teams is always reserved.
 export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 // Convergence (see `hasConverged`). TRAILING is the number of generations of
@@ -102,8 +102,8 @@ export const DEFAULT_IMMIGRANT_FRACTION = 0.1;
 export const DEFAULT_CONVERGENCE_WINDOW = 6;
 export const DEFAULT_CONVERGENCE_TOP_N = 10;
 export const DEFAULT_CONVERGENCE_TRAILING = 10;
-export const DEFAULT_CONVERGENCE_MAX_CHURN = 0;
-export const DEFAULT_CONVERGENCE_MIN_LIFT_GAIN = 0.005;
+const DEFAULT_CONVERGENCE_MAX_CHURN = 0;
+const DEFAULT_CONVERGENCE_MIN_LIFT_GAIN = 0.005;
 // SELECTION's own trailing window (trailingFitness), independent of
 // convergence's. 10 generations turned out too slow to react: at 35%/gen
 // opponent turnover a team's environment is meaningfully different 10
@@ -120,13 +120,6 @@ export const DEFAULT_SELECTION_TRAILING = 5;
 // still smooth noise, recent enough that a team's current form dominates its
 // score.
 export const DEFAULT_SELECTION_RECENCY_DECAY = 0.6;
-
-// Sampling without replacement (mutant swap-ins, immigrant draws) can collide
-// with an already-used species-set signature, especially on a small pool;
-// collisions are discarded and retried rather than kept. Mirrors
-// src/teams/sample.js's own MAX_ATTEMPTS pattern.
-const MAX_ATTEMPTS_MULTIPLIER = 20;
-const MAX_ATTEMPTS_FLOOR = 50;
 
 /**
  * Identity signature for a LOCKED-LEAD team: `team[0]` (the lead) plus the
@@ -149,7 +142,7 @@ function teamSignature(team) {
  * teams sharing it are twins: `nextGeneration` ranks the weaker one under a
  * heavy core-rivalry penalty (coreRivalryFitness's twin load, `twins:
  * 'lead'`, is this same lead-aware shape scored on member similarity), and
- * the final ranking (scripts/evolve.mjs) keeps one per signature, so a
+ * the final ranking (src/evolve/) keeps one per signature, so a
  * report never lists the same trio several times differing only in who is
  * shadow.
  *
@@ -583,7 +576,7 @@ function churn(prev, next) {
  * so a short run (the 15-generation default) is cap-bound by construction.
  *
  * Deliberately does NOT know about `--generations` caps or
- * `--deadline-minutes` -- those are scripts/evolve.mjs's job, driven by
+ * `--deadline-minutes` -- those are src/evolve/'s job, driven by
  * wall-clock/config concerns this pure module has no business touching.
  *
  * @param {Array<{population: string[][], fitness: number[]}>} history

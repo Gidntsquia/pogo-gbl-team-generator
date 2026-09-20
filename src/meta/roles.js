@@ -15,7 +15,7 @@
 // Honest scope: these are SPECIES-level priors computed by pvpoke under its
 // own recommended movesets, not instance-specific truth. A user's own IVs,
 // current moves, and how a mon actually performs in OUR real 3v3 battles
-// still come from src/scoring's matrix and src/teams' evaluateTeams -- role
+// still come from real 3v3 battles (src/evolve/evaluate.js) -- role
 // scores only weight sampling/fitness and label the report
 // appendix; they never replace a real battle result.
 //
@@ -28,7 +28,7 @@
 // companion script, if wanted later, is out of scope here: the scope is
 // only "the same optional live-refresh snapshot design").
 
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { DEFAULT_CP, DEFAULT_CUP, rankingsPath, readVendoredJson } from '../util/leagues.js';

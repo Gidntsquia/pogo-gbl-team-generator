@@ -5,7 +5,7 @@
 //   - scripts/chart-top-teams.mjs -- a standalone CLI that reads a finished
 //     run's out/evolve-gen<N>.json checkpoint files + evolve-ranking.json off
 //     disk and writes a full standalone HTML page.
-//   - scripts/evolve.mjs's own HTML report (renderEvolveReportHtml) -- reads
+//   - src/evolve/reportHtml.js's own HTML report (renderEvolveReportHtml) -- reads
 //     the SAME shape of data straight out of the in-memory
 //     `result.generationRecords` / `result.elites` a run just produced (no
 //     extra file reads; the checkpoint files and this data are one and the
@@ -23,12 +23,12 @@
 // Verbatim from out/artifact-sources/podium-report.html's own embedded chart
 // (built by this same script, pre-refactor) -- ported as directly as
 // possible rather than recolored.
-export const PALETTE = [
+const PALETTE = [
   '#e6194b', '#3c78d8', '#3cb44b', '#ff8c00', '#911eb4',
   '#00a8a8', '#b8860b', '#f032e6', '#7f8c1f', '#800000',
 ];
 
-/** Same lead-aware team identity src/teams/evolve.js and scripts/evolve.mjs use. */
+/** Same lead-aware team identity src/teams/evolve.js and src/evolve/ use. */
 export function teamSignature(team) {
   return `${team[0]}||${[...team.slice(1)].sort().join('|')}`;
 }
@@ -127,7 +127,7 @@ function chartPayload(data, labels) {
  * is this" caption, the SVG the animation draws into, a legend list, and the
  * inline script that drives it all (play/pause, scrubber, click-to-identify
  * -- including the muted field lines). No `<html>`/`<head>`/page-level CSS:
- * the host page supplies that (see scripts/evolve.mjs's renderEvolveReportHtml
+ * the host page supplies that (see src/evolve/reportHtml.js's renderEvolveReportHtml
  * and renderChartHtml below for the two current hosts).
  *
  * The x-axis is "generation" by default (the GA hosts). `opts` relabels the

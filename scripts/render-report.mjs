@@ -11,7 +11,8 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { renderEvolveReport, renderEvolveReportHtml } from './evolve.mjs';
+import { renderEvolveReportHtml } from '../src/evolve/reportHtml.js';
+import { renderEvolveReport } from '../src/evolve/reportMd.js';
 
 const outDir = process.argv[2];
 if (!outDir) {

@@ -22,13 +22,12 @@
 // (groups/great.json at 1500, groups/ultra.json at 2500), same as the
 // rankings/training files below.
 
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { DEFAULT_CP, DEFAULT_CUP, resolveFormat, rankingsPath, readVendoredJson } from '../util/leagues.js';
 
-// Default snapshot path, relative to the process cwd -- mirrors the removed CLI's
-// "out/report.md" convention (both assume the CLI/tests run from repo root).
+// Default snapshot path, relative to the process cwd (assumes the CLI/tests run from the repo root).
 const DEFAULT_SNAPSHOT_PATH = 'data/meta-usage.json';
 
 // Zipf-style weight over 1-based rank position r:
