@@ -20,7 +20,9 @@ import { ownLeadPairing } from '../src/evolve/fitness.js';
 import { createExecutor } from '../src/engine/parallel.js';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const OUT = path.join(ROOT, 'out', 'research');
+// --dir DIR (default out/research) keeps a reproduction run apart from the original cells.
+const dirArg = process.argv.indexOf('--dir');
+const OUT = path.resolve(ROOT, dirArg >= 0 ? process.argv[dirArg + 1] : path.join('out', 'research'));
 const CSV = path.join(OUT, 'meta-collection-1500.csv');
 const RESULTS = path.join(OUT, 'results.json');
 

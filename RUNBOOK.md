@@ -866,7 +866,7 @@ Consult only when this file disagrees with observed behaviour, then fix this fil
 
 `--halving-rounds R` (with `--halving-keep F`, default 0.5) reveals each generation's opponents in R
 growing slices and drops the weaker teams after each round, so cut teams skip most battles
-(R=3: ~0.57x battles, R=4: ~0.43x, measured). Off by default; the search is byte-identical without it.
-Held-out quality vs the full grid was inside seed spread over 3 seeds (verdict "unclear",
-`out/research-integration.html`). It is part of the run config: pass the same flag on every resume.
+(R=3: ~0.59x battles, R=4: ~0.43x, measured). Off by default; the search is byte-identical without it.
+Over 10 seeds R=3 held-out quality matched the full grid (-0.2 pt, 95% bound -1.8; verdict "keep");
+R=4 lost 1.4 pt with a bound of -3.5 (verdict "unclear"). Prefer R=3 (`out/research-integration.html`). It is part of the run config: pass the same flag on every resume.
 Compare against the control with `node scripts/compare-search.mjs run` then `report`.
