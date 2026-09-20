@@ -311,6 +311,11 @@ export function buildRunConfig(csvPath, opts) {
     // Selection smoothing window (see the header note). Only-when-set, like
     // the rates above, so every pre-2026-09-05 checkpoint dir still resumes --
     // it then continues under the smoothed default from the resume point.
+    // Sequential Halving (src/evolve/halving.js). Only-when-on: an off run's config is byte-identical
+    // to before, and a checkpoint written under halving refuses to resume without it (and vice versa).
+    ...(opts.halvingRounds > 1
+      ? { halvingRounds: opts.halvingRounds, halvingKeep: opts.halvingKeep ?? 0.5 }
+      : {}),
     ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined
       ? {

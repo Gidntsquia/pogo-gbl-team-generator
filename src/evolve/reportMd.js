@@ -151,6 +151,7 @@ export function renderEvolveReport(result) {
       `fitness=${config.fitness}` +
       (config.evolutions === false ? ', evolutions=off' : '') +
       (config.fixedOpponents ? ', fixed-opponents' : '') +
+      (config.halvingRounds ? `, halving=${config.halvingRounds}x${config.halvingKeep}` : '') +
       (config.banSpecies.length ? `, ban=${config.banSpecies.join(',')}` : '')
   );
   if (config.deathRate !== undefined || config.mutationFloor !== undefined || config.mutationCeil !== undefined || config.mutationFloorStart !== undefined || config.mutationCeilStart !== undefined || config.immigrantFraction !== undefined || config.opponentImmigrantFraction !== undefined || config.convergence !== undefined) {

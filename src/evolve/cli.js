@@ -80,6 +80,13 @@ Options:
   --cup NAME              pvpoke cup id (e.g. willpower); restricts candidates,
                             opponents, movesets, usage weights, role priors,
                             and meta group to that cup's format          (default: ${DEFAULTS.cup})
+  --halving-rounds R       EXPERIMENTAL Sequential Halving: each generation reveals the
+                            opponents in R growing slices (1/2^(R-1) .. all) and drops the
+                            weaker teams after each, so cut teams skip most battles.
+                            R=3 is roughly half the battles, R=4 a third; 0/1 = off
+                            (the full grid)                            (default: off)
+  --halving-keep F         fraction of teams kept after each halving round
+                            (needs --halving-rounds)                   (default: 0.5)
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
   --elites N               last-generation teams (by trailing-mean fitness)
@@ -264,6 +271,7 @@ const INT_FLAGS = [
   ['opponent-meta-pool'], // unset so buildRunConfig picks 100, or the full field under --meta-mode
   ['difficulty'],
   ['conv-window'],
+  ['halving-rounds'], // unset/0 = off: every team fights every opponent
   ['conv-top-n'],
 ];
 
@@ -301,6 +309,7 @@ const NUMBER_FLAGS = [
   ['core-rivalry'],
   ['similar-rivalry'],
   ['similar-floor'],
+  ['halving-keep'], // unset = 0.5
 ];
 
 /** Value flags taken as plain strings. */

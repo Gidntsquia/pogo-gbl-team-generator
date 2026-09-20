@@ -106,7 +106,7 @@ export function buildOpponentArchive(records, { holdoutGenerations, limit }) {
  * stratum is genuinely never-fought. Same composer the opponent GA's
  * immigrants use; seeded, so a re-render draws the same teams.
  */
-function composeFreshOpponents(ctx, { count, seed, movesetPool, weights, roleScores, usedIds }) {
+export function composeFreshOpponents(ctx, { count, seed, movesetPool, weights, roleScores, usedIds }) {
   const rng = rngFromSeed(`${seed}-final-fresh`);
   const used = new Set(usedIds);
   const out = [];

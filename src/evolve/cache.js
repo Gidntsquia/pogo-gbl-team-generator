@@ -105,6 +105,7 @@ export function createBattleCache(maxEntries) {
 export function createNullBattleCache() {
   let n = 0;
   return {
+    disabled: true,
     keyFor: () => `uncached-${n++}`,
     get: () => undefined,
     set: () => undefined,

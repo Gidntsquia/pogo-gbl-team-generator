@@ -22,6 +22,7 @@ import {
   teamSignature,
 } from './analytics.js';
 import { evaluateTeamsInOrder } from './evaluate.js';
+import { evaluateWithHalving } from './halving.js';
 import { trimHistory, trimSupersededRecords } from './state.js';
 
 /**
@@ -160,7 +161,7 @@ export async function runGeneration(env, state) {
       `${new Set(oppArchetypeGroups).size} opponent archetypes, ` +
       `candidate weight min ${Math.min(...candidateWeights).toFixed(2)} / max ${Math.max(...candidateWeights).toFixed(2)}`
   );
-  const run = await evaluateTeamsInOrder(env.ctx, {
+  const evaluateParams = {
     teams: population,
     matrix: deduped,
     opponents,
@@ -181,10 +182,19 @@ export async function runGeneration(env, state) {
     consistencyWeight: config.consistencyWeight,
     sharedWeaknessWeight: config.sharedWeaknessWeight,
     typeCoverageContext,
-  });
+  };
+  const fitnessOf = (r) => (config.fitness === 'battle-reality' ? r.blendFitness : r.winRate);
+  const run = config.halvingRounds
+    ? await evaluateWithHalving(env.ctx, evaluateParams, {
+        rounds: config.halvingRounds,
+        keep: config.halvingKeep,
+        seed: `${config.seed}-gen${generation}`,
+        fitnessOf,
+      })
+    : await evaluateTeamsInOrder(env.ctx, evaluateParams);
   // Both fitness numbers are computed on every result; the mode only picks
   // which one selection/mutation/convergence act on.
-  const fitness = run.results.map((r) => (config.fitness === 'battle-reality' ? r.blendFitness : r.winRate));
+  const fitness = run.results.map(fitnessOf);
   const { opponentFitness, opponentWeightedWinRate } = opponentFitnessOf(run, config);
 
   history.push({ population, fitness });

@@ -861,3 +861,12 @@ Consult only when this file disagrees with observed behaviour, then fix this fil
 | pvpoke pin and sparse paths | `scripts/setup.sh` |
 | Thread default | `src/engine/parallel.js` |
 | Feature docs (flags, cost math, GA) | GitHub wiki: `curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"` — pages Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions, Evolutionary-Team-Search, Shared-Collections, Development-and-Tests |
+
+## Experimental: Sequential Halving (`--halving-rounds`)
+
+`--halving-rounds R` (with `--halving-keep F`, default 0.5) reveals each generation's opponents in R
+growing slices and drops the weaker teams after each round, so cut teams skip most battles
+(R=3: ~0.57x battles, R=4: ~0.43x, measured). Off by default; the search is byte-identical without it.
+Held-out quality vs the full grid was inside seed spread over 3 seeds (verdict "unclear",
+`out/research-integration.html`). It is part of the run config: pass the same flag on every resume.
+Compare against the control with `node scripts/compare-search.mjs run` then `report`.

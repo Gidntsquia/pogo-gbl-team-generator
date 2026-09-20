@@ -40,6 +40,8 @@
 #                     scenario-memo hit/miss stats, flushed to out/evolve-NAME/
 #                     on a clean exit (not a recognized flag here -- falls
 #                     through to evolve.mjs via the generic passthrough)
+#   --halving-rounds R  EXPERIMENTAL passthrough (+ --halving-keep F): Sequential Halving, ~1/2 (R=3) to
+#                     ~1/3 (R=4) of the battles; quality vs full grid unclear (see RUNBOOK.md)
 #   --fg              run in the foreground instead of detaching
 #   --dry-run         print the evolve.mjs command and exit
 #   --help            this text
@@ -52,6 +54,10 @@
 # colliding with the source run's:
 #   scripts/sim.sh --name my-run-v2 --population 400 -- --seed-from \
 #     out/evolve-my-run/evolve-gen42.json my-collection.csv
+#
+# EXPERIMENTAL (passthrough, off by default): --halving-rounds R [--halving-keep F] -- Sequential
+# Halving, roughly 1/2 (R=3) to 1/3 (R=4) of the battles; quality vs the full grid is unclear
+# (out/research-integration.html). Changes the config, so pass it on every resume.
 #
 # Anything after `--` (or any flag not listed above) goes straight to
 # evolve.mjs. Defaults follow the established run recipe, baked into
@@ -75,7 +81,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
-usage() { sed -n '2,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,47p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 status() {
   shopt -s nullglob
