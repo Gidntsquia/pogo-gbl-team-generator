@@ -40,8 +40,8 @@
 #                     scenario-memo hit/miss stats, flushed to out/evolve-NAME/
 #                     on a clean exit (not a recognized flag here -- falls
 #                     through to evolve.mjs via the generic passthrough)
-#   --halving-rounds R  EXPERIMENTAL passthrough (+ --halving-keep F): Sequential Halving, ~1/2 (R=3) to
-#                     ~1/3 (R=4) of the battles; quality vs full grid unclear (see RUNBOOK.md)
+#   --halving-rounds R  passthrough (+ --halving-keep F): Sequential Halving, default 3 (~1/2 the
+#                     battles); `--halving-rounds 0` = full grid (see RUNBOOK.md)
 #   --fg              run in the foreground instead of detaching
 #   --dry-run         print the evolve.mjs command and exit
 #   --help            this text
@@ -55,9 +55,9 @@
 #   scripts/sim.sh --name my-run-v2 --population 400 -- --seed-from \
 #     out/evolve-my-run/evolve-gen42.json my-collection.csv
 #
-# EXPERIMENTAL (passthrough, off by default): --halving-rounds R [--halving-keep F] -- Sequential
-# Halving, roughly 1/2 (R=3) to 1/3 (R=4) of the battles; quality vs the full grid is unclear
-# (out/research-integration.html). Changes the config, so pass it on every resume.
+# Sequential Halving is ON by default (R=3, ~1/2 the battles); `scripts/sim.sh ... -- --halving-rounds 0` turns it off.
+# Part of the config: pass the same value on every resume; runs started before it became the default
+# refuse to resume unless given `-- --halving-rounds 0`.
 #
 # Anything after `--` (or any flag not listed above) goes straight to
 # evolve.mjs. Defaults follow the established run recipe, baked into

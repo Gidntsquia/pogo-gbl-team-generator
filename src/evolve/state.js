@@ -114,6 +114,9 @@ export function initRunState(env) {
           `(${describeConfigMismatch(stale.config, config)}). Refusing to overwrite it. ` +
           `A config change can't resume in place -- use a different --out-dir (optionally with ` +
           `--seed-from ${checkpointPath(outDir, 0)} to carry its population over), ` +
+          (config.halvingRounds && !stale.config?.halvingRounds
+            ? `or pass --halving-rounds 0 to resume this run as it started (Sequential Halving is now on by default), `
+            : '') +
           `or pass --force-fresh to discard this directory's checkpoints and start over here.`
       );
     }

@@ -28,7 +28,7 @@ const RESULTS = path.join(OUT, 'results.json');
 
 /** Arms: the control is the untouched search (no switches). */
 export const ARMS = {
-  control: [],
+  control: ['--halving-rounds', '0'],
   h2: ['--halving-rounds', '2'],
   h3: ['--halving-rounds', '3'],
   h4: ['--halving-rounds', '4'],

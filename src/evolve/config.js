@@ -12,6 +12,7 @@ import { DEFAULT_SELECTION_TRAILING } from '../teams/evolve.js';
 import { DEFAULT_FITNESS_WEIGHTS, FITNESS_SEMANTICS } from './fitness.js';
 
 export const DEFAULTS = Object.freeze({
+  halvingRounds: 3, // Sequential Halving on by default; `--halving-rounds 0` = full grid
   population: 100,
   opponentsPerGen: 20,
   generations: 15,
@@ -311,10 +312,10 @@ export function buildRunConfig(csvPath, opts) {
     // Selection smoothing window (see the header note). Only-when-set, like
     // the rates above, so every pre-2026-09-05 checkpoint dir still resumes --
     // it then continues under the smoothed default from the resume point.
-    // Sequential Halving (src/evolve/halving.js). Only-when-on: an off run's config is byte-identical
-    // to before, and a checkpoint written under halving refuses to resume without it (and vice versa).
-    ...(opts.halvingRounds > 1
-      ? { halvingRounds: opts.halvingRounds, halvingKeep: opts.halvingKeep ?? 0.5 }
+    // Sequential Halving (src/evolve/halving.js). On by default (R=3). Only-when-on: an off run's config is byte-identical
+    // to before, so a pre-default checkpoint (no halvingRounds) refuses to resume under the new default and vice versa.
+    ...((opts.halvingRounds ?? DEFAULTS.halvingRounds) > 1
+      ? { halvingRounds: opts.halvingRounds ?? DEFAULTS.halvingRounds, halvingKeep: opts.halvingKeep ?? 0.5 }
       : {}),
     ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined

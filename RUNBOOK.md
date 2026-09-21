@@ -862,11 +862,11 @@ Consult only when this file disagrees with observed behaviour, then fix this fil
 | Thread default | `src/engine/parallel.js` |
 | Feature docs (flags, cost math, GA) | GitHub wiki: `curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"` — pages Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions, Evolutionary-Team-Search, Shared-Collections, Development-and-Tests |
 
-## Experimental: Sequential Halving (`--halving-rounds`)
+## Sequential Halving (`--halving-rounds`, on by default)
 
 `--halving-rounds R` (with `--halving-keep F`, default 0.5) reveals each generation's opponents in R
 growing slices and drops the weaker teams after each round, so cut teams skip most battles
-(R=3: ~0.59x battles, R=4: ~0.43x, measured). Off by default; the search is byte-identical without it.
+(R=3: ~0.59x battles, R=4: ~0.43x, measured). **On by default at R=3**; `--halving-rounds 0` turns it off and the search is then byte-identical to the old full grid. A run started before the default changed has no `halvingRounds` in its config and refuses to resume (the error lists the differing key): resume it with `--halving-rounds 0`, or start a new run.
 Over 10 seeds R=3 held-out quality matched the full grid (-0.2 pt, 95% bound -1.8; verdict "keep");
-R=4 lost 1.4 pt with a bound of -3.5 (verdict "unclear"). Prefer R=3 (`out/research-integration.html`). It is part of the run config: pass the same flag on every resume.
+R=4 lost 1.4 pt with a bound of -3.5 (verdict "unclear"). Prefer R=3 (`out/research-integration.html`). It is part of the run config: pass the same value on every resume.
 Compare against the control with `node scripts/compare-search.mjs run` then `report`.

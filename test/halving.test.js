@@ -60,3 +60,11 @@ test('halving fights fewer pairings, keeps the strong teams, and never ranks a c
   for (const r of run.results.slice(0, 4)) assert.ok(r.winRate <= floor);
   assert.ok(run.opponentTally.every((t) => t && t.battles > 0), 'every opponent has a ledger');
 });
+
+test('halving is on by default (R=3) and --halving-rounds 0 restores the pre-halving config', async () => {
+  const { buildRunConfig } = await import('../src/evolve/config.js');
+  const csv = new URL('../fixtures/sample-pokegenie.csv', import.meta.url).pathname;
+  const on = buildRunConfig(csv, {});
+  assert.equal(on.halvingRounds, 3);
+  assert.ok(!('halvingRounds' in buildRunConfig(csv, { halvingRounds: 0 })));
+});
