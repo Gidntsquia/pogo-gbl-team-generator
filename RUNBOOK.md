@@ -892,4 +892,13 @@ unattended driver under the fixed stop rule (`scripts/hoeffding-stats.mjs`) -- a
 both a quality bound and a battle-saving bar (the halving R=3 precedent above: KEEP needs >=20% fewer
 battles and a quality loss no worse than 3 points, or a clear quality gain regardless of cost).
 
-**Result: pending.** See the wiki's Research page / Hoeffding Races page once the A/B round finishes.
+**Result: KEEP.** 60 seeds, meta mode: Hoeffding Races beat today's default (Sequential Halving R=3) by
++1.1 points of held-out team quality (58.4% -> 59.5%, 95% range +0.1..+2.0), but fights 170% of the
+battles and takes 165% of the wall time. A third no-pruning arm (halving off, hoeffding off, 10 seeds)
+shows Hoeffding Races costs about the same as running no pruning at all (9598 vs 9609 battles/run, 249
+vs 241 s/run) while scoring higher (59.9% vs 58.5%) -- so its extra cost over Halving isn't buying
+speed over "nothing," it's buying quality at roughly no-pruning's price. Halving stays the default
+(cheap, 5648 battles/run, same quality as no pruning); Hoeffding Races is a slower, higher-quality
+alternative for someone willing to spend no-pruning-level compute for a real quality gain. Full numbers,
+per-seed table, and the stop rule: `out/hoeffding-ab.md` / `.html` (rebuild with `node
+scripts/compare-search.mjs report --dir out/hoeffding-ab`).
