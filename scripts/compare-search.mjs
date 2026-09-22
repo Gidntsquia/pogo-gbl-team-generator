@@ -32,7 +32,23 @@ export const ARMS = {
   h2: ['--halving-rounds', '2'],
   h3: ['--halving-rounds', '3'],
   h4: ['--halving-rounds', '4'],
+  // Hoeffding Races round: `base` is today's default search (halving R=3, hoeffding off),
+  // `hoeffding` differs only by replacing halving with --hoeffding-races (halving off).
+  base: ['--halving-rounds', '3'],
+  hoeffding: ['--halving-rounds', '0', '--hoeffding-races'],
 };
+
+/** BASE_FLAGS with the arm's own value replacing any flag the arm also sets, then the arm's flags. */
+export function cellFlags(arm) {
+  const own = ARMS[arm];
+  const over = new Set(own.filter((x) => x.startsWith('--')));
+  const base = [];
+  for (let i = 0; i < BASE_FLAGS.length; i++) {
+    if (over.has(BASE_FLAGS[i])) { if (i + 1 < BASE_FLAGS.length && !BASE_FLAGS[i + 1].startsWith('--')) i++; continue; }
+    base.push(BASE_FLAGS[i]);
+  }
+  return [...base, ...own];
+}
 
 /** Same for every arm. Short-run scale: minutes per run on 8 threads. */
 export const BASE_FLAGS = [
@@ -56,7 +72,7 @@ function ensureCollection() {
 function runCell(arm, seed) {
   const dir = path.join(OUT, `${arm}-${seed}`);
   if (!existsSync(path.join(dir, 'evolve-result.json'))) {
-    const argv = ['scripts/evolve.mjs', CSV, '--seed', seed, ...BASE_FLAGS, ...ARMS[arm], '--out-dir', dir, '--force-fresh'];
+    const argv = ['scripts/evolve.mjs', CSV, '--seed', seed, ...cellFlags(arm), '--out-dir', dir, '--force-fresh'];
     console.log(`[${arm} ${seed}] ${argv.join(' ')}`);
     const r = spawnSync('nice', ['-n', '10', 'node', ...argv], { cwd: ROOT, stdio: ['ignore', 'ignore', 'inherit'] });
     if (r.status !== 0) throw new Error(`evolve failed for ${arm} ${seed}`);
@@ -86,6 +102,11 @@ async function main() {
   const cmd = argv[0];
   if (cmd === 'report') {
     const data = JSON.parse(readFileSync(RESULTS, 'utf8'));
+    if (data.arms.includes('hoeffding')) {
+      const { renderHoeffdingReport } = await import('./compare-hoeffding-report.mjs');
+      renderHoeffdingReport(data, path.join(ROOT, 'out'));
+      return;
+    }
     const { renderReport } = await import('./compare-search-report.mjs');
     renderReport(data, path.join(ROOT, 'out'));
     return;
@@ -100,8 +121,17 @@ async function main() {
   const heldoutCount = Number(flagValue(argv, '--heldout', '60'));
   ensureCollection();
 
+  // Merge with saved results: cells already scored (held-out included) are reused untouched.
+  const prior = existsSync(RESULTS) ? JSON.parse(readFileSync(RESULTS, 'utf8')) : { cells: [] };
   const cells = [];
-  for (const seed of seeds) for (const arm of arms) cells.push(runCell(arm, seed));
+  for (const seed of seeds) for (const arm of arms) {
+    const old = prior.cells.find((c) => c.arm === arm && c.seed === seed && c.heldoutMeanTop != null);
+    if (old) { cells.push(old); continue; }
+    const t0 = Date.now();
+    const cell = runCell(arm, seed);
+    cell.wallSeconds = (Date.now() - t0) / 1000;
+    cells.push(cell);
+  }
 
   // Held-out scoring: same collection build, same opponents for every cell.
   const { csvPath, opts } = parseEvolveArgs([CSV, ...BASE_FLAGS, '--out-dir', path.join(OUT, '_heldout')]);
@@ -113,6 +143,8 @@ async function main() {
   const executor = createExecutor({ threads: 8, vendorRoot: setup.ctx.vendorRoot, continueOnError: true, cp: setup.ctx.cp, cup: setup.ctx.cup });
   try {
     for (const cell of cells) {
+      if (cell.heldoutMeanTop != null) continue;
+      const t0 = Date.now();
       const teams = cell.finalists.slice(0, top).map(teamFromSignature);
       const run = await evaluateTeamsInOrder(setup.ctx, {
         teams, matrix: setup.deduped, opponents: heldout, pairingsFor: ownLeadPairing,
@@ -121,13 +153,19 @@ async function main() {
       cell.heldout = run.results.map((r) => r.rawWinRate); // unweighted, both directions
       cell.heldoutTop1 = cell.heldout[0];
       cell.heldoutMeanTop = cell.heldout.reduce((s, x) => s + x, 0) / cell.heldout.length;
+      cell.wallSeconds = (cell.wallSeconds ?? 0) + (Date.now() - t0) / 1000;
       console.log(`[${cell.arm} ${cell.seed}] held-out top1 ${(cell.heldoutTop1 * 100).toFixed(1)}%  top${top} mean ${(cell.heldoutMeanTop * 100).toFixed(1)}%  ${cell.genBattles} battles ${cell.genSeconds.toFixed(0)}s`);
     }
   } finally {
     await executor.close();
   }
   mkdirSync(OUT, { recursive: true });
-  writeFileSync(RESULTS, JSON.stringify({ arms, seeds, top, heldoutCount, baseFlags: BASE_FLAGS, armFlags: ARMS, cells }, null, 2));
+  const keyed = new Map(prior.cells.map((c) => [`${c.arm}/${c.seed}`, c]));
+  for (const c of cells) keyed.set(`${c.arm}/${c.seed}`, c);
+  const all = [...keyed.values()];
+  const armList = [...new Set([...(prior.arms ?? []), ...arms])];
+  const seedList = (arm) => [...new Set(all.filter((c) => c.arm === arm).map((c) => c.seed))];
+  writeFileSync(RESULTS, JSON.stringify({ arms: armList, seeds: seedList(arms[0]), top, heldoutCount, baseFlags: BASE_FLAGS, armFlags: ARMS, cells: all }, null, 2));
   console.log(`wrote ${RESULTS}`);
 }
 

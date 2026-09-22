@@ -870,3 +870,26 @@ growing slices and drops the weaker teams after each round, so cut teams skip mo
 Over 10 seeds R=3 held-out quality matched the full grid (-0.2 pt, 95% bound -1.8; verdict "keep");
 R=4 lost 1.4 pt with a bound of -3.5 (verdict "unclear"). Prefer R=3 (`out/research-integration.html`). It is part of the run config: pass the same value on every resume.
 Compare against the control with `node scripts/compare-search.mjs run` then `report`.
+
+## Hoeffding Races (`--hoeffding-races`, EXPERIMENTAL, off by default)
+
+Research idea #3 ("Hoeffding Races"): same goal as Sequential Halving above (skip battles against
+teams that are going to lose anyway), same insertion point, but an adaptive schedule instead of a
+fixed one. Opponents are revealed in fixed-size chunks (`--hoeffding-chunk`, default 10); after each
+chunk, every alive team's win-rate confidence interval (Wilson score interval, over battles fought
+so far) is checked against the current cull-line team's interval (`--hoeffding-keep` sets the
+cull-line rank, default the median, `--hoeffding-confidence` sets the interval width, default 0.95).
+A team is cut only when its interval's upper bound falls below the cull line's lower bound. **Off by
+default**; `--hoeffding-races` turns it on and REPLACES halving for the run regardless of
+`--halving-rounds` (the research report says pick one of the two, not both). Only-when-on in the
+config fingerprint: an off run's config is byte-identical to before, and resuming a run with the
+switch flipped is refused (the error names the differing key).
+
+A/B: `node scripts/compare-search.mjs run --dir out/hoeffding-ab --arms base,hoeffding --seeds
+s1,s2,...` then `node scripts/compare-search.mjs report --dir out/hoeffding-ab` (writes
+`out/hoeffding-ab.{md,html}`); `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab` runs the
+unattended driver under the fixed stop rule (`scripts/hoeffding-stats.mjs`) -- a speed-idea rule with
+both a quality bound and a battle-saving bar (the halving R=3 precedent above: KEEP needs >=20% fewer
+battles and a quality loss no worse than 3 points, or a clear quality gain regardless of cost).
+
+**Result: pending.** See the wiki's Research page / Hoeffding Races page once the A/B round finishes.
