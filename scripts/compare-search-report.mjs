@@ -14,7 +14,6 @@ const IDEA_LABEL = {
 export const NOT_TRIED = [
   ['Hoeffding Races (#3)', 'Same insertion point and goal as Sequential Halving; the research report says pick one of the two. Halving was picked (fixed schedule, no per-team statistics to tune).'],
   ['MAP-Elites archive (#4)', 'Diversity, not speed or team quality; needs chosen descriptors. Not built.'],
-  ['Coevolution evaluation methods (#5)', 'Informativeness weights are computed from the same candidate set they weight (circular); would change fitness meaning. Not built.'],
   ['PSRO / alpha-Rank (#6)', 'Needs a full payoff table per generation and a solver; the larger change. Not built.'],
   ['Spinning-top games (#7)', 'Descriptive analysis only; no in-app change. Not built.'],
   ['Prioritised fictitious self-play (#8)', 'Changes fitness away from meta win rate, against docs/fitness-symmetry.md. Not built.'],
