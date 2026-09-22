@@ -12,7 +12,6 @@ const IDEA_LABEL = {
 
 /** Ideas from out/research-report.md and out/speed-report.md that were NOT built, with the reason. */
 export const NOT_TRIED = [
-  ['Nash averaging (research #2)', 'Changes what fitness means (opponent weights from a maximin mixture) and needs smoothing on a noisy 3v3 matrix; it needs its own diagnostic pass first. Not built this round.'],
   ['Hoeffding Races (#3)', 'Same insertion point and goal as Sequential Halving; the research report says pick one of the two. Halving was picked (fixed schedule, no per-team statistics to tune).'],
   ['MAP-Elites archive (#4)', 'Diversity, not speed or team quality; needs chosen descriptors. Not built.'],
   ['Coevolution evaluation methods (#5)', 'Informativeness weights are computed from the same candidate set they weight (circular); would change fitness meaning. Not built.'],
