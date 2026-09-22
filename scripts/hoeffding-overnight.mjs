@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import { pairedRows, stopStatus, BUDGET_SECONDS, CAP_SEEDS } from './hoeffding-stats.mjs';
+import { STOP_RULE } from './compare-hoeffding-report.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const i = process.argv.indexOf('--dir');
@@ -24,6 +25,7 @@ function pair(arms, seed) {
   if (r.status !== 0) throw new Error(`run failed for ${arms} ${seed}`);
 }
 
+log(STOP_RULE);
 log(`start; budget ${BUDGET_SECONDS}s, spent so far ${spent().toFixed(0)}s`);
 
 // Short seeds in pairs until the stop rule says stop.

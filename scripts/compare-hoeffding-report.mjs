@@ -92,10 +92,29 @@ function diffSvg(rows) {
 
 const secs = (h) => `${(h / 3600).toFixed(2)} h`;
 
+/** Third arm: no pruning at all (halving off, hoeffding off) -- "compared to nothing". */
+function noPruneSection(cells, seeds, top, heldoutCount) {
+  if (!seeds.length) return { md: [], html: '' };
+  const get = (arm, seed) => cells.find((c) => c.arm === arm && c.seed === seed);
+  const rows = seeds.map((s) => ({ seed: s, n: get('control', s), b: get('base', s), h: get('hoeffding', s) })).filter((r) => r.n?.heldoutMeanTop != null && r.b?.heldoutMeanTop != null && r.h?.heldoutMeanTop != null);
+  if (!rows.length) return { md: [], html: '' };
+  const armMean = (k) => (a) => mean(rows.map((r) => r[a][k]));
+  const arms = [['none', 'No pruning (halving off, hoeffding off)', 'n'], ['base', 'Sequential Halving (today\'s default)', 'b'], ['hoeffding', 'Hoeffding Races', 'h']];
+  const line = (label, key) => `| ${label} | ${armMean('genBattles')(key).toFixed(0)} | ${armMean('genSeconds')(key).toFixed(0)} | ${pct(armMean('heldoutMeanTop')(key))} |`;
+  const note = `Same ${rows.length} seed${rows.length === 1 ? '' : 's'} (a prefix of the short-run seed list) run a third way: no pruning at all -- every team battles every opponent in every generation, the "compared to nothing" baseline both Halving and Hoeffding Races are trying to beat.`;
+  const md = ['## Compared to no pruning at all', '', note, '',
+    '| arm | battles/run | seconds/run | quality (top ' + top + ' vs ' + heldoutCount + ' held-out) |', '|---|---|---|---|',
+    ...arms.map(([, label, key]) => line(label, key)), ''];
+  const html = `<h2>Compared to no pruning at all</h2><p>${esc(note)}</p><table><thead><tr><th>arm</th><th>battles/run</th><th>seconds/run</th><th>quality</th></tr></thead><tbody>${arms.map(([, label, key]) => `<tr><td>${esc(label)}</td><td>${armMean('genBattles')(key).toFixed(0)}</td><td>${armMean('genSeconds')(key).toFixed(0)}s</td><td>${pct(armMean('heldoutMeanTop')(key))}</td></tr>`).join('')}</tbody></table>`;
+  return { md, html };
+}
+
 export function renderHoeffdingReport(data, outDir) {
   const { top, heldoutCount, cells } = data;
   const shortSeeds = seedsOf(cells, 'base');
   const rows = pairedRows(cells, shortSeeds, 'base', 'hoeffding');
+  const noPruneSeeds = seedsOf(cells, 'control');
+  const noPruneRows = noPruneSeeds.length ? pairedRows(cells, noPruneSeeds, 'control', 'hoeffding') : [];
   const ov = overall(rows);
   const r = ov.result;
   const n = rows.length;
@@ -164,6 +183,8 @@ export function renderHoeffdingReport(data, outDir) {
     '## Short runs (8 generations, population 40)', '', `Control = today's default (Sequential Halving R=3, hoeffding off). Idea = identical run with \`--hoeffding-races\` instead (halving off, so it does not both run). ${n} seeds, same seeds for both arms, 30 opponents per generation, meta mode. Quality = mean unweighted win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams (seed "heldout") that neither arm's search fought.`, '',
     'Checks after each batch:', '', ...cpMd, '',
     `Averages over all ${n} seeds: control ${pct(nCtl)}, idea ${pct(nidea)}, difference ${pts(nidea - nCtl, 2)} points; battles per run ${S.cB.toFixed(0)} vs ${S.iB.toFixed(0)} (ratio ${bR.toFixed(2)}); wall time per run ${S.cS.toFixed(0)} s vs ${S.iS.toFixed(0)} s (ratio ${pct(mean(rows.map((x) => x.i.genSeconds / x.c.genSeconds)), 0)}).`, '', ...tableMd(rows), ''];
+  const noPrune = noPruneSection(cells, noPruneSeeds, top, heldoutCount);
+  md.push(...noPrune.md);
   md.push('## Cost', '', totals, '');
   md.push('## Rerun', '', '```', ...runCmds, '```', '', `Short cell: \`${cell('base')}\` (control) or \`${cell('hoeffding')}\` (idea).`, '');
   writeFileSync(path.join(outDir, 'hoeffding-ab.md'), md.join('\n'));
@@ -193,6 +214,7 @@ ${rangeSvg(rows)}
 <p class="num">Control = today's default search (Sequential Halving, 3 rounds, hoeffding off). Same seeds for both arms. Quality = win rate of each run's top ${top} teams against ${heldoutCount} fresh meta teams neither search fought. Battles per run: ${S.cB.toFixed(0)} control vs ${S.iB.toFixed(0)} idea (ratio ${bR.toFixed(2)}); wall time per run: ${S.cS.toFixed(0)} s vs ${S.iS.toFixed(0)} s.</p>
 <details><summary>Checks after each batch of ${BATCH} seeds</summary><table><thead><tr><th>seeds</th><th>mean diff (pts)</th><th>95% range (pts)</th><th>battle ratio</th><th>reading</th></tr></thead><tbody>${cps.map(({ k, v }) => `<tr><td>${k}</td><td>${pts(v.mean)}</td><td>${pts(v.lower)} to ${pts(v.upper)}</td><td>${v.battleRatio.toFixed(2)}</td><td>${esc(v.verdict)}</td></tr>`).join('')}</tbody></table></details>
 <details><summary>Per-seed detail</summary>${diffSvg(rows)}<table>${thead}<tbody>${trs(rows)}</tbody></table></details>
+${noPrune.html}
 <h2>Cost and stop rule</h2>
 <p>${esc(totals)}</p>
 <p class="num">${esc(STOP_RULE)}</p>
