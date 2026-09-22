@@ -88,6 +88,28 @@ Options:
                             with a different value will not resume  (default ${DEFAULTS.halvingRounds})
   --halving-keep F         fraction of teams kept after each halving round
                             (ignored when halving is off)              (default: 0.5)
+  --hoeffding-races        EXPERIMENTAL, off by default. Research idea #3: same goal
+                            as Sequential Halving (cut weaker teams early to skip
+                            battles) but a different, adaptive schedule -- opponents
+                            revealed in fixed-size chunks (--hoeffding-chunk), and
+                            after each chunk a team is cut only when its win-rate
+                            confidence interval (Wilson) no longer overlaps the
+                            current cull-line team's interval, not on a fixed
+                            round count. When on, this REPLACES Sequential Halving
+                            for the run regardless of --halving-rounds (the two
+                            solve the same problem at the same insertion point --
+                            the research report says pick one). Part of the run
+                            config: a run started with a different value will not
+                            resume                                     (default: off)
+                            (--no-hoeffding-races says "off" explicitly)
+  --hoeffding-chunk N       opponents revealed per round under Hoeffding Races
+                            (ignored when off)                          (default: 10)
+  --hoeffding-keep F        fraction of alive teams treated as the "safe" zone
+                            each round -- the cull line is the team at that
+                            rank; teams whose interval can't catch it are cut
+                            (ignored when off)                          (default: 0.5)
+  --hoeffding-confidence F  confidence level for the win-rate interval
+                            (0.90, 0.95, or 0.99; ignored when off)      (default: 0.95)
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
   --elites N               last-generation teams (by trailing-mean fitness)
@@ -274,6 +296,7 @@ const INT_FLAGS = [
   ['conv-window'],
   ['halving-rounds'], // unset = DEFAULTS.halvingRounds; 0/1 = off: every team fights every opponent
   ['conv-top-n'],
+  ['hoeffding-chunk'], // unset = 10 (only meaningful with --hoeffding-races)
 ];
 
 /** Value flags that must be fractions in [0,1]. */
@@ -311,6 +334,8 @@ const NUMBER_FLAGS = [
   ['similar-rivalry'],
   ['similar-floor'],
   ['halving-keep'], // unset = 0.5
+  ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
+  ['hoeffding-confidence'], // unset = 0.95 (only meaningful with --hoeffding-races)
 ];
 
 /** Value flags taken as plain strings. */
@@ -321,7 +346,7 @@ const STRING_FLAGS = [
 /** Switches. */
 const BOOLEAN_FLAGS = [
   'profile', 'force-fresh', 'fixed-opponents', 'no-battle-cache', 'no-html', 'no-evolutions', 'meta-mode',
-  'no-opponent-fitness-normalised', 'random-opponent-lead', 'check', 'help',
+  'no-opponent-fitness-normalised', 'random-opponent-lead', 'hoeffding-races', 'no-hoeffding-races', 'check', 'help',
 ];
 
 /** Every flag the parser accepts (the test suite checks each appears in HELP). */
@@ -435,7 +460,11 @@ export function parseEvolveArgs(argv) {
     metaMode: !!values['meta-mode'],
     opponentFitnessNormalised: values['no-opponent-fitness-normalised'] ? false : undefined,
     randomOpponentLead: values['random-opponent-lead'] ? true : undefined,
+    hoeffdingRaces: values['hoeffding-races'] && !values['no-hoeffding-races'] ? true : undefined,
   };
+  if (values['hoeffding-races'] && values['no-hoeffding-races']) {
+    throw usageError('--hoeffding-races and --no-hoeffding-races contradict each other');
+  }
   return { csvPath: positionals[0], opts, checkOnly: !!values.check };
 }
 

@@ -23,6 +23,7 @@ import {
 } from './analytics.js';
 import { evaluateTeamsInOrder } from './evaluate.js';
 import { evaluateWithHalving } from './halving.js';
+import { evaluateWithHoeffding } from './hoeffding.js';
 import { trimHistory, trimSupersededRecords } from './state.js';
 
 /**
@@ -184,14 +185,26 @@ export async function runGeneration(env, state) {
     typeCoverageContext,
   };
   const fitnessOf = (r) => (config.fitness === 'battle-reality' ? r.blendFitness : r.winRate);
-  const run = config.halvingRounds
-    ? await evaluateWithHalving(env.ctx, evaluateParams, {
-        rounds: config.halvingRounds,
-        keep: config.halvingKeep,
+  // --hoeffding-races (research idea #3) replaces Sequential Halving at this
+  // same insertion point when on -- the two solve the same problem (cut
+  // battles against teams that can no longer catch up) and the research
+  // report says pick one, not both; see src/evolve/hoeffding.js.
+  const run = config.hoeffdingRaces
+    ? await evaluateWithHoeffding(env.ctx, evaluateParams, {
+        chunk: config.hoeffdingChunk,
+        keep: config.hoeffdingKeep,
+        confidence: config.hoeffdingConfidence,
         seed: `${config.seed}-gen${generation}`,
         fitnessOf,
       })
-    : await evaluateTeamsInOrder(env.ctx, evaluateParams);
+    : config.halvingRounds
+      ? await evaluateWithHalving(env.ctx, evaluateParams, {
+          rounds: config.halvingRounds,
+          keep: config.halvingKeep,
+          seed: `${config.seed}-gen${generation}`,
+          fitnessOf,
+        })
+      : await evaluateTeamsInOrder(env.ctx, evaluateParams);
   // Both fitness numbers are computed on every result; the mode only picks
   // which one selection/mutation/convergence act on.
   const fitness = run.results.map(fitnessOf);
