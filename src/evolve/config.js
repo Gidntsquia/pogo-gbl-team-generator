@@ -317,6 +317,18 @@ export function buildRunConfig(csvPath, opts) {
     ...((opts.halvingRounds ?? DEFAULTS.halvingRounds) > 1
       ? { halvingRounds: opts.halvingRounds ?? DEFAULTS.halvingRounds, halvingKeep: opts.halvingKeep ?? 0.5 }
       : {}),
+    // Hoeffding Races (research idea #3, src/evolve/hoeffding.js), EXPERIMENTAL,
+    // off by default. Only-when-on, same shape as halving above: an off run's
+    // config is byte-identical to before, and a run resumed with the switch
+    // flipped is refused. When on it REPLACES halving for the run (see cli.js).
+    ...(opts.hoeffdingRaces
+      ? {
+          hoeffdingRaces: true,
+          hoeffdingChunk: opts.hoeffdingChunk ?? 10,
+          hoeffdingKeep: opts.hoeffdingKeep ?? 0.5,
+          hoeffdingConfidence: opts.hoeffdingConfidence ?? 0.95,
+        }
+      : {}),
     ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined
       ? {

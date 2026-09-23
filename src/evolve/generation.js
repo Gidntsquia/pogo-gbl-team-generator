@@ -23,6 +23,7 @@ import {
 } from './analytics.js';
 import { evaluateTeamsInOrder } from './evaluate.js';
 import { evaluateWithHalving } from './halving.js';
+import { evaluateWithHoeffding } from './hoeffding.js';
 import { trimHistory, trimSupersededRecords } from './state.js';
 
 /**
@@ -184,14 +185,26 @@ export async function runGeneration(env, state) {
     typeCoverageContext,
   };
   const fitnessOf = (r) => (config.fitness === 'battle-reality' ? r.blendFitness : r.winRate);
-  const run = config.halvingRounds
-    ? await evaluateWithHalving(env.ctx, evaluateParams, {
-        rounds: config.halvingRounds,
-        keep: config.halvingKeep,
+  // --hoeffding-races (research idea #3) replaces Sequential Halving at this
+  // same insertion point when on -- the two solve the same problem (cut
+  // battles against teams that can no longer catch up) and the research
+  // report says pick one, not both; see src/evolve/hoeffding.js.
+  const run = config.hoeffdingRaces
+    ? await evaluateWithHoeffding(env.ctx, evaluateParams, {
+        chunk: config.hoeffdingChunk,
+        keep: config.hoeffdingKeep,
+        confidence: config.hoeffdingConfidence,
         seed: `${config.seed}-gen${generation}`,
         fitnessOf,
       })
-    : await evaluateTeamsInOrder(env.ctx, evaluateParams);
+    : config.halvingRounds
+      ? await evaluateWithHalving(env.ctx, evaluateParams, {
+          rounds: config.halvingRounds,
+          keep: config.halvingKeep,
+          seed: `${config.seed}-gen${generation}`,
+          fitnessOf,
+        })
+      : await evaluateTeamsInOrder(env.ctx, evaluateParams);
   // Both fitness numbers are computed on every result; the mode only picks
   // which one selection/mutation/convergence act on.
   const fitness = run.results.map(fitnessOf);
@@ -259,6 +272,10 @@ export async function runGeneration(env, state) {
       cachedCount: run.cachedCount,
       errorCount: run.errorCount,
       msPerBattle: run.battleCount > 0 ? run.elapsedMs / run.battleCount : FALLBACK_MS_PER_BATTLE,
+      // Only present under --hoeffding-races: per-round cut diagnosis (how many
+      // teams were cut each round, and the cull-line interval width that
+      // explains why) -- see src/evolve/hoeffding.js and plans/PLAN.md round 3.
+      hoeffding: run.hoeffding ?? null,
     },
     analytics: {
       ...computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),
@@ -286,7 +303,12 @@ export async function runGeneration(env, state) {
       `raw win rate cand ${(record.analytics.candidateRawWinRateMean * 100).toFixed(1)}% / opp ${(record.analytics.opponentRawWinRateMean * 100).toFixed(1)}%, ` +
       `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (both directions; ${run.errorCount} errors), ` +
       `${formatDuration(run.elapsedMs)} elapsed, process RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
-      workerStatsMsg
+      workerStatsMsg +
+      (run.hoeffding
+        ? `, hoeffding: ${run.hoeffding.cutBattlesSkipped} battles skipped via cuts (` +
+          run.hoeffding.roundsDetail.map((d) => `r${d.round} ${d.aliveBefore}->${d.aliveAfter}`).join(', ') +
+          ')'
+        : '')
   );
 
   const conv = hasConverged(history, config.convergence ?? {});

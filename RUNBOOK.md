@@ -870,3 +870,44 @@ growing slices and drops the weaker teams after each round, so cut teams skip mo
 Over 10 seeds R=3 held-out quality matched the full grid (-0.2 pt, 95% bound -1.8; verdict "keep");
 R=4 lost 1.4 pt with a bound of -3.5 (verdict "unclear"). Prefer R=3 (`out/research-integration.html`). It is part of the run config: pass the same value on every resume.
 Compare against the control with `node scripts/compare-search.mjs run` then `report`.
+
+## Hoeffding Races (`--hoeffding-races`, EXPERIMENTAL, off by default)
+
+Research idea #3 ("Hoeffding Races"): same goal as Sequential Halving above (skip battles against
+teams that are going to lose anyway), same insertion point, but an adaptive schedule instead of a
+fixed one. Opponents are revealed in fixed-size chunks (`--hoeffding-chunk`, default 10); after each
+chunk, every alive team's win-rate confidence interval (Wilson score interval, over battles fought
+so far) is checked against the current cull-line team's interval (`--hoeffding-keep` sets the
+cull-line rank, default the median, `--hoeffding-confidence` sets the interval width, default 0.95).
+A team is cut only when its interval's upper bound falls below the cull line's lower bound. **Off by
+default**; `--hoeffding-races` turns it on and REPLACES halving for the run regardless of
+`--halving-rounds` (the research report says pick one of the two, not both). Only-when-on in the
+config fingerprint: an off run's config is byte-identical to before, and resuming a run with the
+switch flipped is refused (the error names the differing key).
+
+A/B: `node scripts/compare-search.mjs run --dir out/hoeffding-ab-cut --arms base,hoeffding --seeds
+s1,s2,...` then `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut` (writes the single
+report `out/hoeffding-ab.md`; no chart -- a 10-seed range is too wide to show anything);
+`node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut` runs the unattended driver under the
+fixed stop rule (`scripts/hoeffding-stats.mjs`) -- a speed-idea rule with both a quality bound and a
+battle-saving bar (the halving R=3 precedent above: KEEP needs >=20% fewer battles and a quality loss no
+worse than 3 points, or a clear quality gain regardless of cost).
+
+**Result: about equal to Halving (stop-rule label DROP = not adopted).** Round 3 (2026-09-22) found the original 60-seed A/B's idea arm
+(`--hoeffding-confidence 0.95`, the flag's default) cut essentially zero battles -- a setting issue, not
+a bug: the Wilson interval at that confidence is too wide at these battle counts to ever cross the cull
+line, so that A/B proved nothing about pruning (it cost the same as no pruning at all). A separate bug in
+`zFor()` (confidence -> z-score) was fixed the same round but did not affect 0.95, only confidence values
+below 0.9.
+
+Round 4 (2026-09-23) probed `--hoeffding-confidence` at 0.1/0.2/0.3/0.5/0.6/0.7/0.8 (1 seed each) to find
+the setting closest to Halving R=3's battle cost; confidence 0.1 came out at 1.02x Halving's battles
+(the others ranged 1.16x-1.78x) and was A/B'd for real: 10 seeds, same stop rule, same held-out scoring.
+It does prune -- 15-32 of the alive teams cut per generation, hundreds of battles skipped -- and lands
+at 0.97x Halving's battles (matching its cost, not beating it), but scores worse: -0.57 points of
+held-out quality (58.4% -> 57.8%), 95% range -3.57..+2.42, no clear win in either direction. The stop
+rule read this as DROP (Hoeffding and Halving are about equal): no battle saving and no quality gain over Halving. Full numbers, the setting
+probe table, the per-generation cut table from the real A/B cells, and the one summary chart:
+`out/hoeffding-ab.md` (rebuild with `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut`;
+rerun the A/B with `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut`, same stop rule,
+same seeds). Halving stays the default.
