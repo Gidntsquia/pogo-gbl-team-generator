@@ -95,7 +95,7 @@ test('hoeffding races off by default; --hoeffding-races on replaces halving in t
   assert.equal(on.hoeffdingRaces, true);
   assert.equal(on.hoeffdingChunk, 10);
   assert.equal(on.hoeffdingKeep, 0.5);
-  assert.equal(on.hoeffdingConfidence, 0.95);
+  assert.equal(on.hoeffdingConfidence, 0.1);
 
   assert.ok(!configsMatch(off, on), 'flipping the switch must be a config mismatch, refusing a silent resume');
 });

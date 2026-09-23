@@ -109,7 +109,9 @@ Options:
                             rank; teams whose interval can't catch it are cut
                             (ignored when off)                          (default: 0.5)
   --hoeffding-confidence F  confidence level for the win-rate interval
-                            (0.90, 0.95, or 0.99; ignored when off)      (default: 0.95)
+                            (any value in (0,1); low = cuts more
+                            aggressively; 0.1 is the setting the round-4
+                            A/B tested; ignored when off)               (default: 0.1)
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
   --elites N               last-generation teams (by trailing-mean fitness)
@@ -335,7 +337,7 @@ const NUMBER_FLAGS = [
   ['similar-floor'],
   ['halving-keep'], // unset = 0.5
   ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
-  ['hoeffding-confidence'], // unset = 0.95 (only meaningful with --hoeffding-races)
+  ['hoeffding-confidence'], // unset = 0.1 (only meaningful with --hoeffding-races)
 ];
 
 /** Value flags taken as plain strings. */

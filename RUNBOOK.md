@@ -871,14 +871,16 @@ Over 10 seeds R=3 held-out quality matched the full grid (-0.2 pt, 95% bound -1.
 R=4 lost 1.4 pt with a bound of -3.5 (verdict "unclear"). Prefer R=3 (`out/research-integration.html`). It is part of the run config: pass the same value on every resume.
 Compare against the control with `node scripts/compare-search.mjs run` then `report`.
 
-## Hoeffding Races (`--hoeffding-races`, EXPERIMENTAL, off by default)
+## Hoeffding Races (`--hoeffding-races`, supported alternative, off by default)
+
+**Status (2026-09-23): merged to main as a supported, off-by-default alternative to Sequential Halving.** Halving R=3 stays the default because it is simpler and Hoeffding is about equal to it (round 4: 5464 vs 5646 battles per run, -0.57 pt quality, 95% range -3.6..+2.4, 10 seeds). `--hoeffding-races` with no other Hoeffding flag uses `--hoeffding-confidence 0.1` (the setting round 4 tested; the old default 0.95 cut almost nothing). A checkpoint made under the old 0.95 default has `hoeffdingConfidence: 0.95` in its config and refuses to resume at 0.1 (the error names the key): resume it by passing `--hoeffding-confidence 0.95`.
 
 Research idea #3 ("Hoeffding Races"): same goal as Sequential Halving above (skip battles against
 teams that are going to lose anyway), same insertion point, but an adaptive schedule instead of a
 fixed one. Opponents are revealed in fixed-size chunks (`--hoeffding-chunk`, default 10); after each
 chunk, every alive team's win-rate confidence interval (Wilson score interval, over battles fought
 so far) is checked against the current cull-line team's interval (`--hoeffding-keep` sets the
-cull-line rank, default the median, `--hoeffding-confidence` sets the interval width, default 0.95).
+cull-line rank, default the median, `--hoeffding-confidence` sets the interval width, default 0.1).
 A team is cut only when its interval's upper bound falls below the cull line's lower bound. **Off by
 default**; `--hoeffding-races` turns it on and REPLACES halving for the run regardless of
 `--halving-rounds` (the research report says pick one of the two, not both). Only-when-on in the

@@ -106,11 +106,11 @@ export function wilsonInterval(wins, n, z = 1.96) {
  *   team at rank ceil(alive*keep) (by current fitness) is the cull line, and
  *   any alive team whose win-rate interval upper bound is below the cull
  *   line's interval lower bound is cut (default 0.5). `confidence` sets z
- *   (default 0.95 -> z=1.96).
+ *   (default 0.1).
  */
 export async function evaluateWithHoeffding(ctx, params, hoeffding) {
   const { teams, opponents } = params;
-  const { chunk = 10, keep = 0.5, confidence = 0.95, seed, fitnessOf } = hoeffding;
+  const { chunk = 10, keep = 0.5, confidence = 0.1, seed, fitnessOf } = hoeffding;
   const z = zFor(confidence);
   // Later rounds replay earlier rounds' pairings, so a real memo is required even under --no-battle-cache.
   const cache = params.cache && !params.cache.disabled ? params.cache : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);

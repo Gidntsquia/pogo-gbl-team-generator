@@ -326,7 +326,7 @@ export function buildRunConfig(csvPath, opts) {
           hoeffdingRaces: true,
           hoeffdingChunk: opts.hoeffdingChunk ?? 10,
           hoeffdingKeep: opts.hoeffdingKeep ?? 0.5,
-          hoeffdingConfidence: opts.hoeffdingConfidence ?? 0.95,
+          hoeffdingConfidence: opts.hoeffdingConfidence ?? 0.1,
         }
       : {}),
     ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
