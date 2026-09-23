@@ -892,13 +892,30 @@ unattended driver under the fixed stop rule (`scripts/hoeffding-stats.mjs`) -- a
 both a quality bound and a battle-saving bar (the halving R=3 precedent above: KEEP needs >=20% fewer
 battles and a quality loss no worse than 3 points, or a clear quality gain regardless of cost).
 
-**Result: KEEP.** 60 seeds, meta mode: Hoeffding Races beat today's default (Sequential Halving R=3) by
-+1.1 points of held-out team quality (58.4% -> 59.5%, 95% range +0.1..+2.0), but fights 170% of the
-battles and takes 165% of the wall time. A third no-pruning arm (halving off, hoeffding off, 10 seeds)
-shows Hoeffding Races costs about the same as running no pruning at all (9598 vs 9609 battles/run, 249
-vs 241 s/run) while scoring higher (59.9% vs 58.5%) -- so its extra cost over Halving isn't buying
-speed over "nothing," it's buying quality at roughly no-pruning's price. Halving stays the default
-(cheap, 5648 battles/run, same quality as no pruning); Hoeffding Races is a slower, higher-quality
-alternative for someone willing to spend no-pruning-level compute for a real quality gain. Full numbers,
-per-seed table, and the stop rule: `out/hoeffding-ab.md` / `.html` (rebuild with `node
-scripts/compare-search.mjs report --dir out/hoeffding-ab`).
+**Result: KEEP, PENDING RE-A/B (round 3 diagnosis found and fixed a real bug; the 60-seed number below
+predates the fix and is not trusted).** 60 seeds, meta mode: Hoeffding Races beat today's default
+(Sequential Halving R=3) by +1.1 points of held-out team quality (58.4% -> 59.5%, 95% range +0.1..+2.0),
+but fights 170% of the battles and takes 165% of the wall time. A third no-pruning arm (halving off,
+hoeffding off, 10 seeds) shows Hoeffding Races costs about the same as running no pruning at all (9598 vs
+9609 battles/run, 249 vs 241 s/run) while scoring higher (59.9% vs 58.5%).
+
+Round 3 diagnosis (2026-09-22): the checkpoint never recorded whether Hoeffding actually cut any teams,
+so nobody could tell whether that "same cost as no pruning" number meant the switch wasn't cutting, or
+was cutting exactly the battles it should. Fixed: `src/evolve/hoeffding.js` now returns (and
+`generation.js`/`checkpoint.js` now save) a per-round `roundsDetail` -- alive teams before/after, cut
+count, and the cull-line Wilson-interval width. Real probe runs (`out/hoeffding-ab/_diagnosis/`, not a
+batch of the A/B) show **zero cuts across two generations at the default settings** (chunk=10, keep=0.5,
+confidence=0.95): the cull-line interval is +-0.40 at n=10 battles and still +-0.21-0.30 by n=20-43 --
+too wide to ever separate mid-pack teams from the median, so the idea arm is a de facto no-op relative to
+no pruning at these settings, which is exactly why its cost matched no pruning's. Separately found and
+fixed a real bug along the way: `zFor()` (the confidence -> z-score conversion) silently fell back to the
+widest interval (z=1.96) for every `--hoeffding-confidence` below 0.9, so lowering the knob to loosen the
+interval did nothing -- replaced with a proper inverse-normal-CDF approximation. At confidence 0.95 (what
+the 60-seed A/B used) this bug made no difference (z(0.95) was already 1.96), so the KEEP result itself
+isn't known to be wrong, but a probe on the fixed code at confidence 0.5 *does* cut real battles (13 of 40
+teams, 230 battles, in one generation) -- proving the mechanism works once the interval is actually
+allowed to narrow. That confidence/keep combination has never been A/B'd. Full numbers, the per-generation
+cut diagnosis, and the rerun command: `out/hoeffding-ab.md` / `.html` (rebuild with `node
+scripts/compare-search.mjs report --dir out/hoeffding-ab`; re-A/B with `node
+scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab`, same stop rule, same seeds -- not run this round,
+budget was diagnosis-only). Halving stays the default.

@@ -3,7 +3,7 @@
 // out/hoeffding-ab/results.json: rerun with `node scripts/compare-search.mjs report --dir
 // out/hoeffding-ab` and the same bytes come out. Writes out/hoeffding-ab.{html,md}.
 // Statistics and the stop rule: hoeffding-stats.mjs.
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { mean, pairedRows, verdictAt, stopStatus, checkpoints, t95, BATCH, CAP_SEEDS, BAND, QUALITY_LOSS_BOUND, CHEAPER_RATIO, BUDGET_SECONDS } from './hoeffding-stats.mjs';
 
@@ -109,6 +109,68 @@ function noPruneSection(cells, seeds, top, heldoutCount) {
   return { md, html };
 }
 
+/**
+ * Round 3 diagnosis (plans/PLAN.md): pure function of saved probe checkpoints under
+ * `<outDir>/hoeffding-ab/_diagnosis/<label>-genN.json` (real short-cell `evolve.mjs --hoeffding-races` runs,
+ * a few minutes each, committed as data by the worker -- not a batch of the A/B). Each checkpoint's
+ * `timing.hoeffding.roundsDetail` (src/evolve/hoeffding.js) says, per round: teams alive before/after,
+ * how many were cut, and the cull-line interval width that explains a zero-cut round. Reads whatever
+ * `<label>-gen*.json` files are present; a label with none is skipped.
+ *
+ * @param {string} outDir
+ * @returns {{md: string[], html: string}}
+ */
+function cutDiagnosisSection(outDir) {
+  const dir = path.join(outDir, 'hoeffding-ab', '_diagnosis');
+  if (!existsSync(dir)) return { md: [], html: '' };
+  const labels = [
+    { key: 'default', title: 'Default settings (chunk=10, keep=0.5, confidence=0.95 -- the A/B\'s idea arm)' },
+    { key: 'loose', title: 'Loosened settings (chunk=10, keep=0.5, confidence=0.5 -- the round-3 fix, see below)' },
+  ];
+  const rowsFor = (key) => {
+    const files = readdirSync(dir).filter((f) => f.startsWith(`${key}-gen`) && f.endsWith('.json')).sort();
+    return files.map((f) => {
+      const cp = JSON.parse(readFileSync(path.join(dir, f), 'utf8'));
+      const h = cp.timing?.hoeffding;
+      if (!h) return null;
+      return { generation: cp.generation, h, battleCount: cp.timing.battleCount };
+    }).filter(Boolean);
+  };
+  const sections = labels.map(({ key, title }) => ({ key, title, rows: rowsFor(key) })).filter((s) => s.rows.length);
+  if (!sections.length) return { md: [], html: '' };
+
+  // `battleCount` (real battles fought this generation) is NOT a clean "vs the full grid" number --
+  // it also reflects the persistent cross-generation battle cache (a team re-fighting an opponent it
+  // already met last generation is served from cache, nothing to do with hoeffding cutting), so it is
+  // reported alongside `cutBattlesSkipped` (the exact count hoeffding.js attributes to real cuts) rather
+  // than compared to a hand-derived "full grid" figure that would double-count caching as pruning.
+  const genTableMd = (rows) => {
+    const out = [];
+    for (const { generation, h, battleCount } of rows) {
+      out.push(`**Generation ${generation}** -- ${battleCount} real battles fought this generation; ${h.cutBattlesSkipped} battles skipped specifically because a team was cut (${h.roundsDetail.reduce((s, d) => s + d.cutCount, 0)} team(s) cut, of ${h.roundsDetail[0]?.aliveBefore ?? '?'} alive at the start):`, '');
+      out.push('| round | opponents seen | alive before | alive after | cut | cull-line interval width |', '|---|---|---|---|---|---|');
+      for (const d of h.roundsDetail) {
+        out.push(`| ${d.round} | ${d.opponentsSeen} | ${d.aliveBefore} | ${d.aliveAfter} | ${d.cutCount} | ${d.cullLineIntervalWidth != null ? d.cullLineIntervalWidth.toFixed(2) : '(final round, no check)'} |`);
+      }
+      out.push('');
+    }
+    return out;
+  };
+  const genTableHtml = (rows) => rows.map(({ generation, h, battleCount }) => `
+<p><b>Generation ${generation}</b> -- ${battleCount} real battles fought this generation; ${h.cutBattlesSkipped} battles skipped specifically because a team was cut (${h.roundsDetail.reduce((s, d) => s + d.cutCount, 0)} team(s) cut, of ${h.roundsDetail[0]?.aliveBefore ?? '?'} alive at the start):</p>
+<table><thead><tr><th>round</th><th>opponents seen</th><th>alive before</th><th>alive after</th><th>cut</th><th>cull-line interval width</th></tr></thead><tbody>
+${h.roundsDetail.map((d) => `<tr><td>${d.round}</td><td>${d.opponentsSeen}</td><td>${d.aliveBefore}</td><td>${d.aliveAfter}</td><td>${d.cutCount}</td><td>${d.cullLineIntervalWidth != null ? d.cullLineIntervalWidth.toFixed(2) : '(final round, no check)'}</td></tr>`).join('')}
+</tbody></table>`).join('');
+
+  const note = 'Real probe runs (`evolve.mjs --hoeffding-races`, short-cell settings, a few generations, minutes each -- not a batch of the A/B), checkpoints saved under `out/hoeffding-ab/_diagnosis/`. "Battles skipped" is `cutBattlesSkipped` from `src/evolve/hoeffding.js` -- the exact count of pairings never fought because a team was cut -- not a comparison to real battle counts, which also move with the persistent cross-generation battle cache and would misattribute caching as pruning. Wilson-interval width at the cull line explains a zero-cut round directly: at n=10 battles the interval spans roughly +-0.40 (40 points), far wider than the real spread between mid-pack teams, so nothing is ever cut; at n=20 it narrows to about +-0.30 -- still too wide.';
+
+  const md = ['## Cut diagnosis: does `--hoeffding-races` ever skip battles at these settings?', '', note, ''];
+  for (const s of sections) { md.push(`### ${s.title}`, ''); md.push(...genTableMd(s.rows)); }
+  const html = `<h2>Cut diagnosis: does --hoeffding-races ever skip battles at these settings?</h2><p>${esc(note)}</p>` +
+    sections.map((s) => `<h3>${esc(s.title)}</h3>${genTableHtml(s.rows)}`).join('');
+  return { md, html };
+}
+
 export function renderHoeffdingReport(data, outDir) {
   const { top, heldoutCount, cells } = data;
   const shortSeeds = seedsOf(cells, 'base');
@@ -178,8 +240,11 @@ export function renderHoeffdingReport(data, outDir) {
     ...rs.map((x) => `| ${x.seed} | ${x.c.genBattles} | ${x.i.genBattles} | ${x.c.genSeconds.toFixed(0)} | ${x.i.genSeconds.toFixed(0)} | ${pct(x.c.heldoutMeanTop)} | ${pct(x.i.heldoutMeanTop)} | ${pct(x.c.heldoutTop1)} | ${pct(x.i.heldoutTop1)} |`)];
   const cpMd = ['| seeds | mean diff (pts) | 95% range (pts) | battle ratio | reading |', '|---|---|---|---|---|', ...cps.map(({ k, v }) => `| ${k} | ${pts(v.mean)} | ${pts(v.lower)} to ${pts(v.upper)} | ${v.battleRatio.toFixed(2)} | ${v.verdict} |`)];
 
-  const md = ['# Hoeffding Races vs the current default search (experimental)', '', explainerMd,
-    `## Verdict: ${LABEL[ov.label]}`, '', ov.done ? `${r.why}.` : '', headline, '', stopLine, capNote, '', STOP_RULE, '',
+  const rerunCmd = 'node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab   # same stop rule, same seeds (rename/move out/hoeffding-ab first for a clean 60-seed rerun; in place it just resumes/reuses the already-scored cells)';
+  const pendingNote = `Not trusted: this verdict is PENDING a re-A/B. The number below was computed before the round-3 diagnosis fixed a bug in the confidence-to-z-score mapping (src/evolve/hoeffding.js zFor(): --hoeffding-confidence values below 0.9 used to silently fall back to the widest interval, z=1.96, instead of narrowing). At the default confidence (0.95) used for every one of these 60 seeds the fix changes nothing (z(0.95) is 1.96 either way -- see the cut diagnosis above), so this KEEP is not known to be wrong, but it has not been re-run on the fixed code, and the diagnosis above shows the idea arm cut essentially zero battles at these settings regardless -- so "KEEP" here really means "no worse than no pruning, at no-pruning's cost," not "the pruning mechanism was exercised." A looser --hoeffding-confidence (e.g. 0.5) does cut real battles, per the diagnosis above -- that combination has not been A/B'd. Rerun before trusting this number for anything: ${rerunCmd}`;
+  const md = ['# Hoeffding Races vs the current default search (experimental)', '', explainerMd, '',
+    ...cutDiagnosisSection(outDir).md,
+    `## Verdict: ${LABEL[ov.label]} (PENDING RE-A/B)`, '', pendingNote, '', ov.done ? `${r.why}.` : '', headline, '', stopLine, capNote, '', STOP_RULE, '',
     '## Short runs (8 generations, population 40)', '', `Control = today's default (Sequential Halving R=3, hoeffding off). Idea = identical run with \`--hoeffding-races\` instead (halving off, so it does not both run). ${n} seeds, same seeds for both arms, 30 opponents per generation, meta mode. Quality = mean unweighted win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams (seed "heldout") that neither arm's search fought.`, '',
     'Checks after each batch:', '', ...cpMd, '',
     `Averages over all ${n} seeds: control ${pct(nCtl)}, idea ${pct(nidea)}, difference ${pts(nidea - nCtl, 2)} points; battles per run ${S.cB.toFixed(0)} vs ${S.iB.toFixed(0)} (ratio ${bR.toFixed(2)}); wall time per run ${S.cS.toFixed(0)} s vs ${S.iS.toFixed(0)} s (ratio ${pct(mean(rows.map((x) => x.i.genSeconds / x.c.genSeconds)), 0)}).`, '', ...tableMd(rows), ''];
@@ -204,10 +269,11 @@ table{border-collapse:collapse;width:100%;font-size:13px;display:block;overflow-
 .v{font-size:14px;border:1px solid currentColor;border-radius:4px;padding:1px 10px;margin-left:8px;display:inline-block}.keep{color:var(--keep)}.drop{color:var(--drop)}.unclear{color:var(--unc)}
 .box{border:1px solid var(--line);border-radius:8px;padding:4px 16px;margin:16px 0}details{margin:8px 0}summary{cursor:pointer;color:var(--mut)}.num{color:var(--mut);font-size:13px}code{font-size:12px}pre{white-space:pre-wrap;word-break:break-all}
 </style></head><body>
-<h1>Hoeffding Races vs the current search <span class="v ${ov.cls}">${esc(LABEL[ov.label])}</span></h1>
+<h1>Hoeffding Races vs the current search <span class="v unclear">${esc(LABEL[ov.label])} (PENDING RE-A/B)</span></h1>
 ${explainerHtml}
+${cutDiagnosisSection(outDir).html}
 <h2>Answer</h2>
-<div class="box"><p><b>${esc(LABEL[ov.label])}.</b> ${ov.done ? esc(r.why) + '.' : ''} ${esc(headline)}</p><p>${esc(stopLine)} ${esc(capNote)}</p></div>
+<div class="box"><p><b>${esc(pendingNote)}</b></p><p><b>${esc(LABEL[ov.label])}.</b> ${ov.done ? esc(r.why) + '.' : ''} ${esc(headline)}</p><p>${esc(stopLine)} ${esc(capNote)}</p></div>
 <h2>Short runs: ${n} seeds</h2>
 ${chartSvg(rows, top)}
 ${rangeSvg(rows)}

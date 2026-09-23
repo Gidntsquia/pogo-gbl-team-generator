@@ -176,6 +176,7 @@ export function writeGenerationsAnalytics(outDir, generationRecords) {
     errorCount: r.timing.errorCount,
     elapsedMs: r.timing.elapsedMs,
     msPerBattle: r.timing.msPerBattle,
+    hoeffding: r.timing.hoeffding ?? null,
     ...r.analytics,
   }));
   writeFileSync(path.join(outDir, 'evolve-generations.json'), JSON.stringify(analyticsOnly, null, 2), 'utf8');

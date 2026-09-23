@@ -272,6 +272,10 @@ export async function runGeneration(env, state) {
       cachedCount: run.cachedCount,
       errorCount: run.errorCount,
       msPerBattle: run.battleCount > 0 ? run.elapsedMs / run.battleCount : FALLBACK_MS_PER_BATTLE,
+      // Only present under --hoeffding-races: per-round cut diagnosis (how many
+      // teams were cut each round, and the cull-line interval width that
+      // explains why) -- see src/evolve/hoeffding.js and plans/PLAN.md round 3.
+      hoeffding: run.hoeffding ?? null,
     },
     analytics: {
       ...computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),
@@ -299,7 +303,12 @@ export async function runGeneration(env, state) {
       `raw win rate cand ${(record.analytics.candidateRawWinRateMean * 100).toFixed(1)}% / opp ${(record.analytics.opponentRawWinRateMean * 100).toFixed(1)}%, ` +
       `${run.battleCount} battles simulated + ${run.cachedCount} served from cache (both directions; ${run.errorCount} errors), ` +
       `${formatDuration(run.elapsedMs)} elapsed, process RSS ${(process.memoryUsage().rss / 1048576).toFixed(0)}MB` +
-      workerStatsMsg
+      workerStatsMsg +
+      (run.hoeffding
+        ? `, hoeffding: ${run.hoeffding.cutBattlesSkipped} battles skipped via cuts (` +
+          run.hoeffding.roundsDetail.map((d) => `r${d.round} ${d.aliveBefore}->${d.aliveAfter}`).join(', ') +
+          ')'
+        : '')
   );
 
   const conv = hasConverged(history, config.convergence ?? {});

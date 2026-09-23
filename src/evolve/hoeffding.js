@@ -39,6 +39,40 @@ function shuffled(items, seed) {
 const pick = (arr, idxs) => (arr ? idxs.map((i) => arr[i]) : arr);
 
 /**
+ * z-score (standard normal quantile) for a two-sided confidence level, e.g.
+ * 0.95 -> 1.96, 0.80 -> 1.282. Acklam's rational approximation (good to
+ * ~1.15e-9 relative error), used because `--hoeffding-confidence` accepts any
+ * value in (0,1) -- a hand-picked lookup table (this file's earlier version)
+ * silently fell back to the WIDEST interval (z=1.96) for every confidence
+ * below 0.9, so lowering the knob to get narrower intervals (and thus more
+ * cuts) did nothing; see plans/PLAN.md round 3 diagnosis.
+ *
+ * @param {number} confidence - in (0, 1), e.g. 0.95
+ * @returns {number}
+ */
+export function zFor(confidence) {
+  const c = Math.min(0.999999, Math.max(0.000001, confidence));
+  const p = 1 - (1 - c) / 2; // two-sided -> upper-tail probability
+  // Acklam's algorithm for the inverse standard normal CDF.
+  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239];
+  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
+  const c2 = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
+  const plow = 0.02425;
+  if (p < plow) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c2[0] * q + c2[1]) * q + c2[2]) * q + c2[3]) * q + c2[4]) * q + c2[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p > 1 - plow) {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c2[0] * q + c2[1]) * q + c2[2]) * q + c2[3]) * q + c2[4]) * q + c2[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  const q = p - 0.5;
+  const r = q * q;
+  return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+
+/**
  * Wilson score interval for a binomial proportion (wins/n), the standard
  * finite-sample-safe interval (unlike the raw Hoeffding bound, it stays
  * inside [0,1] and isn't overly conservative at small n, which matters here
@@ -77,7 +111,7 @@ export function wilsonInterval(wins, n, z = 1.96) {
 export async function evaluateWithHoeffding(ctx, params, hoeffding) {
   const { teams, opponents } = params;
   const { chunk = 10, keep = 0.5, confidence = 0.95, seed, fitnessOf } = hoeffding;
-  const z = confidence >= 0.99 ? 2.576 : confidence >= 0.95 ? 1.96 : confidence >= 0.9 ? 1.645 : 1.96;
+  const z = zFor(confidence);
   // Later rounds replay earlier rounds' pairings, so a real memo is required even under --no-battle-cache.
   const cache = params.cache && !params.cache.disabled ? params.cache : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
   const order = shuffled(opponents.map((_, j) => j), `${seed}-hoeffding`);
@@ -95,6 +129,7 @@ export async function evaluateWithHoeffding(ctx, params, hoeffding) {
   let alive = teams.map((_, i) => i);
   let seen = 0;
   let cutBattlesSkipped = 0; // pairings never fought because a team was cut early
+  const roundsDetail = []; // per-round diagnosis: how many were cut and why (see report requirement)
 
   for (let r = 0; r < numRounds; r++) {
     const sliceEnd = Math.min(opponents.length, (r + 1) * chunkSize);
@@ -121,6 +156,9 @@ export async function evaluateWithHoeffding(ctx, params, hoeffding) {
     seen = slice.length;
 
     const isLast = sliceEnd >= opponents.length;
+    const aliveBefore = alive.length;
+    let cutCount = 0;
+    let cullLineWidth = null;
     if (!isLast && alive.length > 1) {
       const ranked = alive
         .map((teamIdx, k) => {
@@ -132,6 +170,7 @@ export async function evaluateWithHoeffding(ctx, params, hoeffding) {
         .sort((a, b) => b.f - a.f || a.teamIdx - b.teamIdx);
       const cullRank = Math.min(ranked.length - 1, Math.max(0, Math.ceil(ranked.length * keep) - 1));
       const cullLine = ranked[cullRank];
+      cullLineWidth = cullLine.ci.hi - cullLine.ci.lo;
       const survivors = [];
       for (const entry of ranked) {
         if (entry === cullLine || entry.ci.hi >= cullLine.ci.lo) {
@@ -139,10 +178,19 @@ export async function evaluateWithHoeffding(ctx, params, hoeffding) {
         } else {
           cutAtRound[entry.teamIdx] = r;
           cutBattlesSkipped += opponents.length - sliceEnd;
+          cutCount += 1;
         }
       }
       alive = survivors.sort((a, b) => a - b);
     }
+    roundsDetail.push({
+      round: r,
+      opponentsSeen: sliceEnd,
+      aliveBefore,
+      aliveAfter: alive.length,
+      cutCount,
+      cullLineIntervalWidth: cullLineWidth, // wide (close to 1) explains why nobody got cut
+    });
   }
 
   // Cap each cut team below everyone who outlasted it (see header).
@@ -164,6 +212,6 @@ export async function evaluateWithHoeffding(ctx, params, hoeffding) {
     elapsedMs: Date.now() - startedAt,
     startedAt,
     finishedAt: Date.now(),
-    hoeffding: { chunk: chunkSize, keep, confidence, rounds: numRounds, cutBattlesSkipped },
+    hoeffding: { chunk: chunkSize, keep, confidence, rounds: numRounds, cutBattlesSkipped, roundsDetail },
   };
 }

@@ -3,7 +3,7 @@
 // outlasted it. Stub executor, no real battles.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateWithHoeffding, wilsonInterval } from '../src/evolve/hoeffding.js';
+import { evaluateWithHoeffding, wilsonInterval, zFor } from '../src/evolve/hoeffding.js';
 
 const spec = (id) => ({ speciesId: id, ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false });
 
@@ -54,6 +54,17 @@ test('wilsonInterval: n=0 is maximally wide, a clean 0/n sits at 0 with a positi
   assert.ok(big.hi < small.hi, 'more evidence of losing narrows the upper bound');
 });
 
+test('zFor: matches known normal-quantile values and, crucially, keeps narrowing below 0.9 confidence (round-3 fix -- it used to jump back to the widest z there)', () => {
+  assert.ok(Math.abs(zFor(0.95) - 1.96) < 0.001);
+  assert.ok(Math.abs(zFor(0.9) - 1.645) < 0.001);
+  assert.ok(Math.abs(zFor(0.8) - 1.2816) < 0.001);
+  assert.ok(Math.abs(zFor(0.5) - 0.6745) < 0.001);
+  assert.ok(zFor(0.5) < zFor(0.8), 'lower confidence must give a narrower (smaller) z, monotonically');
+  assert.ok(zFor(0.8) < zFor(0.9));
+  assert.ok(zFor(0.9) < zFor(0.95));
+  assert.ok(zFor(0.95) < zFor(0.99));
+});
+
 test('hoeffding races fights fewer pairings than the full grid, keeps the strong teams ahead, and never ranks a cut team above a survivor', async () => {
   const run = await evaluateWithHoeffding({}, params, hoeffding);
   assert.equal(run.results.length, N);
@@ -64,6 +75,14 @@ test('hoeffding races fights fewer pairings than the full grid, keeps the strong
   for (const r of run.results.slice(0, 4)) assert.ok(r.winRate <= floor);
   assert.ok(run.opponentTally.every((t) => t && t.battles > 0), 'every opponent has a ledger');
   assert.ok(run.hoeffding.rounds >= 1);
+  // Round 3 (this round): the checkpoint/report need a per-round cut count and
+  // the cull-line interval width that explains a round with zero cuts.
+  assert.equal(run.hoeffding.roundsDetail.length, run.hoeffding.rounds);
+  const totalCuts = run.hoeffding.roundsDetail.reduce((s, d) => s + d.cutCount, 0);
+  assert.ok(totalCuts > 0, 'the clear-cut strong/weak split should produce at least one real cut');
+  for (const d of run.hoeffding.roundsDetail) {
+    assert.equal(d.aliveAfter, d.aliveBefore - d.cutCount);
+  }
 });
 
 test('hoeffding races off by default; --hoeffding-races on replaces halving in the run config and is refused on resume with a different value', async () => {
