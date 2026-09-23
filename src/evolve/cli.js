@@ -5,6 +5,7 @@ import { DEFAULT_VENDOR_ROOT } from '../engine/pvpokeLoader.js';
 import { DEFAULT_SELECTION_TRAILING } from '../teams/evolve.js';
 import { resolveFormat } from '../util/leagues.js';
 import { UserError } from '../util/userError.js';
+import { blocksForFraction } from './sampled.js';
 import { DEFAULTS, FITNESS_MODES } from './config.js';
 import { FINAL_FRESH_WHEN_NO_CURATED } from './finalPass.js';
 import { formatTeamMembers, pct } from './format.js';
@@ -112,6 +113,16 @@ Options:
                             (any value in (0,1); low = cuts more
                             aggressively; 0.1 is the setting the round-4
                             A/B tested; ignored when off)               (default: 0.1)
+  --sampled-combats F      EXPERIMENTAL, off by default. Every candidate fights a random
+                            sample of the opponent pool instead of all of it; F is the
+                            sampled fraction and must be 1/K (0.5 or 0.25). Opponents are
+                            split into K random blocks and candidates into K groups, one
+                            block each, so every opponent still gets a fitness. Works with
+                            Sequential Halving on (each group halves within its own block)
+                            or off. Fights ~F of the grid, so raise --population and
+                            --opponents-per-gen to spend the saving. Part of the run
+                            config: a run started with a different value will not resume
+                                                                       (default: off)
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
   --elites N               last-generation teams (by trailing-mean fitness)
@@ -337,6 +348,7 @@ const NUMBER_FLAGS = [
   ['similar-floor'],
   ['halving-keep'], // unset = 0.5
   ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
+  ['sampled-combats'], // unset = off; validated as 1/K below
   ['hoeffding-confidence'], // unset = 0.1 (only meaningful with --hoeffding-races)
 ];
 
@@ -464,6 +476,12 @@ export function parseEvolveArgs(argv) {
     randomOpponentLead: values['random-opponent-lead'] ? true : undefined,
     hoeffdingRaces: values['hoeffding-races'] && !values['no-hoeffding-races'] ? true : undefined,
   };
+  if (opts.sampledCombats !== undefined && (opts.sampledCombats === 0 || blocksForFraction(opts.sampledCombats) === null)) {
+    throw usageError(`--sampled-combats ${values['sampled-combats']} is not 1/K`, 'use a fraction like 0.5 or 0.25 (each candidate fights that share of the opponents)');
+  }
+  if (opts.sampledCombats && opts.hoeffdingRaces) {
+    throw usageError('--sampled-combats and --hoeffding-races cannot be combined', 'drop one; sampled combats works with Halving on or off');
+  }
   if (values['hoeffding-races'] && values['no-hoeffding-races']) {
     throw usageError('--hoeffding-races and --no-hoeffding-races contradict each other');
   }

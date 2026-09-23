@@ -24,6 +24,7 @@ import {
 import { evaluateTeamsInOrder } from './evaluate.js';
 import { evaluateWithHalving } from './halving.js';
 import { evaluateWithHoeffding } from './hoeffding.js';
+import { evaluateWithSampling } from './sampled.js';
 import { trimHistory, trimSupersededRecords } from './state.js';
 
 /**
@@ -189,7 +190,16 @@ export async function runGeneration(env, state) {
   // same insertion point when on -- the two solve the same problem (cut
   // battles against teams that can no longer catch up) and the research
   // report says pick one, not both; see src/evolve/hoeffding.js.
-  const run = config.hoeffdingRaces
+  const halvingOpts = config.halvingRounds
+    ? { rounds: config.halvingRounds, keep: config.halvingKeep, seed: `${config.seed}-gen${generation}`, fitnessOf }
+    : null;
+  const run = config.sampledCombats
+    ? await evaluateWithSampling(env.ctx, evaluateParams, {
+        fraction: config.sampledCombats,
+        seed: `${config.seed}-gen${generation}`,
+        halving: halvingOpts ? { rounds: halvingOpts.rounds, keep: halvingOpts.keep, fitnessOf } : null,
+      })
+    : config.hoeffdingRaces
     ? await evaluateWithHoeffding(env.ctx, evaluateParams, {
         chunk: config.hoeffdingChunk,
         keep: config.hoeffdingKeep,
@@ -276,6 +286,8 @@ export async function runGeneration(env, state) {
       // teams were cut each round, and the cull-line interval width that
       // explains why) -- see src/evolve/hoeffding.js and plans/PLAN.md round 3.
       hoeffding: run.hoeffding ?? null,
+      // Only under --sampled-combats: the fraction and each block's teams x opponents.
+      sampled: run.sampled ?? null,
     },
     analytics: {
       ...computeGenerationAnalytics({ matrix: deduped, population, fitness, lineage, results: run.results }),

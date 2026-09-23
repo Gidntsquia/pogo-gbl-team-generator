@@ -329,6 +329,9 @@ export function buildRunConfig(csvPath, opts) {
           hoeffdingConfidence: opts.hoeffdingConfidence ?? 0.1,
         }
       : {}),
+    // Sampled combats (src/evolve/sampled.js), EXPERIMENTAL, off by default. Only-when-on, like halving/hoeffding:
+    // an off run's config is byte-identical to before, and a run resumed with the switch or fraction changed is refused.
+    ...(opts.sampledCombats ? { sampledCombats: opts.sampledCombats } : {}),
     ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined
       ? {

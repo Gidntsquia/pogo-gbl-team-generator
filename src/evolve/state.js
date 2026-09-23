@@ -6,6 +6,7 @@ import {
   describeConfigMismatch,
   selectionTrailingOf,
 } from './config.js';
+import { UserError } from '../util/userError.js';
 import { opponentsAt, populationAt } from './schedule.js';
 import {
   CHECKPOINT_FORMAT_VERSION,
@@ -109,15 +110,14 @@ export function initRunState(env) {
   if (state.generation === 0) {
     const stale = readCheckpoint(outDir, 0);
     if (stale && !configsMatch(stale.config, config) && !opts.forceFresh) {
-      throw new Error(
-        `evolve: ${checkpointPath(outDir, 0)} exists but its config doesn't match this run's flags ` +
-          `(${describeConfigMismatch(stale.config, config)}). Refusing to overwrite it. ` +
-          `A config change can't resume in place -- use a different --out-dir (optionally with ` +
-          `--seed-from ${checkpointPath(outDir, 0)} to carry its population over), ` +
+      throw new UserError(
+        `${checkpointPath(outDir, 0)} config differs from this run's flags (${describeConfigMismatch(stale.config, config)}); refusing to overwrite it`,
+        `use a different --out-dir (optionally --seed-from ${checkpointPath(outDir, 0)}), ` +
           (config.halvingRounds && !stale.config?.halvingRounds
-            ? `or pass --halving-rounds 0 to resume this run as it started (Sequential Halving is now on by default), `
+            ? `--halving-rounds 0 to resume as it started, `
             : '') +
-          `or pass --force-fresh to discard this directory's checkpoints and start over here.`
+          `or --force-fresh to discard this directory's checkpoints`,
+        1
       );
     }
   }
