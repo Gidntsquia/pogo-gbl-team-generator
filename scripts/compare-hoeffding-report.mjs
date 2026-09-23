@@ -143,12 +143,12 @@ function summaryChartSvg(r) {
     t(x1(r.battleRatio) - 6, 120, r.battleRatio.toFixed(2), 'text-anchor="end" font-size="15" font-weight="700" fill="#fff"'),
     t(40, 195, `Saves ${((1 - r.battleRatio) * 100).toFixed(0)}%; needs 20%`, 'font-size="11"'),
     `<line x1="${x2(0)}" y1="60" x2="${x2(0)}" y2="170" stroke="#888" stroke-dasharray="3 3"/>`, t(x2(0), 54, 'equal', 'text-anchor="middle" font-size="11"'),
-    `<line x1="${x2(-3)}" y1="60" x2="${x2(-3)}" y2="170" stroke="#1a7f37" stroke-width="2"/>`, t(x2(-3), 54, 'loss bound -3', 'text-anchor="middle" font-size="11" fill="#1a7f37"'),
+    `<line x1="${x2(-3)}" y1="60" x2="${x2(-3)}" y2="170" stroke="#1a7f37" stroke-width="2"/>`, t(x2(-3), 54, 'max loss -3', 'text-anchor="middle" font-size="11" fill="#1a7f37"'),
     `<line x1="${x2(lo).toFixed(1)}" y1="115" x2="${x2(hi).toFixed(1)}" y2="115" stroke="#c2410c" stroke-width="3"/>`,
     `<circle cx="${x2(m).toFixed(1)}" cy="115" r="7" fill="#c2410c"/>`,
     t(x2(m), 100, `${m >= 0 ? '+' : ''}${m.toFixed(1)}`, 'text-anchor="middle" font-size="13" font-weight="700"'),
     t(400, 195, `95% range ${lo.toFixed(1)} to ${hi >= 0 ? '+' : ''}${hi.toFixed(1)} (${r.n} seeds)`, 'font-size="11"'),
-    t(40, 235, 'Verdict: DROP. It prunes but saves nothing, and buys no quality.', 'font-weight="700"'),
+    t(40, 235, 'About equal: same cost, same quality. Halving stays the default.', 'font-weight="700"'),
     '</svg>', ''];
   return o.join('\n');
 }
@@ -184,7 +184,7 @@ export function renderHoeffdingReport(data, outDir) {
     const nCtl = q('c'), nIdea = q('i');
     const cps = checkpoints(n).map((k) => ({ k, v: verdictAt(rows, k) }));
     const width = (r.upper - r.lower) * 100;
-    bottom = `**${LABEL[ov.label]}.** At confidence ${hoeffdingConfidence}, Hoeffding Races cuts many teams early but still fights ${pct(r.battleRatio, 0)} of Halving's battles (${S.iB.toFixed(0)} vs ${S.cB.toFixed(0)} per run) and takes ${pct(r.timeRatio, 0)} of its time, so it saves nothing. Quality was ${pts(r.mean)} points against Halving over ${r.n} seeds (${pct(nCtl)} vs ${pct(nIdea)}), inside a 95% range of ${pts(r.lower)} to ${pts(r.upper)}.`;
+    bottom = `**About equal.** Hoeffding Races and Sequential Halving perform the same here, so there is no reason to switch: Halving stays the default (the stop rule's label for this is ${LABEL[ov.label]}, meaning not adopted). At confidence ${hoeffdingConfidence}, Hoeffding Races cuts many teams early but still fights ${pct(r.battleRatio, 0)} of Halving's battles (${S.iB.toFixed(0)} vs ${S.cB.toFixed(0)} per run) and takes ${pct(r.timeRatio, 0)} of its time, so it saves nothing. Quality was ${pts(r.mean)} points against Halving over ${r.n} seeds (${pct(nCtl)} vs ${pct(nIdea)}), inside a 95% range of ${pts(r.lower)} to ${pts(r.upper)}.`;
     resultMd = ['## 3. At that setting it prunes, but saves no battles', '',
       `${n} seeds, same seeds for both arms, 30 opponents per generation, meta mode. Quality is the mean win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams that neither search fought.`, '',
       `- **Cost:** ${S.iB.toFixed(0)} battles per run against Halving's ${S.cB.toFixed(0)} (ratio ${bR.toFixed(2)}); ${S.iS.toFixed(0)} s against ${S.cS.toFixed(0)} s.`,

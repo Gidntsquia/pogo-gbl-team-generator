@@ -893,7 +893,7 @@ fixed stop rule (`scripts/hoeffding-stats.mjs`) -- a speed-idea rule with both a
 battle-saving bar (the halving R=3 precedent above: KEEP needs >=20% fewer battles and a quality loss no
 worse than 3 points, or a clear quality gain regardless of cost).
 
-**Result: DROP.** Round 3 (2026-09-22) found the original 60-seed A/B's idea arm
+**Result: about equal to Halving (stop-rule label DROP = not adopted).** Round 3 (2026-09-22) found the original 60-seed A/B's idea arm
 (`--hoeffding-confidence 0.95`, the flag's default) cut essentially zero battles -- a setting issue, not
 a bug: the Wilson interval at that confidence is too wide at these battle counts to ever cross the cull
 line, so that A/B proved nothing about pruning (it cost the same as no pruning at all). A separate bug in
@@ -906,7 +906,7 @@ the setting closest to Halving R=3's battle cost; confidence 0.1 came out at 1.0
 It does prune -- 15-32 of the alive teams cut per generation, hundreds of battles skipped -- and lands
 at 0.97x Halving's battles (matching its cost, not beating it), but scores worse: -0.57 points of
 held-out quality (58.4% -> 57.8%), 95% range -3.57..+2.42, no clear win in either direction. The stop
-rule read this as **DROP**: no battle saving and no quality gain over Halving. Full numbers, the setting
+rule read this as DROP (Hoeffding and Halving are about equal): no battle saving and no quality gain over Halving. Full numbers, the setting
 probe table, the per-generation cut table from the real A/B cells, and the one summary chart:
 `out/hoeffding-ab.md` (rebuild with `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut`;
 rerun the A/B with `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut`, same stop rule,
