@@ -17,7 +17,6 @@ export const NOT_TRIED = [
   ['PSRO / alpha-Rank (#6)', 'Needs a full payoff table per generation and a solver; the larger change. Not built.'],
   ['Spinning-top games (#7)', 'Descriptive analysis only; no in-app change. Not built.'],
   ['Prioritised fictitious self-play (#8)', 'Changes fitness away from meta win rate, against docs/fitness-symmetry.md. Not built.'],
-  ['Hyperband (#9)', 'A bracketed variant of Sequential Halving; only worth it if halving shows first-slice noise hurting. Not built.'],
   ['Novelty search (#10)', 'Diversity bonus that competes with the existing core-rivalry penalty. Not built.'],
   ['Surrogate models (#11)', 'General overview, no evidence for discrete co-evolving targets. Not built.'],
   ['VGC-Bench (#12)', 'Doubles with hidden information; does not transfer to GBL 3v3. Not built.'],
