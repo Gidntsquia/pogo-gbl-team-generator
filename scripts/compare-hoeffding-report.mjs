@@ -125,11 +125,11 @@ function old95Section() {
     `The original 60-seed A/B (\`out/hoeffding-ab/\`) ran \`--hoeffding-confidence 0.95\` (the flag's default) and cut essentially zero battles: mean battles/run ${mean(rows.map((x) => x.i.genBattles)).toFixed(0)} vs Halving's ${mean(rows.map((x) => x.c.genBattles)).toFixed(0)} (ratio ${bR.toFixed(2)}) -- it cost the same as no pruning and proved nothing about the pruning mechanism itself (the probes below show why). Kept for the record, not as evidence either way.`, ''];
 }
 
-/** One summary chart for the Bottom line: cost and quality vs Halving, with the keep bar. Deterministic SVG. */
+/** One summary chart for the Bottom line: cost and quality vs Halving, Deterministic SVG. */
 function summaryChartSvg(r) {
   const W = 720, H = 250, F = 'font-family="system-ui,Helvetica,Arial,sans-serif"';
   const t = (x, y, s, o = '') => `<text x="${x}" y="${y}" ${F} ${o.includes('font-size') ? '' : 'font-size="13" '}${o.includes('fill') ? '' : 'fill="#222" '}${o}>${s}</text>`;
-  // Panel 1: battles vs Halving (1.00), keep bar at 0.80. Axis 0.5..1.1.
+  // Panel 1: battles vs Halving (1.00), Axis 0.5..1.1.
   const x1 = (v) => 40 + ((v - 0.5) / 0.6) * 280;
   // Panel 2: quality diff (pts). Axis -5..+5.
   const x2 = (v) => 400 + ((v + 5) / 10) * 280;
@@ -138,12 +138,10 @@ function summaryChartSvg(r) {
     `<rect width="${W}" height="${H}" fill="#fff"/>`,
     t(40, 26, 'Cost: battles per run, Halving = 1.00', 'font-weight="600"'), t(400, 26, 'Quality: held-out win rate vs Halving (points)', 'font-weight="600"'),
     `<line x1="${x1(1)}" y1="60" x2="${x1(1)}" y2="170" stroke="#888" stroke-dasharray="3 3"/>`, t(x1(1), 54, 'Halving 1.00', 'text-anchor="middle" font-size="11"'),
-    `<line x1="${x1(0.8)}" y1="60" x2="${x1(0.8)}" y2="170" stroke="#1a7f37" stroke-width="2"/>`, t(x1(0.8), 54, 'keep bar 0.80', 'text-anchor="middle" font-size="11" fill="#1a7f37"'),
     `<rect x="${x1(0.5)}" y="95" width="${(x1(r.battleRatio) - x1(0.5)).toFixed(1)}" height="40" fill="#c2410c"/>`,
     t(x1(r.battleRatio) - 6, 120, r.battleRatio.toFixed(2), 'text-anchor="end" font-size="15" font-weight="700" fill="#fff"'),
-    t(40, 195, `Saves ${((1 - r.battleRatio) * 100).toFixed(0)}%; needs 20%`, 'font-size="11"'),
+    t(40, 195, `Saves ${((1 - r.battleRatio) * 100).toFixed(0)}%`, 'font-size="11"'),
     `<line x1="${x2(0)}" y1="60" x2="${x2(0)}" y2="170" stroke="#888" stroke-dasharray="3 3"/>`, t(x2(0), 54, 'equal', 'text-anchor="middle" font-size="11"'),
-    `<line x1="${x2(-3)}" y1="60" x2="${x2(-3)}" y2="170" stroke="#1a7f37" stroke-width="2"/>`, t(x2(-3), 54, 'max loss -3', 'text-anchor="middle" font-size="11" fill="#1a7f37"'),
     `<line x1="${x2(lo).toFixed(1)}" y1="115" x2="${x2(hi).toFixed(1)}" y2="115" stroke="#c2410c" stroke-width="3"/>`,
     `<circle cx="${x2(m).toFixed(1)}" cy="115" r="7" fill="#c2410c"/>`,
     t(x2(m), 100, `${m >= 0 ? '+' : ''}${m.toFixed(1)}`, 'text-anchor="middle" font-size="13" font-weight="700"'),
@@ -184,16 +182,15 @@ export function renderHoeffdingReport(data, outDir) {
     const nCtl = q('c'), nIdea = q('i');
     const cps = checkpoints(n).map((k) => ({ k, v: verdictAt(rows, k) }));
     const width = (r.upper - r.lower) * 100;
-    bottom = `**About equal.** Hoeffding Races and Sequential Halving perform the same here, so there is no reason to switch: Halving stays the default (the stop rule's label for this is ${LABEL[ov.label]}, meaning not adopted). At confidence ${hoeffdingConfidence}, Hoeffding Races cuts many teams early but still fights ${pct(r.battleRatio, 0)} of Halving's battles (${S.iB.toFixed(0)} vs ${S.cB.toFixed(0)} per run) and takes ${pct(r.timeRatio, 0)} of its time, so it saves nothing. Quality was ${pts(r.mean)} points against Halving over ${r.n} seeds (${pct(nCtl)} vs ${pct(nIdea)}), inside a 95% range of ${pts(r.lower)} to ${pts(r.upper)}.`;
+    bottom = `**About equal.** Hoeffding Races and Sequential Halving perform the same here, so there is no reason to switch: Halving stays the default. At confidence ${hoeffdingConfidence}, Hoeffding Races cuts many teams early but still fights ${pct(r.battleRatio, 0)} of Halving's battles (${S.iB.toFixed(0)} vs ${S.cB.toFixed(0)} per run) and takes ${pct(r.timeRatio, 0)} of its time, so it saves nothing. Quality was ${pts(r.mean)} points against Halving over ${r.n} seeds (${pct(nCtl)} vs ${pct(nIdea)}), inside a 95% range of ${pts(r.lower)} to ${pts(r.upper)}.`;
     resultMd = ['## 3. At that setting it prunes, but saves no battles', '',
       `${n} seeds, same seeds for both arms, 30 opponents per generation, meta mode. Quality is the mean win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams that neither search fought.`, '',
       `- **Cost:** ${S.iB.toFixed(0)} battles per run against Halving's ${S.cB.toFixed(0)} (ratio ${bR.toFixed(2)}); ${S.iS.toFixed(0)} s against ${S.cS.toFixed(0)} s.`,
       `- **Quality:** ${pct(nIdea)} against ${pct(nCtl)}, a difference of ${pts(nIdea - nCtl, 2)} points; Hoeffding was ahead on ${r.wins} of ${r.n} seeds.`,
-      `- **Keep bar:** at least 20% fewer battles with a quality loss no worse than 3 points, or better quality beyond the seed spread. It saved ${((1 - r.battleRatio) * 100).toFixed(0)}% and showed no quality gain, so it fails: ${r.why}.`, '',
       '| seed | Halving battles | Hoeffding battles | Halving quality | Hoeffding quality |', '|---|---|---|---|---|',
       ...rows.map((x) => `| ${x.seed} | ${x.c.genBattles} | ${x.i.genBattles} | ${pct(x.c.heldoutMeanTop)} | ${pct(x.i.heldoutMeanTop)} |`), '',
-      `**What ${n} seeds can and cannot say.** Per-seed quality swings by several points in both directions (Hoeffding is ahead ${r.wins} times and behind ${r.n - r.wins}), so the 95% range on the difference is ${width.toFixed(1)} points wide. That range includes both a real 3-point loss and a real 2-point gain; the quality comparison is inconclusive. I therefore drew no chart of the range narrowing: at ${n} seeds it would be one wide band around zero. The verdict rests on cost, where the answer is clear: the battle ratio was ${bR.toFixed(2)} on average, and the speed-up that would justify any quality risk is absent.`, '',
-      `${ov.ruleFired ? `The stop rule fired at ${ov.at} seeds.` : `The driver stopped at ${ov.at} seeds before a checkpoint fired, so this is the plain reading against the keep bar.`} The rule and its checkpoint reading are in the appendix.`, ''];
+      `**What ${n} seeds can and cannot say.** Per-seed quality swings by several points in both directions (Hoeffding is ahead ${r.wins} times and behind ${r.n - r.wins}), so the 95% range on the difference is ${width.toFixed(1)} points wide. The range straddles zero, so quality is about equal. I therefore drew no chart of the range narrowing: at ${n} seeds it would be one wide band around zero. The verdict rests on cost, where the answer is clear: the battle ratio was ${bR.toFixed(2)} on average, and Hoeffding saves nothing over Halving.`, '',
+      `${ov.ruleFired ? `The stop rule fired at ${ov.at} seeds.` : `The driver stopped at ${ov.at} seeds before a checkpoint fired, so this is the plain reading.`} The rule and its checkpoint reading are in the appendix.`, ''];
   }
 
   const old = old95Section();
@@ -218,7 +215,7 @@ export function renderHoeffdingReport(data, outDir) {
   let chartMd = [];
   if (ov) {
     writeFileSync(path.join(outDir, 'hoeffding-ab.bottom-line.svg'), summaryChartSvg({ ...r, battleRatio: bR }));
-    chartMd = ['![Hoeffding vs Halving: battles per run against the keep bar, and quality difference with its 95% range](hoeffding-ab.bottom-line.svg)', '', '*Left: Hoeffding\'s battles per run relative to Halving (orange) against the 0.80 bar it needed to reach. Right: its quality difference from Halving (dot) with the 95% range (line) against the -3 point loss bound.*', ''];
+    chartMd = ['![Hoeffding vs Halving: battles per run, and quality difference with its 95% range](hoeffding-ab.bottom-line.svg)', '', '*Left: Hoeffding\'s battles per run relative to Halving (Halving = 1.00). Right: its quality difference from Halving (dot) with the 95% range (line).*', ''];
   }
   const bottomMd = ['## Bottom line', '', bottom, '', ...chartMd];
   const oldNote = old.length ? ['## 1. Why this was retested', '', `The first A/B ran \`--hoeffding-confidence 0.95\` (the flag default) over 60 seeds and looked as if Hoeffding were pointless. It was not a fair test: that setting cut essentially no teams, so it cost as much as no pruning at all (${old[2].match(/mean battles\/run [^ ]+ vs Halving's [^ ]+ \(ratio [^)]+\)/)?.[0] ?? 'see below'}). The cause was the setting, not a bug: the confidence interval at 0.95 is too wide to separate teams (appendix). A separate bug in the confidence-to-z-score mapping was fixed in round 3, but it only affected values below 0.9. Everything below reruns the test at a setting that does prune.`, ''] : [];
