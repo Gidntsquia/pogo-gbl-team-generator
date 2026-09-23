@@ -1,64 +1,48 @@
-// Side-by-side report for the Hoeffding Races A/B (control = today's default search, halving
-// R=3; idea = the same run with --hoeffding-races instead, halving off). Pure function of
-// out/hoeffding-ab/results.json: rerun with `node scripts/compare-search.mjs report --dir
-// out/hoeffding-ab` and the same bytes come out. Writes out/hoeffding-ab.{html,md}.
+// Report for the Hoeffding Races A/B (control = today's default search, halving R=3; idea =
+// the same run with --hoeffding-races instead, halving off). Pure function of saved data
+// (results.json for the chosen-setting A/B, plus the round-3 diagnosis checkpoints and the
+// round-4 setting-probe results): rerun with `node scripts/compare-search.mjs report --dir
+// out/hoeffding-ab-cut` and the same bytes come out (round 4, plans/PLAN.md). Writes exactly
+// one report file, out/hoeffding-ab.md, plus the narrowing-chart image it embeds.
 // Statistics and the stop rule: hoeffding-stats.mjs.
 import { writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { mean, pairedRows, verdictAt, stopStatus, checkpoints, t95, BATCH, CAP_SEEDS, BAND, QUALITY_LOSS_BOUND, CHEAPER_RATIO, BUDGET_SECONDS } from './hoeffding-stats.mjs';
+import { mean, pairedRows, verdictAt, stopStatus, checkpoints, capReading, t95, BATCH, CAP_SEEDS, BAND, QUALITY_LOSS_BOUND, CHEAPER_RATIO, BUDGET_SECONDS } from './hoeffding-stats.mjs';
 
 const pct = (x, d = 1) => `${(x * 100).toFixed(d)}%`;
 const pts = (x, d = 1) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(d)}`;
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const num = (s) => Number(s.slice(1));
 const seedsOf = (cells, arm) => [...new Set(cells.filter((c) => c.arm === arm).map((c) => c.seed))].sort((a, b) => num(a) - num(b));
 
 export const STOP_RULE = `Stop rule (fixed before the extra seeds ran, not tuned afterwards; the same shape as the Nash/informativeness rounds, adapted for a SPEED idea with both a quality bound and a battle-saving bar). After every batch of ${BATCH} seeds (${BATCH}, ${2 * BATCH}, ... up to ${CAP_SEEDS}), take the 95% range of the paired quality difference (idea minus control, Student t) and the mean battle-count ratio (idea / control). KEEP if the idea is quality-better beyond the seed spread, OR if it is at least ${((1 - CHEAPER_RATIO) * 100).toFixed(0)}% cheaper in battles and the quality-loss bound is no worse than ${(QUALITY_LOSS_BOUND * 100).toFixed(0)} points (the Sequential Halving R=3 precedent). DROP if quality is worse beyond the seed spread, or there is no clear battle saving and no quality gain. NO MEANINGFUL DIFFERENCE (counts as drop) if quality is inside +-${BAND * 100} point AND battles are not meaningfully fewer (<5% saved). Otherwise add another batch. At ${CAP_SEEDS} seeds or the 8-hour budget, whichever comes first, the answer is a plain KEEP/DROP reading against the keep bar above -- never left unclear.`;
 
-const LABEL = { keep: 'KEEP', drop: 'DROP', 'no meaningful difference': 'NO MEANINGFUL DIFFERENCE (drop)', unclear: 'UNCLEAR (not finished)' };
+const LABEL = { keep: 'KEEP', drop: 'DROP', 'no meaningful difference': 'NO MEANINGFUL DIFFERENCE' };
 
-/** Overall answer from the short-run pairs under the fixed rule. */
+/**
+ * Overall answer from the short-run pairs under the fixed rule. Never returns "unclear" or
+ * "pending": once the driver has stopped (rule fired, cap hit, or the 8h budget ran out first),
+ * the report reads a plain keep/drop against the same keep bar the stop rule uses at the cap
+ * (round 4 requirement -- "never pending").
+ */
 export function overall(rows) {
   const st = stopStatus(rows);
-  const n = rows.length;
-  if (st.stop) return { label: st.result.verdict, cls: st.result.verdict === 'keep' ? 'keep' : 'drop', at: st.at, result: st.result, done: true };
-  return { label: 'unclear', cls: 'unclear', at: n, result: verdictAt(rows), done: false };
+  if (st.stop) return { label: st.result.verdict, at: st.at, result: st.result, ruleFired: !st.result.atCap };
+  // Budget stopped the driver before the rule fired on a full batch: read the same keep bar
+  // against whatever seeds finished, same as the 100-seed cap reading.
+  const v = verdictAt(rows);
+  const reading = capReading(v);
+  return { label: reading, at: rows.length, result: { ...v, verdict: reading, why: `budget stopped the driver at ${rows.length} seed(s) before a batch checkpoint fired; plain reading against the keep bar (>=20% fewer battles and a quality-loss bound within 3 points) is ${reading.toUpperCase()}, not a statistically clean stop-rule fire`, atCap: true }, ruleFired: false };
 }
 
-/** Two labelled panels: run time (bars, lower is better) and team quality (per-seed dots, higher is better). */
-function chartSvg(rows, top) {
-  const W = 640, H = 300, L = 150, R = W - 30;
-  const parts = [];
-  const tR = mean(rows.map((r) => r.i.genSeconds / r.c.genSeconds));
-  const tMax = Math.max(1, tR) * 1.15;
-  const tx = (v) => L + (v / tMax) * (R - L);
-  parts.push(`<text x="0" y="18" class="head">Run time  (shorter bar = better)</text>`);
-  parts.push(`<text x="${L - 8}" y="47" class="tick" text-anchor="end">Control</text><rect x="${L}" y="34" width="${tx(1) - L}" height="18" class="ctl"/><text x="${tx(1) + 6}" y="48" class="val">100%</text>`);
-  parts.push(`<text x="${L - 8}" y="77" class="tick" text-anchor="end">Hoeffding Races</text><rect x="${L}" y="64" width="${tx(tR) - L}" height="18" class="idea"/><text x="${tx(tR) + 6}" y="78" class="val">${pct(tR, 0)}</text>`);
-  const all = rows.flatMap((r) => [r.c.heldoutMeanTop, r.i.heldoutMeanTop]);
-  const lo = Math.floor((Math.min(...all) - 0.01) * 20) / 20;
-  const hi = Math.ceil((Math.max(...all) + 0.01) * 20) / 20;
-  const qx = (q) => L + ((q - lo) / (hi - lo || 1)) * (R - L);
-  parts.push(`<text x="0" y="128" class="head">Team quality  (further right = better)</text>`);
-  parts.push(`<text x="0" y="144" class="tick">win rate of the top ${top} teams against opponents the search never saw; one dot per seed, line = average</text>`);
-  for (let q = lo; q <= hi + 1e-9; q += 0.05) parts.push(`<line x1="${qx(q)}" x2="${qx(q)}" y1="158" y2="256" class="grid"/><text x="${qx(q)}" y="272" class="tick" text-anchor="middle">${pct(q, 0)}</text>`);
-  const jit = (k) => ((k * 7) % 5) * 3 - 6;
-  for (const [nm, y, cls, vals] of [['Control', 187, 'ctl', rows.map((r) => r.c.heldoutMeanTop)], ['Hoeffding Races', 231, 'idea', rows.map((r) => r.i.heldoutMeanTop)]]) {
-    const m = mean(vals);
-    parts.push(`<text x="${L - 8}" y="${y + 4}" class="tick" text-anchor="end">${nm}</text>`);
-    vals.forEach((v, k) => parts.push(`<circle cx="${qx(v)}" cy="${y + jit(k)}" r="4" class="${cls}" fill-opacity="0.45"><title>${nm}: ${pct(v)}</title></circle>`));
-    parts.push(`<line x1="${qx(m)}" x2="${qx(m)}" y1="${y - 20}" y2="${y + 20}" class="mean ${cls}s"/><text x="${qx(m)}" y="${y - 24}" class="val" text-anchor="middle">${pct(m)}</text>`);
-  }
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Run time and team quality, control versus Hoeffding Races">${parts.join('')}</svg>`;
-}
+const secs = (h) => `${(h / 3600).toFixed(2)} h`;
 
-/** How the 95% range of the quality difference narrowed as seeds were added. */
+/** How the 95% range of the quality difference narrowed as seeds were added -- written to an SVG file. */
 function rangeSvg(rows) {
   const W = 640, H = 300, L = 46, R = W - 16, T = 40, B = 262;
   const N = rows.length;
   const series = [];
   for (let k = 5; k <= N; k++) series.push(verdictAt(rows, k));
-  if (!series.length) return '';
+  if (series.length < 2) return null;
   const ext = Math.max(BAND * 2, ...series.flatMap((v) => [Math.abs(v.lower), Math.abs(v.upper)])) * 1.1;
   const x = (n) => L + ((n - 5) / Math.max(1, N - 5)) * (R - L);
   const y = (v) => (T + B) / 2 - (v / ext) * ((B - T) / 2);
@@ -67,108 +51,111 @@ function rangeSvg(rows) {
   const ticks = [];
   for (let v = -Math.floor(ext * 100 / 2) * 2; v <= ext * 100 + 1e-9; v += 2) ticks.push(`<line x1="${L}" x2="${R}" y1="${y(v / 100)}" y2="${y(v / 100)}" class="grid"/><text x="${L - 6}" y="${y(v / 100) + 4}" class="tick" text-anchor="end">${v > 0 ? '+' : ''}${v}</text>`);
   const cps = checkpoints(N).map((n) => `<line x1="${x(n)}" x2="${x(n)}" y1="${T}" y2="${B}" class="cp"/><text x="${x(n)}" y="${B + 16}" class="tick" text-anchor="middle">${n}</text>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="How the range narrowed as seeds were added">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="How the range narrowed as seeds were added">
+<style>.grid{stroke:#dcdcd3}.tick{fill:#6b6b64;font-size:11px}.head{fill:#1d1d1b;font-size:14px;font-weight:600}.zone{fill:#2f7d4f22}.zero{stroke:#1d1d1b;stroke-width:1.5}.band{fill:#c2571a;fill-opacity:.25}.mline{fill:none;stroke:#c2571a;stroke-width:2.5}.cp{stroke:#dcdcd3;stroke-dasharray:3 3}</style>
+<rect width="${W}" height="${H}" fill="#fafaf7"/>
 <text x="0" y="16" class="head">How the answer narrowed as seeds were added (idea minus control, points of team quality)</text>
 <text x="0" y="30" class="tick">Above 0 = idea better. Shaded band = 95% range; green strip = "no meaningful difference" zone.</text>
 <rect x="${L}" y="${y(BAND)}" width="${R - L}" height="${y(-BAND) - y(BAND)}" class="zone"/>${ticks.join('')}${cps}
 <line x1="${L}" x2="${R}" y1="${y(0)}" y2="${y(0)}" class="zero"/><path d="${band}" class="band"/><path d="${line}" class="mline"/>
-<text x="${(L + R) / 2}" y="${B + 34}" class="tick" text-anchor="middle">seeds run (same seeds for both arms) →</text></svg>`;
+<text x="${(L + R) / 2}" y="${B + 34}" class="tick" text-anchor="middle">seeds run (same seeds for both arms) &#8594;</text></svg>`;
 }
-
-/** Per-seed change picture: one bar per seed, right of zero = idea better. */
-function diffSvg(rows) {
-  const dQ = rows.map((r) => r.i.heldoutMeanTop - r.c.heldoutMeanTop);
-  const W = 640, rowH = 16, H = 40 + rows.length * rowH;
-  const span = Math.max(0.02, ...dQ.map(Math.abs)) * 1.1;
-  const cx = 320;
-  const x = (v) => cx + (v / span) * 260;
-  const bars = rows.map((r, k) => {
-    const d = dQ[k];
-    const y = 30 + k * rowH;
-    return `<text x="${cx - 300}" y="${y + 10}" class="tick">${r.seed}</text><rect x="${Math.min(cx, x(d))}" y="${y}" width="${Math.abs(x(d) - cx)}" height="12" class="${d >= 0 ? 'idea' : 'ctl'}"/><text x="${d >= 0 ? x(d) + 5 : x(d) - 5}" y="${y + 10}" class="val" text-anchor="${d >= 0 ? 'start' : 'end'}">${pts(d)}</text>`;
-  }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Quality change per seed"><text x="0" y="14" class="head">Quality change per seed, in points (orange = idea better, blue = control better)</text><line x1="${cx}" x2="${cx}" y1="20" y2="${H - 2}" class="grid"/>${bars}</svg>`;
-}
-
-const secs = (h) => `${(h / 3600).toFixed(2)} h`;
 
 /** Third arm: no pruning at all (halving off, hoeffding off) -- "compared to nothing". */
 function noPruneSection(cells, seeds, top, heldoutCount) {
-  if (!seeds.length) return { md: [], html: '' };
+  if (!seeds.length) return [];
   const get = (arm, seed) => cells.find((c) => c.arm === arm && c.seed === seed);
   const rows = seeds.map((s) => ({ seed: s, n: get('control', s), b: get('base', s), h: get('hoeffding', s) })).filter((r) => r.n?.heldoutMeanTop != null && r.b?.heldoutMeanTop != null && r.h?.heldoutMeanTop != null);
-  if (!rows.length) return { md: [], html: '' };
+  if (!rows.length) return [];
   const armMean = (k) => (a) => mean(rows.map((r) => r[a][k]));
-  const arms = [['none', 'No pruning (halving off, hoeffding off)', 'n'], ['base', 'Sequential Halving (today\'s default)', 'b'], ['hoeffding', 'Hoeffding Races', 'h']];
+  const arms = [['none', 'No pruning (halving off, hoeffding off)', 'n'], ['base', "Sequential Halving (today's default)", 'b'], ['hoeffding', 'Hoeffding Races', 'h']];
   const line = (label, key) => `| ${label} | ${armMean('genBattles')(key).toFixed(0)} | ${armMean('genSeconds')(key).toFixed(0)} | ${pct(armMean('heldoutMeanTop')(key))} |`;
   const note = `Same ${rows.length} seed${rows.length === 1 ? '' : 's'} (a prefix of the short-run seed list) run a third way: no pruning at all -- every team battles every opponent in every generation, the "compared to nothing" baseline both Halving and Hoeffding Races are trying to beat.`;
-  const md = ['## Compared to no pruning at all', '', note, '',
+  return ['## Compared to no pruning at all', '', note, '',
     '| arm | battles/run | seconds/run | quality (top ' + top + ' vs ' + heldoutCount + ' held-out) |', '|---|---|---|---|',
     ...arms.map(([, label, key]) => line(label, key)), ''];
-  const html = `<h2>Compared to no pruning at all</h2><p>${esc(note)}</p><table><thead><tr><th>arm</th><th>battles/run</th><th>seconds/run</th><th>quality</th></tr></thead><tbody>${arms.map(([, label, key]) => `<tr><td>${esc(label)}</td><td>${armMean('genBattles')(key).toFixed(0)}</td><td>${armMean('genSeconds')(key).toFixed(0)}s</td><td>${pct(armMean('heldoutMeanTop')(key))}</td></tr>`).join('')}</tbody></table>`;
-  return { md, html };
 }
 
 /**
  * Round 3 diagnosis (plans/PLAN.md): pure function of saved probe checkpoints under
- * `<outDir>/hoeffding-ab/_diagnosis/<label>-genN.json` (real short-cell `evolve.mjs --hoeffding-races` runs,
- * a few minutes each, committed as data by the worker -- not a batch of the A/B). Each checkpoint's
- * `timing.hoeffding.roundsDetail` (src/evolve/hoeffding.js) says, per round: teams alive before/after,
- * how many were cut, and the cull-line interval width that explains a zero-cut round. Reads whatever
- * `<label>-gen*.json` files are present; a label with none is skipped.
- *
- * @param {string} outDir
- * @returns {{md: string[], html: string}}
+ * `out/hoeffding-ab/_diagnosis/<label>-genN.json` (real short-cell `evolve.mjs --hoeffding-races`
+ * runs, a few minutes each, committed as data -- not a batch of the A/B). Each checkpoint's
+ * `timing.hoeffding.roundsDetail` (src/evolve/hoeffding.js) says, per round: teams alive
+ * before/after, how many were cut, and the cull-line interval width that explains a zero-cut round.
  */
-function cutDiagnosisSection(outDir) {
-  const dir = path.join(outDir, 'hoeffding-ab', '_diagnosis');
-  if (!existsSync(dir)) return { md: [], html: '' };
+function cutDiagnosisSection() {
+  const dir = path.join('out', 'hoeffding-ab', '_diagnosis');
+  if (!existsSync(dir)) return [];
   const labels = [
-    { key: 'default', title: 'Default settings (chunk=10, keep=0.5, confidence=0.95 -- the A/B\'s idea arm)' },
-    { key: 'loose', title: 'Loosened settings (chunk=10, keep=0.5, confidence=0.5 -- the round-3 fix, see below)' },
+    { key: 'default', title: "Default settings (chunk=10, keep=0.5, confidence=0.95 -- round 3's A/B idea arm)" },
+    { key: 'loose', title: 'Loosened settings (chunk=10, keep=0.5, confidence=0.5)' },
   ];
   const rowsFor = (key) => {
     const files = readdirSync(dir).filter((f) => f.startsWith(`${key}-gen`) && f.endsWith('.json')).sort();
     return files.map((f) => {
       const cp = JSON.parse(readFileSync(path.join(dir, f), 'utf8'));
       const h = cp.timing?.hoeffding;
-      if (!h) return null;
-      return { generation: cp.generation, h, battleCount: cp.timing.battleCount };
+      return h ? { generation: cp.generation, h, battleCount: cp.timing.battleCount } : null;
     }).filter(Boolean);
   };
   const sections = labels.map(({ key, title }) => ({ key, title, rows: rowsFor(key) })).filter((s) => s.rows.length);
-  if (!sections.length) return { md: [], html: '' };
-
-  // `battleCount` (real battles fought this generation) is NOT a clean "vs the full grid" number --
-  // it also reflects the persistent cross-generation battle cache (a team re-fighting an opponent it
-  // already met last generation is served from cache, nothing to do with hoeffding cutting), so it is
-  // reported alongside `cutBattlesSkipped` (the exact count hoeffding.js attributes to real cuts) rather
-  // than compared to a hand-derived "full grid" figure that would double-count caching as pruning.
-  const genTableMd = (rows) => {
-    const out = [];
-    for (const { generation, h, battleCount } of rows) {
-      out.push(`**Generation ${generation}** -- ${battleCount} real battles fought this generation; ${h.cutBattlesSkipped} battles skipped specifically because a team was cut (${h.roundsDetail.reduce((s, d) => s + d.cutCount, 0)} team(s) cut, of ${h.roundsDetail[0]?.aliveBefore ?? '?'} alive at the start):`, '');
-      out.push('| round | opponents seen | alive before | alive after | cut | cull-line interval width |', '|---|---|---|---|---|---|');
-      for (const d of h.roundsDetail) {
-        out.push(`| ${d.round} | ${d.opponentsSeen} | ${d.aliveBefore} | ${d.aliveAfter} | ${d.cutCount} | ${d.cullLineIntervalWidth != null ? d.cullLineIntervalWidth.toFixed(2) : '(final round, no check)'} |`);
-      }
-      out.push('');
-    }
-    return out;
-  };
-  const genTableHtml = (rows) => rows.map(({ generation, h, battleCount }) => `
-<p><b>Generation ${generation}</b> -- ${battleCount} real battles fought this generation; ${h.cutBattlesSkipped} battles skipped specifically because a team was cut (${h.roundsDetail.reduce((s, d) => s + d.cutCount, 0)} team(s) cut, of ${h.roundsDetail[0]?.aliveBefore ?? '?'} alive at the start):</p>
-<table><thead><tr><th>round</th><th>opponents seen</th><th>alive before</th><th>alive after</th><th>cut</th><th>cull-line interval width</th></tr></thead><tbody>
-${h.roundsDetail.map((d) => `<tr><td>${d.round}</td><td>${d.opponentsSeen}</td><td>${d.aliveBefore}</td><td>${d.aliveAfter}</td><td>${d.cutCount}</td><td>${d.cullLineIntervalWidth != null ? d.cullLineIntervalWidth.toFixed(2) : '(final round, no check)'}</td></tr>`).join('')}
-</tbody></table>`).join('');
-
+  if (!sections.length) return [];
   const note = 'Real probe runs (`evolve.mjs --hoeffding-races`, short-cell settings, a few generations, minutes each -- not a batch of the A/B), checkpoints saved under `out/hoeffding-ab/_diagnosis/`. "Battles skipped" is `cutBattlesSkipped` from `src/evolve/hoeffding.js` -- the exact count of pairings never fought because a team was cut -- not a comparison to real battle counts, which also move with the persistent cross-generation battle cache and would misattribute caching as pruning. Wilson-interval width at the cull line explains a zero-cut round directly: at n=10 battles the interval spans roughly +-0.40 (40 points), far wider than the real spread between mid-pack teams, so nothing is ever cut; at n=20 it narrows to about +-0.30 -- still too wide.';
+  const md = ['## Round-3 diagnosis detail: does `--hoeffding-races` ever skip battles?', '', note, ''];
+  for (const s of sections) {
+    md.push(`### ${s.title}`, '');
+    for (const { generation, h, battleCount } of s.rows) {
+      md.push(`**Generation ${generation}** -- ${battleCount} real battles fought this generation; ${h.cutBattlesSkipped} battles skipped specifically because a team was cut (${h.roundsDetail.reduce((sum, d) => sum + d.cutCount, 0)} team(s) cut, of ${h.roundsDetail[0]?.aliveBefore ?? '?'} alive at the start):`, '');
+      md.push('| round | opponents seen | alive before | alive after | cut | cull-line interval width |', '|---|---|---|---|---|---|');
+      for (const d of h.roundsDetail) md.push(`| ${d.round} | ${d.opponentsSeen} | ${d.aliveBefore} | ${d.aliveAfter} | ${d.cutCount} | ${d.cullLineIntervalWidth != null ? d.cullLineIntervalWidth.toFixed(2) : '(final round, no check)'} |`);
+      md.push('');
+    }
+  }
+  return md;
+}
 
-  const md = ['## Cut diagnosis: does `--hoeffding-races` ever skip battles at these settings?', '', note, ''];
-  for (const s of sections) { md.push(`### ${s.title}`, ''); md.push(...genTableMd(s.rows)); }
-  const html = `<h2>Cut diagnosis: does --hoeffding-races ever skip battles at these settings?</h2><p>${esc(note)}</p>` +
-    sections.map((s) => `<h3>${esc(s.title)}</h3>${genTableHtml(s.rows)}`).join('');
-  return { md, html };
+/**
+ * Round-4 setting probe (plans/PLAN.md requirement 1): reads `out/hoeffding-probe/results.json`
+ * (`compare-search.mjs run --dir out/hoeffding-probe --arms base,conf50,conf60,...`) and reports,
+ * per confidence setting, battles/run vs the Halving base cell on the same seed, plus which one
+ * was chosen (closest to base) and why.
+ */
+function settingProbeSection() {
+  const file = path.join('out', 'hoeffding-probe', 'results.json');
+  if (!existsSync(file)) return { md: [], chosen: null };
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  const baseCell = data.cells.find((c) => c.arm === 'base');
+  if (!baseCell) return { md: [], chosen: null };
+  const probeArms = data.arms.filter((a) => a !== 'base' && a !== 'control');
+  const rows = probeArms.map((a) => {
+    const c = data.cells.find((x) => x.arm === a);
+    if (!c) return null;
+    const confFlagIdx = (data.armFlags[a] ?? []).indexOf('--hoeffding-confidence');
+    const confidence = confFlagIdx >= 0 ? data.armFlags[a][confFlagIdx + 1] : '0.95';
+    return { arm: a, confidence, battles: c.genBattles, ratio: c.genBattles / baseCell.genBattles };
+  }).filter(Boolean);
+  if (!rows.length) return { md: [], chosen: null };
+  const chosen = rows.slice().sort((a, b) => Math.abs(a.ratio - 1) - Math.abs(b.ratio - 1))[0];
+  const md = ['## Setting probe: which `--hoeffding-confidence` cuts about as much as Halving?', '',
+    `Short probe (1 seed, few generations) at several confidence values, same seed as the Halving base cell (${baseCell.genBattles} battles). The setting whose battle count is closest to Halving's is chosen for the A/B below, so quality is compared at equal cost.`, '',
+    '| confidence | battles | ratio to Halving |', '|---|---|---|',
+    `| (Halving, base) | ${baseCell.genBattles} | 1.00 |`,
+    ...rows.map((r) => `| ${r.confidence} | ${r.battles} | ${r.ratio.toFixed(2)} |`), '',
+    `**Chosen: confidence ${chosen.confidence}** (ratio ${chosen.ratio.toFixed(2)}, closest to Halving's cost).`, ''];
+  return { md, chosen };
+}
+
+/** One-paragraph summary of the OLD 0.95 A/B (out/hoeffding-ab/results.json), if present. */
+function old95Section() {
+  const file = path.join('out', 'hoeffding-ab', 'results.json');
+  if (!existsSync(file)) return [];
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  const seeds = seedsOf(data.cells, 'base');
+  const rows = pairedRows(data.cells, seeds, 'base', 'hoeffding');
+  if (!rows.length) return [];
+  const bR = mean(rows.map((x) => x.i.genBattles / x.c.genBattles));
+  return ['## The old confidence-0.95 result: never cut anything', '',
+    `The original 60-seed A/B (\`out/hoeffding-ab/\`) ran \`--hoeffding-confidence 0.95\` (the flag's default) and cut essentially zero battles: mean battles/run ${mean(rows.map((x) => x.i.genBattles)).toFixed(0)} vs Halving's ${mean(rows.map((x) => x.c.genBattles)).toFixed(0)} (ratio ${bR.toFixed(2)}) -- it cost the same as no pruning and proved nothing about the pruning mechanism itself (see the round-3 diagnosis below for why). It is kept here for the record, not as evidence either way.`, ''];
 }
 
 export function renderHoeffdingReport(data, outDir) {
@@ -176,54 +163,74 @@ export function renderHoeffdingReport(data, outDir) {
   const shortSeeds = seedsOf(cells, 'base');
   const rows = pairedRows(cells, shortSeeds, 'base', 'hoeffding');
   const noPruneSeeds = seedsOf(cells, 'control');
-  const noPruneRows = noPruneSeeds.length ? pairedRows(cells, noPruneSeeds, 'control', 'hoeffding') : [];
-  const ov = overall(rows);
-  const r = ov.result;
+  const ov = rows.length ? overall(rows) : null;
+  const r = ov?.result;
   const n = rows.length;
-  const nCtl = mean(rows.map((x) => x.c.heldoutMeanTop)), nidea = mean(rows.map((x) => x.i.heldoutMeanTop));
-  const bR = mean(rows.map((x) => x.i.genBattles / x.c.genBattles));
-  const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
+
+  const bR = rows.length ? mean(rows.map((x) => x.i.genBattles / x.c.genBattles)) : null;
   const armStats = (rs) => ({ cB: mean(rs.map((x) => x.c.genBattles)), iB: mean(rs.map((x) => x.i.genBattles)), cS: mean(rs.map((x) => x.c.genSeconds)), iS: mean(rs.map((x) => x.i.genSeconds)) });
-  const S = armStats(rows);
-  const newCells = cells.filter((c) => c.wallSeconds != null);
-  const newSecs = sum(newCells, (c) => c.wallSeconds);
+  const S = rows.length ? armStats(rows) : null;
+  const newSecs = cells.filter((c) => c.wallSeconds != null).reduce((s, c) => s + c.wallSeconds, 0);
 
-  const explainerMd = [
-    '## What is this, and how is it different from today?',
-    '',
-    "**How battles are spent today.** Each generation, `--halving-rounds` (on by default, R=3) reveals the opponent pool to the candidate teams in growing slices -- a quarter, then half, then all -- and drops the weaker half of teams after each slice. A team cut in round 1 never fights the opponents it would have seen in rounds 2 or 3. The schedule (how many rounds, how big each slice) is fixed in advance, the same every generation regardless of how close or lopsided that generation's field is.",
-    '',
-    '**How Hoeffding Races decides to stop battling a team.** `--hoeffding-races` (research idea #3) does the same job -- skip battles against teams that are going to lose anyway -- but on an adaptive schedule instead of a fixed one. Opponents are revealed in fixed-size chunks (`--hoeffding-chunk`, default 10). After each chunk, every still-alive team\'s win rate against the opponents fought so far gets a confidence interval (a Wilson interval: wider with fewer battles, narrower with more). The field is split at a cull line (the `--hoeffding-keep` rank, default the median team). A team is cut only when its interval\'s upper bound falls below the cull line\'s lower bound -- not just "currently behind," but "the evidence says it cannot catch up." A generation with clear early losers cuts them after the first chunk; a close generation, where every interval still overlaps, keeps everyone fighting longer.',
-    '',
-    '**What kind of team gets cut early, and could that be wrong?** A team that loses its first several battles badly gets a tight, low interval and is cut quickly -- usually correctly, since consistent early losses are real evidence. The risk is a team that is actually mid-pack but drew a run of hard opponents by chance in the random reveal order: with few battles seen, its interval is wide, which is exactly what protects it from an unlucky early cut (a wide interval overlaps almost anything) -- but if the interval narrows around a genuinely unlucky sample before enough opponents are seen, that team is cut on a biased slice it never gets to correct. Sequential Halving has the identical risk from its own fixed early slice; Hoeffding\'s statistical stopping rule is meant to make that risk explicit and data-driven rather than schedule-driven, not to remove it.',
-    '',
-    '**Does this fit "every win counts the same, overall strength vs the crowd"?** Yes, more directly than the opponent-reweighting ideas (Nash averaging, informativeness weights, both dropped for changing what a win is worth). Hoeffding Races never changes how a battle counts -- every fought pairing is still a plain win or loss, unweighted. It only decides, for a team that is already behind with growing confidence, whether the remaining battles are still worth fighting. A team that is genuinely strong will not be cut, because its interval will not fall below the cull line\'s; the only teams that lose fights they might have won are teams that were already correctly predicted to lose most of them. Whether this actually holds up, and whether it costs any team-quality at all in exchange for fewer battles, is what the numbers below measure.',
-    '',
-  ].join('\n');
+  const hoeffdingConfidence = (() => {
+    const flags = data.armFlags?.hoeffding ?? [];
+    const i = flags.indexOf('--hoeffding-confidence');
+    return i >= 0 ? flags[i + 1] : '0.95 (default)';
+  })();
 
-  const explainerHtml = `<h2>What is this, and how is it different from today?</h2>
-<p><b>How battles are spent today.</b> <code>--halving-rounds</code> (on by default, R=3) reveals the opponent pool in growing slices -- a quarter, then half, then all -- and drops the weaker half of teams after each slice, on a fixed schedule that is the same every generation.</p>
-<p><b>How Hoeffding Races decides to stop battling a team.</b> <code>--hoeffding-races</code> (research idea #3) does the same job on an adaptive schedule: opponents revealed in fixed-size chunks, and after each chunk a team is cut only when its win-rate confidence interval (Wilson) no longer overlaps the current cull-line team's interval -- evidence it cannot catch up, not just that it is currently behind.</p>
-<p><b>What kind of team gets cut early, and could that be wrong?</b> A team on a real losing streak is cut correctly. The risk is a mid-pack team that draws a run of hard opponents by chance early on; a wide (few-battles) interval protects against that, but the protection weakens as more battles narrow the interval around a biased early sample -- the same risk Sequential Halving's fixed early slice already carries.</p>
-<p><b>Does this fit "every win counts the same, overall strength vs the crowd"?</b> Yes, more directly than the opponent-reweighting ideas (Nash averaging, informativeness weights, both dropped). Hoeffding Races never changes what a win is worth; it only decides whether to keep fighting a team that is already predicted to lose. Whether it actually costs any quality for the battles it saves is what the numbers below measure.</p>
-`;
+  const oneSentence = `Round 3 found that the original A/B's idea arm (\`--hoeffding-confidence 0.95\`, the flag's default) cut essentially zero battles -- a setting issue, not a bug (the Wilson interval at that confidence is too wide at these battle counts to ever cross the cull line); a separate bug in the confidence-to-z-score mapping (\`zFor()\`) was also fixed in round 3, but it did not affect 0.95, only lower confidence values. This round's A/B runs at \`--hoeffding-confidence ${hoeffdingConfidence}\`, chosen by the setting probe below to cut about as many battles as Sequential Halving.`;
 
-  const stopLine = ov.done
-    ? `Stopped at ${ov.at} seeds (${'first batch check with a clear answer'}).`
-    : `Not finished: ${n} short seeds so far${n < CAP_SEEDS ? '; the budget or the run stopped before the rule fired' : ''}.`;
-  const headline = ov.done || n >= 10
-    ? `Hoeffding Races scored ${pts(r.mean)} points of team quality against the control over ${r.n} seeds (control ${pct(mean(rows.slice(0, r.n).map((x) => x.c.heldoutMeanTop)))}, idea ${pct(mean(rows.slice(0, r.n).map((x) => x.i.heldoutMeanTop)))}); it was ahead in ${r.wins} of ${r.n}. 95% range: ${pts(r.lower)} to ${pts(r.upper)} points. It fights ${pct(r.battleRatio, 0)} of the control's battles and costs ${pct(r.timeRatio, 0)} of the control's run time.`
-    : 'Too few seeds for an answer yet.';
-  let capNote = '';
-  if (!ov.done && r.verdict === 'unclear') {
-    const tt = t95(Math.max(1, n - 1));
-    const toExclude = r.mean !== 0 ? Math.ceil((tt * r.sd / Math.abs(r.mean)) ** 2) : Infinity;
-    capNote = `The seed-to-seed spread is ${(r.sd * 100).toFixed(1)} points. At that spread about ${Number.isFinite(toExclude) ? toExclude : 'many'} seeds would be needed to separate a ${pts(r.mean)}-point average from the ${(QUALITY_LOSS_BOUND * 100).toFixed(0)}-point keep bound.`;
+  const probe = settingProbeSection();
+
+  let verdictMd = [];
+  if (ov) {
+    const nCtl = mean(rows.map((x) => x.c.heldoutMeanTop)), nidea = mean(rows.map((x) => x.i.heldoutMeanTop));
+    const headline = `Hoeffding Races (confidence ${hoeffdingConfidence}) scored ${pts(r.mean)} points of team quality against Sequential Halving over ${r.n} seed(s) (Halving ${pct(mean(rows.slice(0, r.n).map((x) => x.c.heldoutMeanTop)))}, Hoeffding ${pct(mean(rows.slice(0, r.n).map((x) => x.i.heldoutMeanTop)))}); ahead in ${r.wins} of ${r.n}. 95% range: ${pts(r.lower)} to ${pts(r.upper)} points. It fights ${pct(r.battleRatio, 0)} of Halving's battles and costs ${pct(r.timeRatio, 0)} of Halving's run time.`;
+    const stopLine = ov.ruleFired ? `Stopped at ${ov.at} seed(s): the stop rule fired.` : `Driver stopped at ${ov.at} seed(s) before a batch checkpoint fired (budget or cap); reading the plain keep bar instead of leaving it unclear, per the stop rule.`;
+    verdictMd = [`## Verdict: ${LABEL[ov.label]}`, '', `${r.why}.`, headline, '', stopLine, '', STOP_RULE, '',
+      '## Short runs (8 generations, population 40)', '', `Control = Sequential Halving R=3 (today's default, hoeffding off). Idea = identical run with \`--hoeffding-races --hoeffding-confidence ${hoeffdingConfidence}\` instead (halving off). ${n} seeds, same seeds for both arms, 30 opponents per generation, meta mode. Quality = mean unweighted win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams (seed "heldout") that neither arm's search fought.`, '',
+      'Checks after each batch:', '', ...(() => { const cps = checkpoints(n).map((k) => ({ k, v: verdictAt(rows, k) })); return ['| seeds | mean diff (pts) | 95% range (pts) | battle ratio | reading |', '|---|---|---|---|---|', ...cps.map(({ k, v }) => `| ${k} | ${pts(v.mean)} | ${pts(v.lower)} to ${pts(v.upper)} | ${v.battleRatio.toFixed(2)} | ${v.verdict} |`)]; })(), '',
+      `Averages over all ${n} seed(s): control ${pct(nCtl)}, idea ${pct(nidea)}, difference ${pts(nidea - nCtl, 2)} points; battles per run ${S.cB.toFixed(0)} vs ${S.iB.toFixed(0)} (ratio ${bR.toFixed(2)}); wall time per run ${S.cS.toFixed(0)} s vs ${S.iS.toFixed(0)} s (ratio ${pct(mean(rows.map((x) => x.i.genSeconds / x.c.genSeconds)), 0)}).`, '',
+      '| seed | control battles | idea battles | control secs | idea secs | control held-out | idea held-out | control top1 | idea top1 |', '|---|---|---|---|---|---|---|---|---|',
+      ...rows.map((x) => `| ${x.seed} | ${x.c.genBattles} | ${x.i.genBattles} | ${x.c.genSeconds.toFixed(0)} | ${x.i.genSeconds.toFixed(0)} | ${pct(x.c.heldoutMeanTop)} | ${pct(x.i.heldoutMeanTop)} | ${pct(x.c.heldoutTop1)} | ${pct(x.i.heldoutTop1)} |`), ''];
+  } else {
+    verdictMd = ['## Verdict: not started', '', 'No A/B cells found yet for the chosen setting.', ''];
   }
 
-  const cps = checkpoints(n).map((k) => ({ k, v: verdictAt(rows, k) }));
+  // Chart image, embedded relative to out/hoeffding-ab.md.
+  const svg = rows.length >= 5 ? rangeSvg(rows) : null;
+  const imgPath = path.join('out', 'hoeffding-ab.narrowed.svg');
+  const chartMd = [];
+  if (svg) {
+    writeFileSync(imgPath, svg);
+    chartMd.push('## How the answer narrowed', '',
+      '![How the range of the quality difference narrowed as seeds were added](hoeffding-ab.narrowed.svg)', '',
+      'Caption: the dark line is the running mean quality difference (Hoeffding minus Halving); the shaded band is its 95% range at each seed count; the green horizontal strip is the "no meaningful difference" zone (+-1 point) -- once the whole band clears the strip in one direction, the stop rule fires.', '');
+  }
 
-  const totals = `Wall time of all new runs (short seeds beyond any already-scored ones, including held-out scoring): ${secs(newSecs)} of the ${secs(BUDGET_SECONDS)} budget.`;
+  // Per-generation cut table from a real cell of the new A/B (not just the round-3 probes).
+  let cutTableMd = [];
+  const hoeffdingCell = cells.find((c) => c.arm === 'hoeffding' && c.dir);
+  if (hoeffdingCell) {
+    const resultFile = path.join(hoeffdingCell.dir, 'evolve-result.json');
+    if (existsSync(resultFile)) {
+      const result = JSON.parse(readFileSync(resultFile, 'utf8'));
+      const gens = (result.generationRecords ?? []).filter((g) => g.timing?.hoeffding);
+      if (gens.length) {
+        cutTableMd.push(`## Cut table: seed ${hoeffdingCell.seed}, confidence ${hoeffdingConfidence}`, '',
+          `Per-generation cuts from a real cell of this A/B (\`${hoeffdingCell.dir}\`), not the round-3 probe checkpoints.`, '');
+        gens.forEach((g, genIndex) => {
+          const h = g.timing.hoeffding;
+          const cutCount = h.roundsDetail.reduce((s, d) => s + d.cutCount, 0);
+          cutTableMd.push(`**Generation ${genIndex}** -- ${g.timing.battleCount} real battles fought; ${h.cutBattlesSkipped} battles skipped by cuts (${cutCount} team(s) cut, of ${h.roundsDetail[0]?.aliveBefore ?? '?'} alive):`, '');
+          cutTableMd.push('| round | opponents seen | alive before | alive after | cut | cull-line interval width |', '|---|---|---|---|---|---|');
+          for (const d of h.roundsDetail) cutTableMd.push(`| ${d.round} | ${d.opponentsSeen} | ${d.aliveBefore} | ${d.aliveAfter} | ${d.cutCount} | ${d.cullLineIntervalWidth != null ? d.cullLineIntervalWidth.toFixed(2) : '(final round, no check)'} |`);
+          cutTableMd.push('');
+        });
+      }
+    }
+  }
+
   const cell = (a) => {
     const own = data.armFlags[a] ?? [];
     const over = new Set(own.filter((x) => x.startsWith('--')));
@@ -232,61 +239,21 @@ export function renderHoeffdingReport(data, outDir) {
       if (over.has(data.baseFlags[i])) { if (i + 1 < data.baseFlags.length && !data.baseFlags[i + 1].startsWith('--')) i++; continue; }
       base.push(data.baseFlags[i]);
     }
-    return `node scripts/evolve.mjs out/hoeffding-ab/meta-collection-1500.csv --seed <seed> ${[...base, ...own].join(' ')} --out-dir out/hoeffding-ab/${a}-<seed> --force-fresh`;
+    return `node scripts/evolve.mjs out/hoeffding-ab-cut/meta-collection-1500.csv --seed <seed> ${[...base, ...own].join(' ')} --out-dir out/hoeffding-ab-cut/${a}-<seed> --force-fresh`;
   };
-  const runCmds = ['bash scripts/setup.sh', 'node scripts/hoeffding-overnight.mjs   # unattended driver: seeds under the stop rule; rerun to resume', `node scripts/compare-search.mjs run --dir out/hoeffding-ab --arms base,hoeffding --seeds ${shortSeeds.join(',')} --top ${top} --heldout ${heldoutCount}`, 'node scripts/compare-search.mjs report --dir out/hoeffding-ab   # from saved results: same numbers'];
+  const runCmds = ['bash scripts/setup.sh', 'node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut   # unattended driver: seeds under the stop rule; rerun to resume', `node scripts/compare-search.mjs run --dir out/hoeffding-ab-cut --arms base,hoeffding --seeds ${shortSeeds.join(',') || 's1'} --top ${top ?? 5} --heldout ${heldoutCount ?? 60}`, 'node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut   # from saved results: same numbers'];
 
-  const tableMd = (rs) => ['| seed | control battles | idea battles | control secs | idea secs | control held-out | idea held-out | control top1 | idea top1 |', '|---|---|---|---|---|---|---|---|---|',
-    ...rs.map((x) => `| ${x.seed} | ${x.c.genBattles} | ${x.i.genBattles} | ${x.c.genSeconds.toFixed(0)} | ${x.i.genSeconds.toFixed(0)} | ${pct(x.c.heldoutMeanTop)} | ${pct(x.i.heldoutMeanTop)} | ${pct(x.c.heldoutTop1)} | ${pct(x.i.heldoutTop1)} |`)];
-  const cpMd = ['| seeds | mean diff (pts) | 95% range (pts) | battle ratio | reading |', '|---|---|---|---|---|', ...cps.map(({ k, v }) => `| ${k} | ${pts(v.mean)} | ${pts(v.lower)} to ${pts(v.upper)} | ${v.battleRatio.toFixed(2)} | ${v.verdict} |`)];
-
-  const rerunCmd = 'node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab   # same stop rule, same seeds (rename/move out/hoeffding-ab first for a clean 60-seed rerun; in place it just resumes/reuses the already-scored cells)';
-  const pendingNote = `Not trusted: this verdict is PENDING a re-A/B. The number below was computed before the round-3 diagnosis fixed a bug in the confidence-to-z-score mapping (src/evolve/hoeffding.js zFor(): --hoeffding-confidence values below 0.9 used to silently fall back to the widest interval, z=1.96, instead of narrowing). At the default confidence (0.95) used for every one of these 60 seeds the fix changes nothing (z(0.95) is 1.96 either way -- see the cut diagnosis above), so this KEEP is not known to be wrong, but it has not been re-run on the fixed code, and the diagnosis above shows the idea arm cut essentially zero battles at these settings regardless -- so "KEEP" here really means "no worse than no pruning, at no-pruning's cost," not "the pruning mechanism was exercised." A looser --hoeffding-confidence (e.g. 0.5) does cut real battles, per the diagnosis above -- that combination has not been A/B'd. Rerun before trusting this number for anything: ${rerunCmd}`;
-  const md = ['# Hoeffding Races vs the current default search (experimental)', '', explainerMd, '',
-    ...cutDiagnosisSection(outDir).md,
-    `## Verdict: ${LABEL[ov.label]} (PENDING RE-A/B)`, '', pendingNote, '', ov.done ? `${r.why}.` : '', headline, '', stopLine, capNote, '', STOP_RULE, '',
-    '## Short runs (8 generations, population 40)', '', `Control = today's default (Sequential Halving R=3, hoeffding off). Idea = identical run with \`--hoeffding-races\` instead (halving off, so it does not both run). ${n} seeds, same seeds for both arms, 30 opponents per generation, meta mode. Quality = mean unweighted win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams (seed "heldout") that neither arm's search fought.`, '',
-    'Checks after each batch:', '', ...cpMd, '',
-    `Averages over all ${n} seeds: control ${pct(nCtl)}, idea ${pct(nidea)}, difference ${pts(nidea - nCtl, 2)} points; battles per run ${S.cB.toFixed(0)} vs ${S.iB.toFixed(0)} (ratio ${bR.toFixed(2)}); wall time per run ${S.cS.toFixed(0)} s vs ${S.iS.toFixed(0)} s (ratio ${pct(mean(rows.map((x) => x.i.genSeconds / x.c.genSeconds)), 0)}).`, '', ...tableMd(rows), ''];
-  const noPrune = noPruneSection(cells, noPruneSeeds, top, heldoutCount);
-  md.push(...noPrune.md);
-  md.push('## Cost', '', totals, '');
-  md.push('## Rerun', '', '```', ...runCmds, '```', '', `Short cell: \`${cell('base')}\` (control) or \`${cell('hoeffding')}\` (idea).`, '');
+  const md = ['# Hoeffding Races vs the current default search (experimental)', '',
+    oneSentence, '',
+    ...probe.md,
+    ...verdictMd,
+    ...old95Section(),
+    ...noPruneSection(cells, noPruneSeeds, top ?? 5, heldoutCount ?? 60),
+    ...cutTableMd,
+    ...chartMd,
+    ...cutDiagnosisSection(),
+    '## Cost', '', `Wall time of all new runs in this A/B (short seeds beyond any already-scored ones, including held-out scoring): ${secs(newSecs)} of the ${secs(BUDGET_SECONDS)} budget.`, '',
+    '## Rerun', '', '```', ...runCmds, '```', '', `Short cell: \`${cell('base')}\` (control) or \`${cell('hoeffding')}\` (idea).`, ''];
   writeFileSync(path.join(outDir, 'hoeffding-ab.md'), md.join('\n'));
-
-  const trs = (rs) => rs.map((x) => `<tr><td>${x.seed}</td><td>${x.c.genBattles}</td><td>${x.i.genBattles}</td><td>${x.c.genSeconds.toFixed(0)}s</td><td>${x.i.genSeconds.toFixed(0)}s</td><td>${pct(x.c.heldoutMeanTop)}</td><td>${pct(x.i.heldoutMeanTop)}</td><td>${pct(x.c.heldoutTop1)}</td><td>${pct(x.i.heldoutTop1)}</td></tr>`).join('');
-  const thead = '<thead><tr><th>seed</th><th>battles ctl</th><th>battles idea</th><th>time ctl</th><th>time idea</th><th>quality ctl</th><th>quality idea</th><th>best team ctl</th><th>best team idea</th></tr></thead>';
-  const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hoeffding Races Test</title>
-<style>
-:root{--bg:#fafaf7;--fg:#1d1d1b;--mut:#6b6b64;--line:#dcdcd3;--ctl:#3b6ea5;--idea:#c2571a;--keep:#2f7d4f;--drop:#b3372f;--unc:#8a7a1f;--zone:#2f7d4f22}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--fg:#ecebe4;--mut:#9a9a90;--line:#33332f;--ctl:#7fb0e0;--idea:#f0955a;--keep:#6fcf97;--drop:#f08a82;--unc:#e0cf6a;--zone:#6fcf9726}}
-body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:760px;padding:24px 16px}
-h1{font-size:22px}h2{font-size:18px;margin-top:32px}svg{width:100%;height:auto}.grid{stroke:var(--line)}.tick{fill:var(--mut);font-size:11px}
-.ctl{fill:var(--ctl)}.idea{fill:var(--idea)}.head{fill:var(--fg);font-size:14px;font-weight:600}.val{fill:var(--fg);font-size:12px}.mean{stroke-width:3}.ctls{stroke:var(--ctl)}.ideas{stroke:var(--idea)}
-.zone{fill:var(--zone)}.zero{stroke:var(--fg);stroke-width:1.5}.band{fill:var(--idea);fill-opacity:.25}.mline{fill:none;stroke:var(--idea);stroke-width:2.5}.cp{stroke:var(--line);stroke-dasharray:3 3}
-table{border-collapse:collapse;width:100%;font-size:13px;display:block;overflow-x:auto}th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
-.v{font-size:14px;border:1px solid currentColor;border-radius:4px;padding:1px 10px;margin-left:8px;display:inline-block}.keep{color:var(--keep)}.drop{color:var(--drop)}.unclear{color:var(--unc)}
-.box{border:1px solid var(--line);border-radius:8px;padding:4px 16px;margin:16px 0}details{margin:8px 0}summary{cursor:pointer;color:var(--mut)}.num{color:var(--mut);font-size:13px}code{font-size:12px}pre{white-space:pre-wrap;word-break:break-all}
-</style></head><body>
-<h1>Hoeffding Races vs the current search <span class="v unclear">${esc(LABEL[ov.label])} (PENDING RE-A/B)</span></h1>
-${explainerHtml}
-${cutDiagnosisSection(outDir).html}
-<h2>Answer</h2>
-<div class="box"><p><b>${esc(pendingNote)}</b></p><p><b>${esc(LABEL[ov.label])}.</b> ${ov.done ? esc(r.why) + '.' : ''} ${esc(headline)}</p><p>${esc(stopLine)} ${esc(capNote)}</p></div>
-<h2>Short runs: ${n} seeds</h2>
-${chartSvg(rows, top)}
-${rangeSvg(rows)}
-<p class="num">Control = today's default search (Sequential Halving, 3 rounds, hoeffding off). Same seeds for both arms. Quality = win rate of each run's top ${top} teams against ${heldoutCount} fresh meta teams neither search fought. Battles per run: ${S.cB.toFixed(0)} control vs ${S.iB.toFixed(0)} idea (ratio ${bR.toFixed(2)}); wall time per run: ${S.cS.toFixed(0)} s vs ${S.iS.toFixed(0)} s.</p>
-<details><summary>Checks after each batch of ${BATCH} seeds</summary><table><thead><tr><th>seeds</th><th>mean diff (pts)</th><th>95% range (pts)</th><th>battle ratio</th><th>reading</th></tr></thead><tbody>${cps.map(({ k, v }) => `<tr><td>${k}</td><td>${pts(v.mean)}</td><td>${pts(v.lower)} to ${pts(v.upper)}</td><td>${v.battleRatio.toFixed(2)}</td><td>${esc(v.verdict)}</td></tr>`).join('')}</tbody></table></details>
-<details><summary>Per-seed detail</summary>${diffSvg(rows)}<table>${thead}<tbody>${trs(rows)}</tbody></table></details>
-${noPrune.html}
-<h2>Cost and stop rule</h2>
-<p>${esc(totals)}</p>
-<p class="num">${esc(STOP_RULE)}</p>
-<h2>Rerun</h2><pre><code>${esc(runCmds.join('\n'))}</code></pre>
-<p class="num">Short cell: <code>${esc(cell('base'))}</code> (control) or <code>${esc(cell('hoeffding'))}</code> (idea).</p>
-</body></html>`;
-  writeFileSync(path.join(outDir, 'hoeffding-ab.html'), html);
-  console.log(`wrote ${path.join(outDir, 'hoeffding-ab.html')} and .md`);
+  console.log(`wrote ${path.join(outDir, 'hoeffding-ab.md')}`);
 }
