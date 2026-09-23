@@ -35,7 +35,16 @@ export const ARMS = {
   // Hoeffding Races round: `base` is today's default search (halving R=3, hoeffding off),
   // `hoeffding` differs only by replacing halving with --hoeffding-races (halving off).
   base: ['--halving-rounds', '3'],
-  hoeffding: ['--halving-rounds', '0', '--hoeffding-races'],
+  hoeffding: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.1'],
+  // Round-4 setting probe (plans/PLAN.md): confidence variants to find the one whose
+  // battle count is closest to Halving's. Not used by the real A/B; probe-only arms.
+  conf50: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.5'],
+  conf60: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.6'],
+  conf70: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.7'],
+  conf80: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.8'],
+  conf10: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.1'],
+  conf20: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.2'],
+  conf30: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.3'],
 };
 
 /** BASE_FLAGS with the arm's own value replacing any flag the arm also sets, then the arm's flags. */
