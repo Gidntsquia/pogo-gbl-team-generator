@@ -907,7 +907,7 @@ It does prune -- 15-32 of the alive teams cut per generation, hundreds of battle
 at 0.97x Halving's battles (matching its cost, not beating it), but scores worse: -0.57 points of
 held-out quality (58.4% -> 57.8%), 95% range -3.57..+2.42, no clear win in either direction. The stop
 rule read this as **DROP**: no battle saving and no quality gain over Halving. Full numbers, the setting
-probe table, the per-generation cut table from the real A/B cells, and the narrowing chart:
+probe table, the per-generation cut table from the real A/B cells, and the one summary chart:
 `out/hoeffding-ab.md` (rebuild with `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut`;
 rerun the A/B with `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut`, same stop rule,
 same seeds). Halving stays the default.

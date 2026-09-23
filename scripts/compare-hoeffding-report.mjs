@@ -3,7 +3,7 @@
 // (results.json for the chosen-setting A/B, plus the round-3 diagnosis checkpoints and the
 // round-4 setting-probe results): rerun with `node scripts/compare-search.mjs report --dir
 // out/hoeffding-ab-cut` and the same bytes come out (round 4, plans/PLAN.md). Writes exactly
-// one report file, out/hoeffding-ab.md, plus the narrowing-chart image it embeds.
+// one report file, out/hoeffding-ab.md, plus the one summary-chart image it embeds in Bottom line.
 // Statistics and the stop rule: hoeffding-stats.mjs.
 import { writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -125,6 +125,34 @@ function old95Section() {
     `The original 60-seed A/B (\`out/hoeffding-ab/\`) ran \`--hoeffding-confidence 0.95\` (the flag's default) and cut essentially zero battles: mean battles/run ${mean(rows.map((x) => x.i.genBattles)).toFixed(0)} vs Halving's ${mean(rows.map((x) => x.c.genBattles)).toFixed(0)} (ratio ${bR.toFixed(2)}) -- it cost the same as no pruning and proved nothing about the pruning mechanism itself (the probes below show why). Kept for the record, not as evidence either way.`, ''];
 }
 
+/** One summary chart for the Bottom line: cost and quality vs Halving, with the keep bar. Deterministic SVG. */
+function summaryChartSvg(r) {
+  const W = 720, H = 250, F = 'font-family="system-ui,Helvetica,Arial,sans-serif"';
+  const t = (x, y, s, o = '') => `<text x="${x}" y="${y}" ${F} ${o.includes('font-size') ? '' : 'font-size="13" '}${o.includes('fill') ? '' : 'fill="#222" '}${o}>${s}</text>`;
+  // Panel 1: battles vs Halving (1.00), keep bar at 0.80. Axis 0.5..1.1.
+  const x1 = (v) => 40 + ((v - 0.5) / 0.6) * 280;
+  // Panel 2: quality diff (pts). Axis -5..+5.
+  const x2 = (v) => 400 + ((v + 5) / 10) * 280;
+  const lo = r.lower * 100, hi = r.upper * 100, m = r.mean * 100;
+  const o = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Hoeffding vs Halving: cost and quality">`,
+    `<rect width="${W}" height="${H}" fill="#fff"/>`,
+    t(40, 26, 'Cost: battles per run, Halving = 1.00', 'font-weight="600"'), t(400, 26, 'Quality: held-out win rate vs Halving (points)', 'font-weight="600"'),
+    `<line x1="${x1(1)}" y1="60" x2="${x1(1)}" y2="170" stroke="#888" stroke-dasharray="3 3"/>`, t(x1(1), 54, 'Halving 1.00', 'text-anchor="middle" font-size="11"'),
+    `<line x1="${x1(0.8)}" y1="60" x2="${x1(0.8)}" y2="170" stroke="#1a7f37" stroke-width="2"/>`, t(x1(0.8), 54, 'keep bar 0.80', 'text-anchor="middle" font-size="11" fill="#1a7f37"'),
+    `<rect x="${x1(0.5)}" y="95" width="${(x1(r.battleRatio) - x1(0.5)).toFixed(1)}" height="40" fill="#c2410c"/>`,
+    t(x1(r.battleRatio) - 6, 120, r.battleRatio.toFixed(2), 'text-anchor="end" font-size="15" font-weight="700" fill="#fff"'),
+    t(40, 195, `Saves ${((1 - r.battleRatio) * 100).toFixed(0)}%; needs 20%`, 'font-size="11"'),
+    `<line x1="${x2(0)}" y1="60" x2="${x2(0)}" y2="170" stroke="#888" stroke-dasharray="3 3"/>`, t(x2(0), 54, 'equal', 'text-anchor="middle" font-size="11"'),
+    `<line x1="${x2(-3)}" y1="60" x2="${x2(-3)}" y2="170" stroke="#1a7f37" stroke-width="2"/>`, t(x2(-3), 54, 'loss bound -3', 'text-anchor="middle" font-size="11" fill="#1a7f37"'),
+    `<line x1="${x2(lo).toFixed(1)}" y1="115" x2="${x2(hi).toFixed(1)}" y2="115" stroke="#c2410c" stroke-width="3"/>`,
+    `<circle cx="${x2(m).toFixed(1)}" cy="115" r="7" fill="#c2410c"/>`,
+    t(x2(m), 100, `${m >= 0 ? '+' : ''}${m.toFixed(1)}`, 'text-anchor="middle" font-size="13" font-weight="700"'),
+    t(400, 195, `95% range ${lo.toFixed(1)} to ${hi >= 0 ? '+' : ''}${hi.toFixed(1)} (${r.n} seeds)`, 'font-size="11"'),
+    t(40, 235, 'Verdict: DROP. It prunes but saves nothing, and buys no quality.', 'font-weight="700"'),
+    '</svg>', ''];
+  return o.join('\n');
+}
+
 export function renderHoeffdingReport(data, outDir) {
   const { top, heldoutCount, cells } = data;
   const shortSeeds = seedsOf(cells, 'base');
@@ -187,7 +215,12 @@ export function renderHoeffdingReport(data, outDir) {
     }
   }
 
-  const bottomMd = ['## Bottom line', '', bottom, ''];
+  let chartMd = [];
+  if (ov) {
+    writeFileSync(path.join(outDir, 'hoeffding-ab.bottom-line.svg'), summaryChartSvg({ ...r, battleRatio: bR }));
+    chartMd = ['![Hoeffding vs Halving: battles per run against the keep bar, and quality difference with its 95% range](hoeffding-ab.bottom-line.svg)', '', '*Left: Hoeffding\'s battles per run relative to Halving (orange) against the 0.80 bar it needed to reach. Right: its quality difference from Halving (dot) with the 95% range (line) against the -3 point loss bound.*', ''];
+  }
+  const bottomMd = ['## Bottom line', '', bottom, '', ...chartMd];
   const oldNote = old.length ? ['## 1. Why this was retested', '', `The first A/B ran \`--hoeffding-confidence 0.95\` (the flag default) over 60 seeds and looked as if Hoeffding were pointless. It was not a fair test: that setting cut essentially no teams, so it cost as much as no pruning at all (${old[2].match(/mean battles\/run [^ ]+ vs Halving's [^ ]+ \(ratio [^)]+\)/)?.[0] ?? 'see below'}). The cause was the setting, not a bug: the confidence interval at 0.95 is too wide to separate teams (appendix). A separate bug in the confidence-to-z-score mapping was fixed in round 3, but it only affected values below 0.9. Everything below reruns the test at a setting that does prune.`, ''] : [];
 
   const cell = (a) => {
