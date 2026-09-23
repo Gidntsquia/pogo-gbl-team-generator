@@ -36,6 +36,13 @@ export const ARMS = {
   // `hoeffding` differs only by replacing halving with --hoeffding-races (halving off).
   base: ['--halving-rounds', '3'],
   hoeffding: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.1'],
+  // Sampled-combats round (plans/PLAN.md 2026-09-23): `base` above is the control. Idea arms: sampled fraction
+  // (s2 = 1/2, s4 = 1/4) x Halving (h0 off, h3 R=3), with --population/--opponents-per-gen sized by pilot so
+  // mean battles per run is within 10% of control's (see RUNBOOK sampled-combats section).
+  s2h0: ['--halving-rounds', '0', '--sampled-combats', '0.5', '--population', '37', '--opponents-per-gen', '28'],
+  s2h3: ['--halving-rounds', '3', '--sampled-combats', '0.5', '--population', '48', '--opponents-per-gen', '36'],
+  s4h0: ['--halving-rounds', '0', '--sampled-combats', '0.25', '--population', '47', '--opponents-per-gen', '35'],
+  s4h3: ['--halving-rounds', '3', '--sampled-combats', '0.25', '--population', '62', '--opponents-per-gen', '47'],
   // Round-4 setting probe (plans/PLAN.md): confidence variants to find the one whose
   // battle count is closest to Halving's. Not used by the real A/B; probe-only arms.
   conf50: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.5'],
@@ -114,6 +121,11 @@ async function main() {
     if (data.arms.includes('hoeffding')) {
       const { renderHoeffdingReport } = await import('./compare-hoeffding-report.mjs');
       renderHoeffdingReport(data, path.join(ROOT, 'out'));
+      return;
+    }
+    if (data.arms.includes('s2h0')) {
+      const { renderSampledReport } = await import('./compare-sampled-report.mjs');
+      renderSampledReport(data, path.join(ROOT, 'out'));
       return;
     }
     const { renderReport } = await import('./compare-search-report.mjs');
