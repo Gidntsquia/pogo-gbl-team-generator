@@ -887,7 +887,7 @@ switch flipped is refused (the error names the differing key).
 
 A/B: `node scripts/compare-search.mjs run --dir out/hoeffding-ab-cut --arms base,hoeffding --seeds
 s1,s2,...` then `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut` (writes the single
-report `out/hoeffding-ab.md`, plus the embedded narrowing-chart image `out/hoeffding-ab.narrowed.svg`);
+report `out/hoeffding-ab.md`; no chart -- a 10-seed range is too wide to show anything);
 `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut` runs the unattended driver under the
 fixed stop rule (`scripts/hoeffding-stats.mjs`) -- a speed-idea rule with both a quality bound and a
 battle-saving bar (the halving R=3 precedent above: KEEP needs >=20% fewer battles and a quality loss no
