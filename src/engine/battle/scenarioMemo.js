@@ -152,6 +152,16 @@ function memoizedScenario(memo, ai, original, type, pokemon, opponent) {
       // Battle#start resets pokemon[0] first, and that reset re-initializes
       // its moves against pokemon[1]'s CURRENT (not yet reset) stat buffs and
       // form -- pvpoke's own order dependence, so both go in the key.
+      // A Pokemon with a form-change rule (Mimikyu, Cramorant, Aegislash, ...) can
+      // rewrite its species name, form rule, stats, native buffs and moves in place
+      // during a sim. readCarried cannot record that, so a replayed hit leaves the
+      // Pokemon different from a real sim (found 2026-09-24: serial and threaded
+      // fixed-K runs diverged over Mimikyu/Cramorant battles). Such sims run for
+      // real every time and are never stored.
+      if (p0.formChange || p1.formChange) {
+        realSimulate.call(b);
+        return [];
+      }
       const key = `${simMonKey(p0)}|${simMonKey(p1)}|${p1.activeFormId},${p1.statBuffs[0]},${p1.statBuffs[1]}`;
       const hit = memo.map.get(key);
       if (hit && !memo.verify) {
