@@ -133,7 +133,8 @@ async function main() {
     }
     if (data.arms.includes('k10eq')) {
       const { renderSampledKReport } = await import('./compare-sampled-k-report.mjs');
-      renderSampledKReport(data, path.join(ROOT, 'out'));
+      const r3File = path.join(ROOT, 'out', 'sampled-k-ab-r3', 'results.json');
+      renderSampledKReport(data, path.join(ROOT, 'out'), existsSync(r3File) ? JSON.parse(readFileSync(r3File, 'utf8')) : undefined);
       return;
     }
     if (data.arms.includes('s2h0')) {

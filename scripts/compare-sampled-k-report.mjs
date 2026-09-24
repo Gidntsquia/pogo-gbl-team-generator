@@ -4,6 +4,7 @@
 // Statistics, arms and the stop rule: sampled-k-stats.mjs.
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import * as R3 from './sampled-k-r3-stats.mjs';
 import { mean, sd, t95, pairedRows, verdictAt, finalArm, finalSweep, allDecided, finishedSeeds, STOP_RULE, MIN_SEEDS, CAP_SEEDS, BUDGET_SECONDS, COST_TOLERANCE, CONTROL, IDEA_ARMS, SWEEPS } from './sampled-k-stats.mjs';
 
 const pct = (x, d = 1) => `${(x * 100).toFixed(d)}%`;
@@ -81,7 +82,64 @@ function qualityOf(cs) {
   return { m, lo: m - h, hi: m + h };
 }
 
-export function renderSampledKReport(data, outDir) {
+
+/** Round 3: the opponent sweep rerun after the determinism fix. Returns {bottom, section, headline}. */
+function round3Block(data, r3) {
+  const cells3 = r3.cells;
+  const seeds = [...new Set(cells3.map((c) => c.seed))].sort((a, b) => num(a) - num(b));
+  const n = R3.finishedSeeds(cells3, seeds);
+  if (!n) return { bottom: '<p>No finished round-3 seeds yet.</p>', section: '' };
+  const used = seeds.slice(0, n);
+  const spent = cells3.reduce((s, c) => s + (c.wallSeconds ?? 0), 0);
+  const swRows = pairedRows(cells3, seeds, R3.SMALL, R3.LARGE).slice(0, n);
+  const v = verdictAt(swRows, n), d = R3.decisionAt(cells3, seeds, n);
+  const answer = n >= MIN_SEEDS && d !== 'undecided' ? d.toUpperCase() : "CAN'T TELL";
+  const width = (v.upper - v.lower) * 100;
+  const stop = n >= MIN_SEEDS && d !== 'undecided' ? `the stop rule fired (${answer}) after seed ${n}` : n >= R3.CAP_SEEDS ? `the ${R3.CAP_SEEDS}-seed cap was reached with the rule unfired` : `the ${R3.BUDGET_SECONDS / 3600}-hour compute budget ended the run (${hours(spent)} spent) with the rule unfired`;
+  const ctlCells = data.cells.filter((c) => c.arm === CONTROL);
+  const armVs = (a) => { const rows = pairedRows([...ctlCells, ...cells3], seeds, CONTROL, a); return { rows, v: rows.length >= 2 ? verdictAt(rows, rows.length) : null }; };
+  const vs = { o50: armVs('o50'), o500: armVs('o500') };
+  const armLine = (a) => {
+    const x = vs[a]; if (!x.v) return `<li>${esc(NAMES[a])}: too few seeds against the control.</li>`;
+    const lab = x.v.verdict === 'unclear' ? (x.v.mean >= 0.01 ? 'KEEP (plain reading)' : 'DROP (plain reading)') : LABEL[x.v.verdict === 'keep' ? 'keep' : 'drop'];
+    return `<li><b>${esc(NAMES[a])} vs control: ${lab}.</b> ${pts(x.v.mean)} points on the ${x.rows.length} seeds both have (95% range ${pts(x.v.lower)} to ${pts(x.v.upper)}, width ${((x.v.upper - x.v.lower) * 100).toFixed(1)}).</li>`;
+  };
+  const q = (a) => qualityOf(used.map((s) => cells3.find((c) => c.arm === a && c.seed === s)));
+  const B = (a) => mean(used.map((s) => cells3.find((c) => c.arm === a && c.seed === s).genBattles));
+  const ctlUsed = used.map((s) => ctlCells.find((c) => c.seed === s)).filter(Boolean);
+  const cQ = qualityOf(ctlUsed), cB = mean(ctlUsed.map((c) => c.genBattles));
+  const cost = (a) => `${(B(a) / cB).toFixed(1)}x`;
+  const chart = sizeChart('Held-out quality vs opponent population (200 candidates, K=50; after the fix)', 'opponent pool size', [R3.SMALL, R3.LARGE].map((a, k) => ({ ...q(a), size: k ? 500 : 50, cost: cost(a) })), { ...cQ, cost: '1.0x' });
+  const bottom = `<p class="verdict">More opponents (50 to 500): ${esc(answer)}.</p>
+<p>Is held-out quality higher with 500 opponents than with 50? ${answer === 'YES' ? 'Yes' : answer === 'NO' ? 'No' : "Can't tell"}: 500 minus 50 is <b>${pts(v.mean)} points</b>, 95% range <b>${pts(v.lower)} to ${pts(v.upper)}</b>, width <b>${width.toFixed(1)} points</b> (round 2's width was 11.2 points on 5 seeds). Paired on <b>${n} seeds</b> (s1 to s${n}), all rerun after the determinism fix, ahead on ${v.wins} of ${n}. The run stopped because ${esc(stop)}.</p>
+<p><b>Per arm vs control</b>, on the seeds both have (control cells are round 2's, run before the fix):</p><ul>${armLine('o50')}${armLine('o500')}</ul>
+<p><b>Not rerun:</b> the equal-cost arm (K=10), the 40-candidate and 320-candidate arms and the candidate sweep are round 2's <b>5-seed results, produced before the determinism fix</b> (see section 3). Their numbers can change when rerun.</p>
+<figure>${img(chart, 'Quality versus opponent population size, rerun after the fix')}<figcaption>Mean held-out quality (dot) with 95% range across ${n} seeds (bar) at 50 and 500 opponents; dashed line = control (round 2, pre-fix). Cost under each point.</figcaption></figure>`;
+  const perSeed = table(['seed', 'control (round 2)', '50 opponents', '500 opponents', '500 minus 50 (pts)'], used.map((s) => {
+    const a = cells3.find((c) => c.arm === R3.SMALL && c.seed === s), b = cells3.find((c) => c.arm === R3.LARGE && c.seed === s), c = ctlCells.find((x) => x.seed === s);
+    return [s, c ? pct(c.heldoutMeanTop) : '-', pct(a.heldoutMeanTop), pct(b.heldoutMeanTop), pts(b.heldoutMeanTop - a.heldoutMeanTop)];
+  }));
+  const r2 = data.cells.filter((c) => c.arm === 'o50' || c.arm === 'o500');
+  const r2Seeds = [...new Set(r2.map((c) => c.seed))].sort((a, b) => num(a) - num(b));
+  const r2Rows = pairedRows(r2, r2Seeds, R3.SMALL, R3.LARGE), r2v = verdictAt(r2Rows, r2Rows.length);
+  const oldTable = table(['seed', 'round 2, 50 opp (pre-fix)', 'round 2, 500 opp (pre-fix)', 'round 3, 50 opp', 'round 3, 500 opp'], r2Seeds.map((s) => {
+    const g = (cs, a) => { const c = cs.find((x) => x.arm === a && x.seed === s); return c ? pct(c.heldoutMeanTop) : '-'; };
+    return [s, g(r2, 'o50'), g(r2, 'o500'), g(cells3, 'o50'), g(cells3, 'o500')];
+  }));
+  const battles = table(['seed', '50 opp battles', '500 opp battles'], used.map((s) => [s, cells3.find((c) => c.arm === R3.SMALL && c.seed === s).genBattles, cells3.find((c) => c.arm === R3.LARGE && c.seed === s).genBattles]));
+  const section = `<h2>2. Round 3: opponent sweep after the determinism fix</h2>
+<p><b>Why a rerun.</b> Round 2 could give different results for the same seed at different thread counts. Cause: pvpoke's scenario memo replayed cached lookaheads for form-changing Pokemon (Mimikyu, Cramorant, Aegislash, ...), which cannot restore the in-battle form change, so results depended on which battles a worker had already run. The memo now skips those Pokemon, and serial and threaded runs match (8-generation checks at 8 vs 1 threads). Round 2's numbers all came from the unfixed code.</p>
+<p>Arms: 50 and 500 opponents, both K=50, 200 candidates, Halving R=3, 8 generations, held-out top-5 mean as before, seeds s1 to s${n}, threads 8, same flags as round 2. The old s1 to s5 were rerun, not reused (round 2's cells are kept in <code>out/sampled-k-ab/results.json</code>). New cells took ${hours(spent)} (limit ${R3.BUDGET_SECONDS / 3600} h).</p>
+<div class="scroll">${table(['sweep', 'seeds', 'mean diff (pts)', '95% range (pts)', 'range width (pts)', '500 ahead on', 'answer'], [['50 to 500 opponents', String(n), pts(v.mean), `${pts(v.lower)} to ${pts(v.upper)}`, width.toFixed(1), `${v.wins} of ${n}`, answer]])}</div>
+<h3>Held-out quality per seed (round 3)</h3><div class="scroll">${perSeed}</div>
+<h3>Round 2 (pre-fix) next to round 3, same seeds</h3><p class="mute">Round 2's 500 minus 50 was ${pts(r2v.mean)} points (95% range ${pts(r2v.lower)} to ${pts(r2v.upper)}, width ${((r2v.upper - r2v.lower) * 100).toFixed(1)}) on ${r2Rows.length} seeds.</p><div class="scroll">${oldTable}</div>
+<h3>Battles per seed (round 3)</h3><div class="scroll">${battles}</div>
+<h3>Round-3 stop rule</h3><p>${esc(R3.STOP_RULE)}</p>
+<p>Rerun: <code>node scripts/sampled-k-r3-sweep.mjs</code> (resumable), then <code>node scripts/compare-search.mjs report --dir out/sampled-k-ab</code>.</p>`;
+  return { bottom, section };
+}
+
+export function renderSampledKReport(data, outDir, round3) {
   const { top, heldoutCount, cells } = data;
   const seeds = [...new Set(cells.filter((c) => c.arm === CONTROL).map((c) => c.seed))].sort((a, b) => num(a) - num(b));
   const n = finishedSeeds(cells, seeds);
@@ -136,11 +194,14 @@ export function renderSampledKReport(data, outDir) {
       `node scripts/compare-search.mjs run --dir out/sampled-k-ab --arms ${[CONTROL, ...IDEA_ARMS].join(',')} --seeds ${seeds.join(',')} --top ${top ?? 5} --heldout ${heldoutCount ?? 60}`,
       'node scripts/compare-search.mjs report --dir out/sampled-k-ab   # from saved results: same numbers, writes out/sampled-k-ab.html'];
 
+    const blk = round3 ? round3Block(data, round3) : null;
     body = `<h2>1. What fixed-K sampling does</h2>
 <p>Today every generation every candidate team battles every team in the opponent pool, so cost grows with candidates x opponents. <b>Fixed-K sampling</b> caps that: each candidate fights only K opponents, whatever the pool sizes. The opponent pool is split at random into ceil(opponents / K) blocks of at most K, the candidates into the same number of groups, and each group fights one block. Every candidate fights about K opponents, and every opponent is fought by a group of candidates, so nobody ends a generation without a fitness. Sequential Halving (R=3) runs inside each group's block. If K is at least the opponent pool, everyone fights everyone (that is the 50-opponent arm).</p>
 <p><b>What bigger sizes buy.</b> A candidate measured against only K opponents is scored less precisely, but the pools can grow without the cost growing with them: more candidates search more of the collection, and more opponents make each generation's opponent sample more varied. Cost per generation is about candidates x K, not candidates x opponents.</p>
 <p>The sweep arms keep their sizes literal for the whole run (<code>--population-final-ratio 1</code>: no shrinking of the candidate population while the opponent pool grows), so "40 candidates" means 40 all run long. The control keeps today's default schedule (40 candidates shrinking to 16 while opponents grow from 30).</p>
-<h2>2. Numbers</h2>
+${blk ? blk.section : ''}
+<h2>3. Round 2 numbers (5 seeds, all six arms, before the determinism fix)</h2>
+${round3 ? `<div class="bottom">${bottom}</div>` : ''}
 <p>Quality is the mean win rate (both seats) of each run's top ${top} finalists against ${heldoutCount} fresh meta teams that no search fought. Short cells: ${esc(flagOf(armFlags(data, CONTROL), '--generations'))} generations, meta mode. ${decided ? 'The stop rule fired for every arm and both sweeps.' : `The ${ended === 'cap' ? 'seed cap' : 'compute budget'} ended the run at ${n} seeds before the rule fired for everything; undecided arms got the plain reading and undecided sweeps are "can't tell".`}</p>
 <div class="scroll">${table(['arm', 'sizes', 'battles per run', 'wall per run', 'held-out quality (95% range)', 'vs control, pts (95% range)', 'ahead on', 'verdict'], [[NAMES[CONTROL], sizesOf(data, CONTROL), `${B(CONTROL).toFixed(0)} (1.0x)`, `${S(CONTROL).toFixed(0)} s`, `${pct(cQ.m)} (${pct(cQ.lo)} to ${pct(cQ.hi)})`, '', '', ''], ...IDEA_ARMS.map(rowFor)])}</div>
 <h3>Sweeps: larger minus smaller size (paired on seeds)</h3>
@@ -155,6 +216,7 @@ export function renderSampledKReport(data, outDir) {
   } else {
     body = `<h2>Appendix</h2><p>${esc(STOP_RULE)}</p>`;
   }
+  if (round3 && n) bottom = round3Block(data, round3).bottom;
   const file = path.join(outDir, 'sampled-k-ab.html');
   writeFileSync(file, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fixed-K Sampled Combats</title><style>${CSS}</style></head><body><main><h1>Fixed-K sampled combats: do bigger populations help? (experimental)</h1><h2 style="border:0;margin-top:8px">Bottom line</h2><div class="bottom">${bottom}</div>${body}</main></body></html>\n`);
   console.log(`wrote ${file}`);
