@@ -920,3 +920,19 @@ same seeds). Halving stays the default.
 
 A/B, 18 seeds, control = Halving R=3 (40 teams / 30 opponents), each arm sized to within 10% of control battles (arm sizes as population/opponents: 1/2 no-Halving 37/28, 1/2 Halving 48/36, 1/4 no-Halving 47/35, 1/4 Halving 62/47): only 1/2 sample + Halving KEEPs (+1.6 pt held-out, 95% range +0.1..+3.1, 0.93x battles). The other three DROP. Report: `out/sampled-ab.html`. Rerun: `node scripts/sampled-overnight.mjs --dir out/sampled-ab` (unattended, resumable, ~4 h, threads 8); rebuild the report with `node scripts/compare-search.mjs report --dir out/sampled-ab`.
 Note: the 1/2, Halving-off arm needed *smaller* sizes than control to match its cost, not larger.
+
+### Fixed-K sampled combats (`--sampled-opponents K`, EXPERIMENTAL, round 2)
+
+Each candidate fights K sampled opponents per generation, whatever the pool sizes. The opponent pool is split into ceil(opponents/K) blocks, candidates are shuffled into the same number of groups, and Sequential Halving runs inside each block. Needs candidates >= blocks (start-up refuses otherwise). Resuming with a different or missing K is refused (message names `sampledOpponents`). Cannot be combined with `--sampled-combats`.
+
+A/B (2026-09-24, 5 seeds, 8 generations, meta mode, Halving R=3, idea arms use `--population-final-ratio 1`; control keeps the default 40->16 ramp, so "40 candidates" means 40 all run long in the idea arms). Compute budget (10 h) ended the run at 5 seeds; undecided arms got the plain reading. Quality = mean held-out win rate of the top 5 finalists vs 60 fresh meta teams; control 57.8%.
+
+| arm | vs control (95% range) | battles vs control | verdict |
+|---|---|---|---|
+| K=10, 56 cand x 300 opp (equal cost) | -3.4 (-8.0..+1.2) | 1.05x | DROP |
+| K=50, 200 x 50 | +0.7 (-3.4..+4.7) | 8.2x | DROP |
+| K=50, 200 x 500 | +4.4 (+1.0..+7.9) | 13.4x | KEEP |
+| K=50, 40 x 500 | -3.5 (-6.4..-0.7) | 2.7x | DROP |
+| K=50, 320 x 500 | +2.7 (+0.9..+4.5) | 21.4x | KEEP |
+
+Sweeps: more candidates (40 -> 320) YES, +6.2 pt (+1.9..+10.5); more opponents (50 -> 500) CAN'T TELL, +3.8 (-1.8..+9.4). At equal cost sampling did not beat control; the gains come only with 13-21x the battles. Report: `out/sampled-k-ab.html`. Rerun: `node scripts/sampled-k-overnight.mjs --dir out/sampled-k-ab`; rebuild the report: `node scripts/compare-search.mjs report --dir out/sampled-k-ab`.
