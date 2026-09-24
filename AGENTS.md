@@ -29,3 +29,16 @@ they don't say.
   are archived under `plans/archive/<date>-<topic>/`.
 - Any change to what a generation's fitness number means must bump `FITNESS_SEMANTICS` in
   `src/evolve/fitness.js` so stale checkpoints refuse to resume instead of mixing scales.
+- `--threads N` with N > 0 means N worker threads (`--threads 1` is ONE worker, not serial);
+  `--threads 0` is real serial. A serial-vs-threaded determinism check needs both, and a
+  1-worker run of a big cell is ~8x the wall time of 8 workers.
+- The scenario memo (`src/engine/battle/scenarioMemo.js`) never stores or replays a sim that
+  involves a form-changing mon (Mimikyu, Cramorant, Aegislash, Morpeko, ...): replay cannot
+  restore the in-sim form rewrite, and results then depended on worker/battle order
+  (found 2026-09-24). Same seed must give identical checkpoints at any `--threads`; check with
+  two runs and diff the checkpoints ignoring timing fields. `FITNESS_SEMANTICS` was not bumped
+  for this, so pre-fix checkpoints still resume.
+- Round-3 opponent sweep lives in `out/sampled-k-ab-r3/` (driver `scripts/sampled-k-r3-sweep.mjs`);
+  round 2's `out/sampled-k-ab/results.json` is kept as the pre-fix record. The report
+  (`compare-search.mjs report --dir out/sampled-k-ab`) merges both.
+
