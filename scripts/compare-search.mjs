@@ -43,6 +43,14 @@ export const ARMS = {
   s2h3: ['--halving-rounds', '3', '--sampled-combats', '0.5', '--population', '48', '--opponents-per-gen', '36'],
   s4h0: ['--halving-rounds', '0', '--sampled-combats', '0.25', '--population', '47', '--opponents-per-gen', '35'],
   s4h3: ['--halving-rounds', '3', '--sampled-combats', '0.25', '--population', '62', '--opponents-per-gen', '47'],
+  // Fixed-K sampled-combats round (plans/PLAN.md round 2, scripts/sampled-k-stats.mjs): `base` is the control.
+  // --population-final-ratio 1 keeps each arm's sizes literal (no ramp) -- see RUNBOOK. k10eq's --population is
+  // sized by pilot so mean battles per run is within 10% of control's.
+  k10eq: ['--halving-rounds', '3', '--sampled-opponents', '10', '--population', '56', '--opponents-per-gen', '300', '--population-final-ratio', '1'],
+  o50: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  o500: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
+  c40: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '40', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
+  c320: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '320', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
   // Round-4 setting probe (plans/PLAN.md): confidence variants to find the one whose
   // battle count is closest to Halving's. Not used by the real A/B; probe-only arms.
   conf50: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.5'],
@@ -121,6 +129,11 @@ async function main() {
     if (data.arms.includes('hoeffding')) {
       const { renderHoeffdingReport } = await import('./compare-hoeffding-report.mjs');
       renderHoeffdingReport(data, path.join(ROOT, 'out'));
+      return;
+    }
+    if (data.arms.includes('k10eq')) {
+      const { renderSampledKReport } = await import('./compare-sampled-k-report.mjs');
+      renderSampledKReport(data, path.join(ROOT, 'out'));
       return;
     }
     if (data.arms.includes('s2h0')) {

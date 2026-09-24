@@ -11,6 +11,11 @@
 // the same code as the unsampled path, and with Halving on each candidate's
 // slices come from its own sample.
 //
+// Fixed-K mode (--sampled-opponents K): the block count is ceil(opponents / K), so each
+// candidate fights ~K opponents (never more) no matter how big the pools are. Needs at least
+// that many candidates, or some opponent would end the generation with no fitness (the CLI
+// refuses such sizes at start).
+//
 // Randomness: src/util/rng.js only, seeded per generation.
 
 import { rngFromSeed } from '../util/rng.js';
@@ -21,6 +26,14 @@ import { evaluateWithHalving } from './halving.js';
 export function blocksForFraction(fraction) {
   const k = Math.round(1 / fraction);
   return k >= 2 && Math.abs(1 / k - fraction) < 1e-9 ? k : null;
+}
+
+/**
+ * Fixed-K mode (--sampled-opponents K): blocks needed so no candidate fights more than K of
+ * `opponentCount` opponents. K >= opponents -> 1 block (everyone fights everyone).
+ */
+export function blocksForPerCandidate(opponentCount, k) {
+  return Math.max(1, Math.ceil(opponentCount / k));
 }
 
 function shuffledIndices(n, seed) {
@@ -47,7 +60,8 @@ const pick = (arr, idxs) => (arr ? idxs.map((i) => arr[i]) : arr);
 export async function evaluateWithSampling(ctx, params, sampled) {
   const { teams, opponents } = params;
   const { fraction, seed, halving } = sampled;
-  const K = Math.min(blocksForFraction(fraction) ?? 1, teams.length, opponents.length);
+  const wanted = sampled.perCandidate ? blocksForPerCandidate(opponents.length, sampled.perCandidate) : blocksForFraction(fraction) ?? 1;
+  const K = Math.min(wanted, teams.length, opponents.length);
   const teamOrder = shuffledIndices(teams.length, `${seed}-sample-teams`);
   const oppOrder = shuffledIndices(opponents.length, `${seed}-sample-opps`);
 
@@ -90,6 +104,6 @@ export async function evaluateWithSampling(ctx, params, sampled) {
     elapsedMs: Date.now() - startedAt,
     startedAt,
     finishedAt: Date.now(),
-    sampled: { fraction, blocks },
+    sampled: { ...(sampled.perCandidate ? { perCandidate: sampled.perCandidate } : { fraction }), blocks },
   };
 }

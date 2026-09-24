@@ -5,7 +5,8 @@ import { DEFAULT_VENDOR_ROOT } from '../engine/pvpokeLoader.js';
 import { DEFAULT_SELECTION_TRAILING } from '../teams/evolve.js';
 import { resolveFormat } from '../util/leagues.js';
 import { UserError } from '../util/userError.js';
-import { blocksForFraction } from './sampled.js';
+import { populationAt, opponentsAt } from './schedule.js';
+import { blocksForFraction, blocksForPerCandidate } from './sampled.js';
 import { DEFAULTS, FITNESS_MODES } from './config.js';
 import { FINAL_FRESH_WHEN_NO_CURATED } from './finalPass.js';
 import { formatTeamMembers, pct } from './format.js';
@@ -123,6 +124,16 @@ Options:
                             --opponents-per-gen to spend the saving. Part of the run
                             config: a run started with a different value will not resume
                                                                        (default: off)
+  --sampled-opponents K    EXPERIMENTAL, off by default. Every candidate fights K sampled
+                            opponents per generation, whatever the pool sizes, so both
+                            populations can grow without the cost growing with the grid.
+                            Opponents are split into ceil(M/K) random blocks and candidates
+                            into that many groups, one block each; every opponent still gets
+                            a fitness. Needs --population >= ceil(opponents/K), else the run
+                            is refused at start. K >= opponents means everyone fights
+                            everyone. Works with Halving on or off; not with
+                            --sampled-combats. Part of the run config: a run started with a
+                            different K will not resume            (default: off)
   --fixed-opponents        freeze the opponent pool: one draw, never evolved
                             and never resized                          (default: off)
   --elites N               last-generation teams (by trailing-mean fitness)
@@ -349,6 +360,7 @@ const NUMBER_FLAGS = [
   ['halving-keep'], // unset = 0.5
   ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
   ['sampled-combats'], // unset = off; validated as 1/K below
+  ['sampled-opponents'], // unset = off; positive integer K, validated below
   ['hoeffding-confidence'], // unset = 0.1 (only meaningful with --hoeffding-races)
 ];
 
@@ -478,6 +490,25 @@ export function parseEvolveArgs(argv) {
   };
   if (opts.sampledCombats !== undefined && (opts.sampledCombats === 0 || blocksForFraction(opts.sampledCombats) === null)) {
     throw usageError(`--sampled-combats ${values['sampled-combats']} is not 1/K`, 'use a fraction like 0.5 or 0.25 (each candidate fights that share of the opponents)');
+  }
+  if (opts.sampledOpponents !== undefined) {
+    const k = opts.sampledOpponents;
+    if (!Number.isInteger(k) || k < 1) throw usageError(`--sampled-opponents ${values['sampled-opponents']} is not a positive whole number`, 'use e.g. --sampled-opponents 50');
+    if (opts.sampledCombats) throw usageError('--sampled-opponents and --sampled-combats cannot be combined', 'pick one sampling mode');
+    if (opts.hoeffdingRaces) throw usageError('--sampled-opponents and --hoeffding-races cannot be combined', 'drop one; sampled combats works with Halving on or off');
+    const sched = {
+      population: opts.population ?? DEFAULTS.population,
+      opponentsPerGen: opts.opponentsPerGen ?? DEFAULTS.opponentsPerGen,
+      generations: opts.generations ?? DEFAULTS.generations,
+      populationFinalRatio: opts.populationFinalRatio ?? DEFAULTS.populationFinalRatio,
+    };
+    // The population ramps down while the opponent pool ramps up, so check every generation.
+    for (let g = 0; g < Math.max(1, sched.generations); g++) {
+      const pop = populationAt(g, sched), opps = opponentsAt(g, sched), need = blocksForPerCandidate(opps, k);
+      if (pop < need) {
+        throw usageError(`--sampled-opponents ${k}: generation ${g} has ${opps} opponents but only ${pop} candidates (needs ${need}) so some opponent would never be fought`, 'raise --population or K, lower --opponents-per-gen, or set --population-final-ratio 1');
+      }
+    }
   }
   if (opts.sampledCombats && opts.hoeffdingRaces) {
     throw usageError('--sampled-combats and --hoeffding-races cannot be combined', 'drop one; sampled combats works with Halving on or off');
