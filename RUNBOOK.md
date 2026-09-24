@@ -913,3 +913,10 @@ probe table, the per-generation cut table from the real A/B cells, and the one s
 `out/hoeffding-ab.md` (rebuild with `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut`;
 rerun the A/B with `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut`, same stop rule,
 same seeds). Halving stays the default.
+
+## Sampled combats (`--sampled-combats F`, EXPERIMENTAL, off by default)
+
+**Status (2026-09-24): experiment, on branch `experiments/sampled-combats`, not merged.** Each generation the opponent pool is shuffled into K = 1/F blocks and the candidates into K groups; each group fights one block, so every candidate meets a random 1/K of the opponents. F must be 1/K (0.5, 0.25, ...); it cannot combine with `--hoeffding-races`; it works with Halving on or off. Same seed gives identical results serial or threaded. A checkpoint made without it refuses to resume with it (the error names the key).
+
+A/B, 18 seeds, control = Halving R=3 (40 teams / 30 opponents), each arm sized to within 10% of control battles (arm sizes as population/opponents: 1/2 no-Halving 37/28, 1/2 Halving 48/36, 1/4 no-Halving 47/35, 1/4 Halving 62/47): only 1/2 sample + Halving KEEPs (+1.6 pt held-out, 95% range +0.1..+3.1, 0.93x battles). The other three DROP. Report: `out/sampled-ab.html`. Rerun: `node scripts/sampled-overnight.mjs --dir out/sampled-ab` (unattended, resumable, ~4 h, threads 8); rebuild the report with `node scripts/compare-search.mjs report --dir out/sampled-ab`.
+Note: the 1/2, Halving-off arm needed *smaller* sizes than control to match its cost, not larger.
