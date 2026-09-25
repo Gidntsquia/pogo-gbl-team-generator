@@ -12,16 +12,18 @@ const cell = (arm, seed, q) => ({ arm, seed, genBattles: 1000, genSeconds: 10, h
 const cellsFor = (diffs) => diffs.flatMap((d, k) => [cell('o50', `s${k + 1}`, 0.5), cell('o500', `s${k + 1}`, 0.5 + d)]);
 const seeds = Array.from({ length: 20 }, (_, k) => `s${k + 1}`);
 
-test('stop rule: YES above 0, NO inside +-1 point, undecided otherwise, nothing before 2 seeds', () => {
+test('stop rule: YES above 0, NO inside +-2 points, undecided otherwise, nothing before 2 seeds', () => {
   const yes = cellsFor([0.05, 0.06, 0.055, 0.05]);
   const no = cellsFor([0.002, -0.003, 0.001, 0]);
+  const band2 = cellsFor([0.015, -0.012, 0.014, -0.013, 0.012, -0.011]); // outside +-1, inside +-2
   const wide = cellsFor([0.1, -0.08, 0.05]);
   assert.equal(finishedSeeds(yes, seeds), 4);
   assert.equal(decisionAt(yes, seeds, 4), 'yes');
   assert.equal(decisionAt(no, seeds, 4), 'no');
+  assert.equal(decisionAt(band2, seeds, 6), 'no');
   assert.equal(decisionAt(wide, seeds, 3), 'undecided');
   assert.equal(decisionAt(cellsFor([0.1]), seeds, 1), 'undecided');
-  assert.match(STOP_RULE, /20 seeds, or 8 hours/);
+  assert.match(STOP_RULE, /24 seeds in total, or 12 hours/);
 });
 
 test('report renders the round-3 answer and is byte-identical across renders', () => {

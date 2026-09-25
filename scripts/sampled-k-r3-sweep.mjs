@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
-import { STOP_RULE, MIN_SEEDS, CAP_SEEDS, BUDGET_SECONDS, SMALL, LARGE, R3_DIR, R2_DIR, finishedSeeds, decisionAt, verdictAt, pairedRows } from './sampled-k-r3-stats.mjs';
+import { STOP_RULE, MIN_SEEDS, SWEEP_BAND, CAP_SEEDS, BUDGET_SECONDS, SMALL, LARGE, R3_DIR, R2_DIR, finishedSeeds, decisionAt, newSpent, R3_SEEDS, verdictAt, pairedRows } from './sampled-k-r3-stats.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const i = process.argv.indexOf('--dir');
@@ -17,7 +17,7 @@ if (!existsSync(CSV) && existsSync(path.join(ROOT, R2_DIR, 'meta-collection-1500
 const RESULTS = path.join(DIR, 'results.json');
 const log = (m) => { const l = `[${new Date().toISOString()}] ${m}`; console.log(l); appendFileSync(path.join(DIR, 'sweep.log'), l + '\n'); };
 const load = () => existsSync(RESULTS) ? JSON.parse(readFileSync(RESULTS, 'utf8')) : { cells: [] };
-const spent = () => load().cells.reduce((s, c) => s + (c.wallSeconds ?? 0), 0);
+const spent = () => newSpent(load().cells);
 const seeds = Array.from({ length: CAP_SEEDS }, (_, k) => `s${k + 1}`);
 const done = () => finishedSeeds(load().cells, seeds);
 function runSeed(seed) {
@@ -26,12 +26,11 @@ function runSeed(seed) {
 }
 
 log(STOP_RULE);
-log(`caps: ${CAP_SEEDS} seeds or ${BUDGET_SECONDS / 3600} h summed wall time; threads 8; spent so far ${spent().toFixed(0)}s, ${done()} seed(s) finished`);
+log(`caps: ${CAP_SEEDS} seeds total or ${BUDGET_SECONDS / 3600} h summed wall time for new cells (s${R3_SEEDS + 1}+); band +-${SWEEP_BAND * 100} pts; threads 8; round-4 spent so far ${spent().toFixed(0)}s, ${done()} seed(s) finished`);
 let why = `seed cap (${CAP_SEEDS}) reached`;
-for (let n = 1; n <= CAP_SEEDS; n++) {
+for (let n = R3_SEEDS; n <= CAP_SEEDS; n++) { // s1..s8 are round 3's finished cells; checks start there
   if (done() < n) {
-    const est = done() ? spent() / done() : 0;
-    if (est && spent() + est > BUDGET_SECONDS) { why = `time budget: ${spent().toFixed(0)}s spent, next seed ~${est.toFixed(0)}s would pass ${BUDGET_SECONDS}s`; log(`budget reached at ${done()} seeds`); break; }
+    if (spent() >= BUDGET_SECONDS) { why = `time budget: ${spent().toFixed(0)}s spent (limit ${BUDGET_SECONDS}s)`; log(`budget reached at ${done()} seeds`); break; }
     runSeed(`s${n}`);
     log(`s${n} done; spent ${spent().toFixed(0)}s`);
   }

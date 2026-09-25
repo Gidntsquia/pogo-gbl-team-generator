@@ -37,9 +37,9 @@ export const SWEEPS = [
 ];
 
 /** Decision from a paired-difference verdict: 'yes' | 'no' | 'undecided' (sweep wording). */
-export function sweepDecision(v) {
+export function sweepDecision(v, band = BAND) {
   if (v.lower > 0) return 'yes';
-  if (v.upper < 0 || (v.lower >= -BAND && v.upper <= BAND)) return 'no';
+  if (v.upper < 0 || (v.lower >= -band && v.upper <= band)) return 'no';
   return 'undecided';
 }
 const armDecision = (v) => (v.verdict === 'unclear' ? null : v.verdict === 'keep' ? 'keep' : 'drop');
