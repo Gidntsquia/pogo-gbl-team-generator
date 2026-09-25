@@ -51,6 +51,15 @@ export const ARMS = {
   o500: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
   c40: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '40', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
   c320: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '320', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
+  // Sizing round (plans/PLAN.md round 7, scripts/sizing-sweep.mjs): one knob moves off the o50 baseline
+  // (200 candidates, 50-opponent pool, K=50) at a time. pN = candidates, oN = pool, kN = K (pool 50).
+  p50: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '50', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  p100: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '100', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  p400: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '400', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  o100: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '100', '--population-final-ratio', '1'],
+  o200: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '200', '--population-final-ratio', '1'],
+  k10: ['--halving-rounds', '3', '--sampled-opponents', '10', '--population', '200', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  k25: ['--halving-rounds', '3', '--sampled-opponents', '25', '--population', '200', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
   // Round-4 setting probe (plans/PLAN.md): confidence variants to find the one whose
   // battle count is closest to Halving's. Not used by the real A/B; probe-only arms.
   conf50: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.5'],
