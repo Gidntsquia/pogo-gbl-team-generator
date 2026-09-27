@@ -71,8 +71,22 @@ export const ARMS = {
   conf30: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.3'],
 };
 
+// Round-9 (plans/PLAN.md): dynamic arms for the joint (population, pool, K) search, named
+// `c<pop>o<pool>k<K>` (e.g. c284o71k71). Registered into ARMS on first use so cellFlags/runCell
+// and the results.json arm bookkeeping work unchanged.
+const DYNAMIC_ARM_RE = /^c(\d+)o(\d+)k(\d+)$/;
+export function ensureArm(name) {
+  if (ARMS[name]) return name;
+  const m = DYNAMIC_ARM_RE.exec(name);
+  if (!m) return name;
+  const [, pop, pool, k] = m;
+  ARMS[name] = ['--halving-rounds', '3', '--sampled-opponents', k, '--population', pop, '--opponents-per-gen', pool, '--population-final-ratio', '1'];
+  return name;
+}
+
 /** BASE_FLAGS with the arm's own value replacing any flag the arm also sets, then the arm's flags. */
 export function cellFlags(arm) {
+  ensureArm(arm);
   const own = ARMS[arm];
   const over = new Set(own.filter((x) => x.startsWith('--')));
   const base = [];
@@ -159,7 +173,7 @@ async function main() {
     console.error('usage: compare-search.mjs run|report');
     process.exit(2);
   }
-  const arms = flagValue(argv, '--arms', 'control,h3,h4').split(',');
+  const arms = flagValue(argv, '--arms', 'control,h3,h4').split(',').map(ensureArm);
   const seeds = flagValue(argv, '--seeds', 's1,s2,s3').split(',');
   const top = Number(flagValue(argv, '--top', '5'));
   const heldoutCount = Number(flagValue(argv, '--heldout', '60'));
@@ -213,4 +227,8 @@ async function main() {
   console.log(`wrote ${RESULTS}`);
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Guarded so scripts/sizing-sweep-r9.mjs can `import { ensureArm } from './compare-search.mjs'` for
+// dynamic-arm registration without triggering a CLI run.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}
