@@ -283,7 +283,10 @@ export function kneeEstimate(fit, bounds, threshold = ONE_PT) {
   });
   const val = (key, i) => Math.round(2 ** (z[key] + center[i]));
   let pool = val('pool', 1), k = val('k', 2);
-  if (k > pool) { k = pool; }
+  // The pool caps K (the model uses min(K, pool)), so a K knee above the pool knee can only be reached by
+  // raising the pool to K. Lowering K to the pool instead (the old rule) threw away the K knee whenever the
+  // pool's own gain was small, pinning the recipe at the search floor (WORKER_NOTES.md, 2026-09-28).
+  if (k > pool) { pool = k; status.pool = `raised to K (${status.pool})`; }
   let pop = Math.max(val('pop', 0), minPop(pool, k));
   return { sizes: { pop, pool, k }, status };
 }
