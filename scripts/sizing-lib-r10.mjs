@@ -294,17 +294,28 @@ export function candidateGrid() {
 
 /**
  * Fit a cost model: log2(genBattles) quadratic in log sizes, from full-cost cells. Seconds from battles via
- * the measured seconds-per-battle ratio of cells with a clean wall time.
+ * a two-parameter linear fit (fixed per-process overhead + measured seconds-per-battle) over cells with a
+ * clean wall time, not a single overhead-free ratio: at small battle counts (this round's search-floor
+ * cells: ~230-460 battles) a fresh `node scripts/evolve.mjs` process's own startup/module-load/pvpoke-VM-boot
+ * cost (measured ~17 s, independent of battle count) dominates and a pure per-battle rate underprices these
+ * cells by 3x+ -- which is what drove round 10's chooseNext to spend its whole batch re-sampling the
+ * cheapest grid point instead of the settings that still decide the knee tests (see WORKER_NOTES.md).
  */
 export function fitCost(cells) {
   const full = cells.filter((c) => !c.cheap);
   const fb = ols(full.map((c) => features(c.sizes)), full.map((c) => Math.log2(c.genBattles)));
   const timed = full.filter((c) => c.costSeconds != null && !c.inflated);
-  const secPerBattle = timed.reduce((s, c) => s + c.costSeconds, 0) / timed.reduce((s, c) => s + c.genBattles, 0);
+  const n = timed.length;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const c of timed) { sx += c.genBattles; sy += c.costSeconds; sxx += c.genBattles * c.genBattles; sxy += c.genBattles * c.costSeconds; }
+  const secPerBattle = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+  const overheadSeconds = Math.max(0, (sy - secPerBattle * sx) / n);
   return {
-    secPerBattle,
+    secPerBattle, overheadSeconds,
     battles: (sizes, generations = FULL_GENERATIONS) => 2 ** dot(features(sizes), fb.beta) * (generations / FULL_GENERATIONS),
-    seconds(sizes, generations = FULL_GENERATIONS) { return this.battles(sizes, generations) * secPerBattle; },
+    // Overhead is a fixed per-process cost (Node startup, pvpoke VM boot), paid once per cell regardless of
+    // how few battles it runs -- it does not scale down with `generations` the way battle time does.
+    seconds(sizes, generations = FULL_GENERATIONS) { return overheadSeconds + this.battles(sizes, generations) * secPerBattle; },
   };
 }
 

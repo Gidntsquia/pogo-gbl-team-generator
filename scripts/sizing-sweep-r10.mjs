@@ -34,6 +34,8 @@ function loadState() {
   return JSON.parse(readFileSync(STATE, 'utf8'));
 }
 function saveState(s) { mkdirSync(R10_DIR, { recursive: true }); const tmp = STATE + '.tmp'; writeFileSync(tmp, JSON.stringify(s, null, 2)); renameSync(tmp, STATE); }
+/** Save `s`, but keep a stop request that arrived on disk while the (possibly long) work producing `s` ran. */
+function saveStateKeepingStop(s) { const onDisk = loadState(); saveState(onDisk.status === 'stop-requested' ? { ...s, status: 'stop-requested' } : s); }
 
 function loadR10Cells() {
   if (!existsSync(R10_CELLS)) return [];
@@ -130,7 +132,14 @@ async function main() {
 
     function withQuality(c) {
       const q = qualityAt(store, c.finalists.slice(0, TOP), N);
-      return { ...c, quality: q ? q.meanTop : null, cheap: c.generations !== FULL_GENERATIONS };
+      // priorCells already carry costSeconds (from sizing-lib-r10.mjs's makeCell); raw round-10 cells
+      // (loadR10Cells reads cells.json directly, bypassing makeCell) only have wallSeconds/totalSeconds --
+      // without this, fitCost's cost-per-cell fit silently drops every round-10 cell and never sees the
+      // fixed per-process overhead that dominates its cheap corner-of-the-grid cells.
+      return {
+        ...c, quality: q ? q.meanTop : null, cheap: c.generations !== FULL_GENERATIONS,
+        costSeconds: c.costSeconds ?? c.wallSeconds ?? c.totalSeconds ?? null,
+      };
     }
     const scoredPrior = priorCells.map(withQuality);
     const scoredR10 = r10.map(withQuality);
@@ -165,11 +174,11 @@ async function main() {
       const lo = est - t * se, hi = est + t * se;
       const inside = confirmMean >= lo && confirmMean <= hi;
       state.confirm = { recipe, confirmMean, predLo: lo, predHi: hi, inside, n: N };
-      saveState(state);
+      saveStateKeepingStop(state);
       if (inside) { state.status = 'found'; saveState(state); log(`FOUND: recipe ${JSON.stringify(recipe)} confirmed (mean ${confirmMean.toFixed(4)} in [${lo.toFixed(4)}, ${hi.toFixed(4)}])`); return; }
       log(`confirmation missed the predicted range (mean ${confirmMean.toFixed(4)} vs [${lo.toFixed(4)}, ${hi.toFixed(4)}]); continuing the search`);
       state.confirm = null;
-      saveState(state);
+      saveStateKeepingStop(state);
       continue;
     }
 
@@ -183,7 +192,9 @@ async function main() {
     r10.push(cell);
     saveR10Cells(r10);
     state.newCellSeconds = (state.newCellSeconds ?? 0) + (cell.wallSeconds ?? cell.totalSeconds ?? 0);
-    saveState(state);
+    // A --stop written while the cell above was running must not be clobbered by this save re-writing the
+    // stale in-memory 'running' status over it.
+    saveStateKeepingStop(state);
   }
 }
 
