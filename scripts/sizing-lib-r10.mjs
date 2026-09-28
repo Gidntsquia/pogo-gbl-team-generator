@@ -319,14 +319,19 @@ export function kneeEstimate(fit, bounds, threshold = ONE_PT) {
   return { sizes: { pop, pool, k }, status };
 }
 
-/** Search bounds: every setting the batch may place a cell at. */
-export const BOUNDS = { pop: [8, 1600], pool: [5, 1000], k: [2, 1000] };
+/**
+ * Search bounds: every setting the batch may place a cell at, and the range the knee estimate may pick from.
+ * Floors raised 2026-09-28 at the user's request (pop 8 -> 50, pool 5 -> 25, K 2 -> 25): the batch had put
+ * 391 of 688 cells at pop 12 / K 3, where fitness from a handful of opponents is too noisy for selection
+ * to work, and none at pop >= 50 with K >= 100, where the answer lies.
+ */
+export const BOUNDS = { pop: [50, 1600], pool: [25, 1000], k: [25, 1000] };
 
 /** Candidate settings for new cells: half-doubling (x sqrt 2) grid within BOUNDS, K <= pool, pop >= min. */
 export function candidateGrid() {
   const vals = (lo, hi) => { const out = []; for (let e = Math.log2(lo); e <= Math.log2(hi) + 1e-9; e += 0.5) out.push(Math.round(2 ** e)); return [...new Set(out)]; };
   const out = [];
-  for (const pop of vals(12, 1600)) for (const pool of vals(6, 800)) for (const k of vals(3, 800)) {
+  for (const pop of vals(BOUNDS.pop[0], 1600)) for (const pool of vals(BOUNDS.pool[0], 800)) for (const k of vals(BOUNDS.k[0], 800)) {
     if (k > pool) continue;
     if (pop < minPop(pool, k)) continue;
     out.push({ pop, pool, k });
