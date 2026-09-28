@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  FULL_GENERATIONS, TOP, armName, features, fitCost, kneeEstimate, kneeTests, ols, BOUNDS, loadAllCells,
+  FULL_GENERATIONS, TOP, armName, features, fitCost, kneeEstimate, kneeTests, ols, BOUNDS, trustBounds, loadAllCells,
 } from './sizing-lib-r10.mjs';
 import { loadStore, qualityAt } from './heldout-store-r10.mjs';
 
@@ -47,7 +47,7 @@ async function main() {
   if (full.length > features({ pop: 1, pool: 1, k: 1 }).length) {
     try {
       fit = ols(full.map((c) => features(c.sizes)), full.map((c) => c.qualityN));
-      recipe = kneeEstimate(fit, BOUNDS).sizes;
+      recipe = kneeEstimate(fit, trustBounds(full, BOUNDS)).sizes;
       tests = kneeTests(fit, recipe);
       passAll = Object.values(tests).every((t) => t.pass);
       cost = fitCost(full);
@@ -106,7 +106,7 @@ async function main() {
       lines.push(`<tr><td>${key}</td><td>${up}</td><td>${down}</td><td class="${t.pass ? 'pass' : 'flag'}">${t.pass ? 'pass' : 'fail'}</td></tr>`);
     }
     lines.push('</table>');
-    lines.push(`<p class="lbl">Ranges are 90% two-sided from one model fit to ${full.length} full-cost, non-inflated cells (see Model below). Exemptions per plans/PLAN.md requirement 2: evolve's minimum population, or K &ge; pool (doubling K then changes nothing).</p>`);
+    lines.push(`<p class="lbl">Ranges are 90% two-sided from one model fit to ${full.length} full-cost, non-inflated cells (see Model below). Exemptions per plans/PLAN.md requirement 2: evolve's minimum population, or pool &le; K for the pool's lower test. When K &ge; pool, K's upper test doubles the pool with K (doubling K alone changes nothing).</p>`);
   }
 
   // ---- model ------------------------------------------------------------------------------------------

@@ -248,24 +248,27 @@ export function minPop(pool, k) { return Math.ceil(pool / Math.min(k, pool)); }
 /**
  * The two knee tests for each size at a setting: gain from doubling it (must be wholly < 1 pt) and gain
  * from half its value up to it (must be wholly > 1 pt). Exemptions: pop's lower test at evolve's minimum
- * population; pool's lower test when pool <= K (halving the pool would also cut K); K's upper test when
- * K >= pool (doubling K changes nothing); K's lower test at K = 1; pool's lower test at pool = 1.
- * @returns {{[size:string]: {up:object|null, down:object|null, upExempt:string|null, downExempt:string|null, pass:boolean}}}
+ * population; pool's lower test when pool <= K (halving the pool would also cut K); K's lower test at K = 1;
+ * pool's lower test at pool = 1. When K >= pool, K's upper test doubles pool and K together.
+ * @returns {{[size:string]: {up:object|null, down:object|null, upExempt:string|null, downExempt:string|null, pass:boolean, upTo:object, halfFrom:object}}}
  */
 export function kneeTests(fit, s, threshold = ONE_PT) {
   const out = {};
   for (const key of SIZE_KEYS) {
-    const up = { ...s, [key]: s[key] * 2 };
+    // K >= pool: doubling K alone changes nothing (the model caps K at the pool), so K's upward test doubles
+    // the pool with it -- the same move kneeEstimate makes when it raises the pool to K. It used to be
+    // exempt, which let a recipe whose K sat at the edge of the measured region pass with no evidence that
+    // more K (and pool) stops paying (2026-09-28).
+    const up = key === 'k' && s.k >= s.pool ? { ...s, pool: s.pool * 2, k: s.k * 2 } : { ...s, [key]: s[key] * 2 };
     const half = { ...s, [key]: s[key] / 2 };
     let upExempt = null, downExempt = null;
-    if (key === 'k' && s.k >= s.pool) upExempt = 'K >= pool: doubling K changes nothing';
     if (key === 'pop' && s.pop / 2 < minPop(s.pool, s.k)) downExempt = `at evolve's minimum population (ceil(pool/K) = ${minPop(s.pool, s.k)})`;
     if (key === 'pool' && s.pool <= s.k) downExempt = 'pool <= K: halving the pool would also cut K';
     if ((key === 'k' || key === 'pool') && s[key] / 2 < 1) downExempt = 'at the smallest value evolve accepts (1)';
     const upC = upExempt ? null : contrast(fitForTests(fit), diffVec(s, up));
     const downC = downExempt ? null : contrast(fitForTests(fit), diffVec(half, s));
     const pass = (upExempt || upC.hi < threshold) && (downExempt || downC.lo > threshold);
-    out[key] = { up: upC, down: downC, upExempt, downExempt, pass: !!pass };
+    out[key] = { up: upC, down: downC, upExempt, downExempt, pass: !!pass, upTo: up, halfFrom: half };
   }
   return out;
 }
@@ -368,32 +371,60 @@ export function fitCost(cells) {
   };
 }
 
+/** Longest a picked cell may take, unless the current recipe itself costs more (it must be run to confirm anyway). */
+export const MAX_CELL_SECONDS = 3 * 3600;
+
 /**
- * Choose the next setting: the candidate whose one extra cell most shrinks the variance of the knee tests
- * still undecided at the current knee estimate, per second of expected compute (rank-one update of the
- * OLS covariance, so no refit is needed to score a candidate).
- * @returns {{sizes:object, score:number, seconds:number}|null}
+ * The part of BOUNDS the data can speak for: each size may go at most one doubling past the largest value
+ * measured by a full-cost cell inside the search floors (pop >= BOUNDS.pop[0], pool >= BOUNDS.pool[0],
+ * min(K, pool) >= BOUNDS.k[0]). Cells below the floors don't count -- pop 1536 was measured only at K 3,
+ * which says nothing about pop 1536 at K 100 (the model has a pop x K term). Added 2026-09-28 at the
+ * user's request, after the fit put the recipe at the top of every bound (1600/1000/1000) with no cell
+ * anywhere near it.
+ * @returns {{pop:[number,number], pool:[number,number], k:[number,number]}}
  */
-export function chooseNext(fit, tests, recipe, cost, grid = candidateGrid(), threshold = ONE_PT) {
+export function trustBounds(cells, bounds = BOUNDS) {
+  const inside = cells.filter((c) => !c.cheap && c.sizes.pop >= bounds.pop[0] && c.sizes.pool >= bounds.pool[0] && Math.min(c.sizes.k, c.sizes.pool) >= bounds.k[0]);
+  const out = {};
+  for (const key of SIZE_KEYS) {
+    const vals = inside.map((c) => (key === 'k' ? Math.min(c.sizes.k, c.sizes.pool) : c.sizes[key]));
+    const top = vals.length ? Math.max(...vals) : bounds[key][0];
+    out[key] = [bounds[key][0], Math.max(bounds[key][0], Math.min(bounds[key][1], 2 * top))];
+  }
+  return out;
+}
+
+/**
+ * Choose the next setting: the candidate (inside `bounds`, costing at most `maxSeconds`) whose one extra
+ * cell most shrinks the variance of the knee tests still undecided at the current knee estimate (rank-one
+ * update of the OLS covariance, so no refit is needed to score a candidate). Ties go to the cheaper cell.
+ *
+ * Information is NOT divided by cost (the rule until 2026-09-28): cell cost spans ~1,200x across the grid
+ * while information spans ~30x, so that ratio always chose the cheapest corner, whose "information" was
+ * the global fit extrapolating five doublings. The cost cap plus trustBounds replace it.
+ * @returns {{sizes:object, score:number, seconds:number, gain:number}|null}
+ */
+export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSeconds = Infinity, grid = candidateGrid(), threshold = ONE_PT } = {}) {
   const vecs = [];
   for (const key of SIZE_KEYS) {
     const t = tests[key];
-    if (t.up && !(t.up.hi < threshold)) vecs.push(diffVec(recipe, { ...recipe, [key]: recipe[key] * 2 }));
-    if (t.down && !(t.down.lo > threshold)) vecs.push(diffVec({ ...recipe, [key]: recipe[key] / 2 }, recipe));
+    if (t.up && !(t.up.hi < threshold)) vecs.push(diffVec(recipe, t.upTo));
+    if (t.down && !(t.down.lo > threshold)) vecs.push(diffVec(t.halfFrom, recipe));
   }
   if (vecs.length === 0) return null;
   const A = fit.XtXinv;
   const base = vecs.map((v) => dot(v, matVec(A, v)));
   let best = null;
   for (const sizes of grid) {
+    if (SIZE_KEYS.some((key) => sizes[key] > bounds[key][1])) continue;
+    const seconds = cost.seconds(sizes);
+    if (seconds > maxSeconds) continue;
     const x = features(sizes);
     const Ax = matVec(A, x);
     const denom = 1 + dot(x, Ax);
     let gain = 0;
     vecs.forEach((v, j) => { gain += (dot(v, Ax) ** 2 / denom) / base[j]; });
-    const seconds = cost.seconds(sizes);
-    const score = gain / seconds;
-    if (!best || score > best.score) best = { sizes, score, seconds, gain };
+    if (!best || gain > best.gain * (1 + 1e-9) || (gain > best.gain * (1 - 1e-9) && seconds < best.seconds)) best = { sizes, score: gain, seconds, gain };
   }
   return best;
 }

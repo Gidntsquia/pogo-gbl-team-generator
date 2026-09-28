@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   ROOT, R10_REL, R10_CELLS, TOP, FULL_GENERATIONS, armName, features, ols, kneeTests, kneeEstimate,
-  fitCost, chooseNext, BOUNDS, loadAllCells, tQuantile,
+  fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, loadAllCells, tQuantile,
 } from './sizing-lib-r10.mjs';
 import { ensureScores, qualityAt, loadStore } from './heldout-store-r10.mjs';
 
@@ -152,10 +152,11 @@ async function main() {
     const full = [...scoredPrior, ...scoredR10].filter((c) => !c.cheap && c.quality != null && !c.inflated);
 
     const { fit } = fitAll(full, N);
-    const recipe = kneeEstimate(fit, BOUNDS).sizes;
+    const trust = trustBounds(full, BOUNDS);
+    const recipe = kneeEstimate(fit, trust).sizes;
     const tests = kneeTests(fit, recipe);
     const passAll = Object.values(tests).every((t) => t.pass);
-    log(`fit n=${full.length} full-cost cells; residual sd=${fit.residSd.toFixed(4)}; recipe estimate=${JSON.stringify(recipe)}; passAll=${passAll}`);
+    log(`fit n=${full.length} full-cost cells; residual sd=${fit.residSd.toFixed(4)}; trust upper bounds pop ${trust.pop[1]} pool ${trust.pool[1]} K ${trust.k[1]}; recipe estimate=${JSON.stringify(recipe)}; passAll=${passAll}`);
 
     if (passAll && !state.confirm) {
       // Run confirmation seeds at the recipe.
@@ -189,11 +190,12 @@ async function main() {
     }
 
     const cost = fitCost(full);
-    const next = chooseNext(fit, tests, recipe, cost);
-    if (!next) { state.status = 'not-found'; state.reason = 'no candidate setting within evolve-accepted bounds would move any still-undecided knee test'; saveState(state); log(state.reason); return; }
+    const maxSeconds = Math.max(MAX_CELL_SECONDS, cost.seconds(recipe));
+    const next = chooseNext(fit, tests, recipe, cost, { bounds: trust, maxSeconds });
+    if (!next) { state.status = 'not-found'; state.reason = 'no candidate setting within the trusted bounds and cell-cost cap would move any still-undecided knee test'; saveState(state); log(state.reason); return; }
     const arm = armName(next.sizes);
     const seed = nextSeedFor(r10, arm);
-    log(`placing next cell at ${JSON.stringify(next.sizes)} (arm ${arm}, seed ${seed}), expected ${next.seconds.toFixed(0)} s`);
+    log(`placing next cell at ${JSON.stringify(next.sizes)} (arm ${arm}, seed ${seed}), expected ${next.seconds.toFixed(0)} s, information ${next.gain.toFixed(3)}`);
     const cell = runNewCell(next.sizes, seed);
     r10.push(cell);
     saveR10Cells(r10);
