@@ -111,10 +111,10 @@ async function main() {
 
   // ---- model ------------------------------------------------------------------------------------------
   lines.push('<h2>Model</h2>');
-  lines.push('<p>quality = intercept + &sum; (b_i &middot; log2 size_i + c_i &middot; log2 size_i&sup2;), additive across population, pool and K (log sizes centered on 200/50/50), fit by ordinary least squares on full-cost, non-inflated cells only. A negative c_i gives that size a knee: the fitted gain per doubling shrinks as the size grows.</p>');
+  lines.push('<p>quality = intercept + &sum; (b_i &middot; log2 size_i + c_i &middot; log2 size_i&sup2;) + &sum;<sub>i&lt;j</sub> d_ij &middot; log2 size_i &middot; log2 size_j, over population, pool and K (K capped at the pool; log sizes centered on 200/50/50), fit by ordinary least squares on full-cost, non-inflated cells only. A negative c_i gives that size a knee: the fitted gain per doubling shrinks as the size grows. The d_ij terms let one size's gain depend on the other two (e.g. a bigger population is worth more when fitness comes from more opponents).</p>');
   if (fit) {
     lines.push(`<p>Residual sd: ${f4(fit.residSd)} (n=${fit.n}, df=${fit.df}).</p>`);
-    lines.push('<p class="lbl">Assumptions: independent, homoscedastic, normally distributed residuals across cells; the additive-quadratic-in-log form is the whole model (no interaction terms between sizes) -- the report does not claim more than this form can express.</p>');
+    lines.push('<p class="lbl">Assumptions: independent, homoscedastic, normally distributed residuals across cells; the quadratic-in-log form with pairwise interactions is the whole model (no three-way or higher terms) -- the report does not claim more than this form can express.</p>');
   } else {
     lines.push('<p>Not enough full-cost, non-inflated cells to fit yet.</p>');
   }

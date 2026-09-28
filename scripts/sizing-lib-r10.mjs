@@ -171,12 +171,22 @@ const matVec = (M, v) => M.map((row) => dot(row, v));
 
 /**
  * Model terms. x = log2 of each size, with K capped at the pool (K >= pool means every candidate fights the
- * whole pool, so K above the pool changes nothing). Quadratic in each log size, additive across sizes:
- *   quality = b0 + sum_i (b_i x_i + c_i x_i^2) + (cheap-cell terms, zero for full-cost cells)
- * so the gain per doubling of size i is b_i + c_i (2 x_i + 1): it changes with the size (a knee when c_i < 0).
+ * whole pool, so K above the pool changes nothing). Quadratic in each log size plus the three pairwise
+ * interactions:
+ *   quality = b0 + sum_i (b_i x_i + c_i x_i^2) + sum_{i<j} d_ij x_i x_j
+ * so the gain per doubling of size i is b_i + c_i (2 x_i + 1) + sum_j d_ij x_j: it changes with the size
+ * itself (a knee when c_i < 0) AND with the other two sizes. The interactions were added 2026-09-28 after
+ * the additive form recommended pop 8 at pool/K 1000: it had learned "pop barely helps" from hundreds of
+ * pop-12 cells at K 3 (where fitness from 3 opponents is too noisy for selection to use a bigger
+ * population) and "K helps a lot" from pop-200 cells, then added the two. Measured: pop 12 at pool = K
+ * 384 scored 56.7, 5 pt under the additive prediction and 3.7 pt under pop 200/50/50 (WORKER_NOTES.md).
  */
 export const SIZE_KEYS = ['pop', 'pool', 'k'];
-export const TERM_NAMES = ['intercept', 'log2 pop', 'log2 pool', 'log2 K', '(log2 pop)^2', '(log2 pool)^2', '(log2 K)^2'];
+export const TERM_NAMES = ['intercept', 'log2 pop', 'log2 pool', 'log2 K', '(log2 pop)^2', '(log2 pool)^2', '(log2 K)^2',
+  'log2 pop x log2 pool', 'log2 pop x log2 K', 'log2 pool x log2 K'];
+/** Coefficient index of the interaction between sizes i and j (0 pop, 1 pool, 2 k). */
+const PAIR_INDEX = { '0,1': 7, '0,2': 8, '1,2': 9 };
+export function pairIndex(i, j) { return PAIR_INDEX[i < j ? `${i},${j}` : `${j},${i}`]; }
 
 export function logSizes({ pop, pool, k }) {
   return [Math.log2(pop), Math.log2(pool), Math.log2(Math.min(k, pool))];
@@ -187,7 +197,7 @@ export function features(sizes) {
   const x = logSizes(sizes);
   const c = logSizes({ pop: 200, pool: 50, k: 50 });
   const z = x.map((v, i) => v - c[i]);
-  return [1, z[0], z[1], z[2], z[0] ** 2, z[1] ** 2, z[2] ** 2];
+  return [1, z[0], z[1], z[2], z[0] ** 2, z[1] ** 2, z[2] ** 2, z[0] * z[1], z[0] * z[2], z[1] * z[2]];
 }
 
 /**
@@ -270,30 +280,42 @@ function fitForTests(fit) { return fit; }
 export function kneeEstimate(fit, bounds, threshold = ONE_PT) {
   const b = fit.beta;
   const center = logSizes({ pop: 200, pool: 50, k: 50 });
-  const status = {};
-  const z = {};
-  // Size i's fitted gain per doubling at centered log size v is b_i + c_i (2v + 1); at v* = x - 1/2 (the
-  // point half a doubling below x) it equals b_i + 2 c_i x, so solve b_i + 2 c_i x = threshold for x.
-  SIZE_KEYS.forEach((key, i) => {
-    const bi = b[1 + i], ci = b[4 + i];
-    const lo = Math.log2(bounds[key][0]) - center[i], hi = Math.log2(bounds[key][1]) - center[i];
-    const slopeAt = (x) => bi + 2 * ci * x;
-    // The knee is the smallest value past which every further doubling gains < threshold. The slope is
-    // linear in x, so it is monotone: if it is still above threshold at the upper bound (whether the fit is
-    // concave or convex) the knee lies beyond the bounds; otherwise, if it is at/below threshold at the
-    // lower bound and not rising (concave or flat), every doubling from the minimum gains too little. A
-    // convex fit (ci > 0) that ends below threshold at hi was below it everywhere, so it is 'minimum' too.
-    if (slopeAt(hi) > threshold) { z[key] = hi; status[key] = 'above search bound'; return; }
-    if (slopeAt(lo) <= threshold || ci >= 0) { z[key] = lo; status[key] = 'minimum'; return; }
-    z[key] = (threshold - bi) / (2 * ci); status[key] = 'knee';
-  });
-  const val = (key, i) => Math.round(2 ** (z[key] + center[i]));
-  let pool = val('pool', 1), k = val('k', 2);
-  // The pool caps K (the model uses min(K, pool)), so a K knee above the pool knee can only be reached by
-  // raising the pool to K. Lowering K to the pool instead (the old rule) threw away the K knee whenever the
-  // pool's own gain was small, pinning the recipe at the search floor (WORKER_NOTES.md, 2026-09-28).
-  if (k > pool) { pool = k; status.pool = `raised to K (${status.pool})`; }
-  let pop = Math.max(val('pop', 0), minPop(pool, k));
+  const lo = SIZE_KEYS.map((key, i) => Math.log2(bounds[key][0]) - center[i]);
+  const hi = SIZE_KEYS.map((key, i) => Math.log2(bounds[key][1]) - center[i]);
+  // Size i's fitted gain per doubling from centered log size v is b_i + c_i (2v + 1) + sum_j d_ij z_j; at
+  // v = x - 1/2 (half a doubling below x) it is b_i + 2 c_i x + sum_j d_ij z_j. With interactions each
+  // size's knee depends on the other two, so solve one size at a time with the others held, and repeat
+  // until nothing moves (coordinate iteration; every step is clamped to the bounds, so it cannot run off).
+  let z = [0, 0, 0];
+  let status = {};
+  for (let iter = 0; iter < 200; iter++) {
+    const prev = z.slice();
+    status = {};
+    SIZE_KEYS.forEach((key, i) => {
+      const bi = b[1 + i], ci = b[4 + i];
+      let other = 0;
+      for (let j = 0; j < 3; j++) if (j !== i) other += b[pairIndex(i, j)] * z[j];
+      const slopeAt = (x) => bi + other + 2 * ci * x;
+      // The knee is the smallest value past which every further doubling gains < threshold. The slope is
+      // linear in x, so it is monotone: if it is still above threshold at the upper bound (concave or
+      // convex) the knee lies beyond the bounds; otherwise, if it is at/below threshold at the lower bound
+      // and not rising (concave or flat), every doubling from the minimum gains too little. A convex fit
+      // (ci > 0) that ends below threshold at hi was below it everywhere, so it is 'minimum' too.
+      if (slopeAt(hi[i]) > threshold) { z[i] = hi[i]; status[key] = 'above search bound'; return; }
+      if (slopeAt(lo[i]) <= threshold || ci >= 0) { z[i] = lo[i]; status[key] = 'minimum'; return; }
+      z[i] = (threshold - bi - other) / (2 * ci); status[key] = 'knee';
+    });
+    // The pool caps K (the model uses min(K, pool)), so a K knee above the pool knee can only be reached by
+    // raising the pool to K. Lowering K to the pool instead (the old rule) threw away the K knee whenever
+    // the pool's own gain was small, pinning the recipe at the search floor (WORKER_NOTES.md, 2026-09-28).
+    const zk = z[2] + center[2] - center[1];
+    if (zk > z[1]) { z[1] = zk; status.pool = `raised to K (${status.pool})`; }
+    if (z.every((v, i) => Math.abs(v - prev[i]) < 1e-9)) break;
+  }
+  const val = (i) => Math.round(2 ** (z[i] + center[i]));
+  let pool = val(1), k = val(2);
+  if (k > pool) pool = k;
+  const pop = Math.max(val(0), minPop(pool, k));
   return { sizes: { pop, pool, k }, status };
 }
 
