@@ -166,6 +166,10 @@ Options:
                             deterministic, so the memo returns the same
                             numbers -- this is an escape hatch, not a
                             correctness knob)                          (default: cache on)
+  --battle-cache-file F    load the battle memo from F at start and save it
+                            back at the end, so separate runs reuse each
+                            other's battles (same results: a battle depends
+                            only on the pairing; league-checked)       (default: off)
   --exclude a,b            species ids excluded from candidate teams   (default: none)
   --ban a,b                species ids banned FORMAT-WIDE for a cup rule
                             (e.g. "no Mimikyu, no Cramorant"): dropped from
@@ -366,7 +370,7 @@ const NUMBER_FLAGS = [
 
 /** Value flags taken as plain strings. */
 const STRING_FLAGS = [
-  'config', 'seed', 'threads', 'seed-from', 'cup', 'selection-trailing', 'exclude', 'ban', 'out', 'html', 'out-dir', 'fitness',
+  'config', 'seed', 'threads', 'seed-from', 'battle-cache-file', 'cup', 'selection-trailing', 'exclude', 'ban', 'out', 'html', 'out-dir', 'fitness',
 ];
 
 /** Switches. */
@@ -476,6 +480,7 @@ export function parseEvolveArgs(argv) {
       values['selection-trailing'] !== undefined ? Math.max(1, parseInt0(values['selection-trailing'], 'selection-trailing')) : undefined,
     evolutions: !values['no-evolutions'],
     battleCache: !values['no-battle-cache'],
+    battleCacheFile: values['battle-cache-file'],
     excludeSpecies: splitList(values.exclude),
     banSpecies: splitList(values.ban),
     outDir: values['out-dir'] ?? DEFAULTS.outDir,

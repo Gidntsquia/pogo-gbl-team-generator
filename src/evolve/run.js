@@ -4,6 +4,7 @@ import { buildEvolveSetup } from './setup.js';
 import { initRunState } from './state.js';
 import { runGeneration } from './generation.js';
 import { buildResult, closeExecutor, writeOutputs } from './output.js';
+import { saveBattleCacheFile } from './cache.js';
 
 /**
  * Run (or resume) the whole search on one collection: setup, generation loop,
@@ -43,6 +44,7 @@ export async function runEvolution(csvPath, opts = {}) {
       throw new Error('evolve: no generation was ever evaluated (population sampling produced 0 teams from the start)');
     }
 
+    const diskHitsInGenerations = battleCache.stats().diskHits ?? 0;
     const fin = await runFinalPass(env, state);
     const cacheStats = battleCache.stats();
     if (cacheStats.hits + cacheStats.misses > 0) {
@@ -52,7 +54,13 @@ export async function runEvolution(csvPath, opts = {}) {
           `${cacheStats.size} entries held${cacheStats.dropped ? `, ${cacheStats.dropped} dropped at the cap` : ''}`
       );
     }
+    if (opts.battleCacheFile && opts.battleCache !== false) {
+      const t0 = Date.now();
+      saveBattleCacheFile(battleCache, opts.battleCacheFile, setup.battleCacheScope);
+      log(`evolve: battle cache file saved (${cacheStats.size} battles, ${cacheStats.diskHits} hits from the file) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    }
     const result = buildResult(env, state, csvPath, fin);
+    if (opts.battleCacheFile) result.battleCacheStats.diskHitsInGenerations = diskHitsInGenerations;
     writeOutputs(env, result);
     return result;
   } finally {

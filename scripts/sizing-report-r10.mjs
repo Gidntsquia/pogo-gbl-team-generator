@@ -136,6 +136,7 @@ async function main() {
     const flags = [];
     if (c.inflated) flags.push(`inflated: ${c.inflated}`);
     if (c.cheap) flags.push(`cheap (g${c.generations})`);
+    if (c.sharedCacheBattles) flags.push(`shared cache: ${fint(c.sharedCacheBattles)} of ${fint(c.totalBattlesStandalone)} battles reused (wall s is lower than standalone)`);
     lines.push(`<tr><td>${esc(c.key)}</td><td>${c.sizes.pop}</td><td>${c.sizes.pool}</td><td>${c.sizes.k}</td><td>${c.generations}</td><td>${pct(c.qualityN)}%</td><td>${fint(c.totalBattles)}</td><td>${fint(c.wallSeconds)}</td><td class="flag">${esc(flags.join('; '))}</td></tr>`);
   }
   lines.push('</table>');

@@ -343,7 +343,7 @@ export function buildRunConfig(csvPath, opts) {
           },
         }
       : {}),
-    // NOT in the fingerprint, deliberately: `battleCache`, `threads` and
+    // NOT in the fingerprint, deliberately: `battleCache` (and `battleCacheFile`), `threads` and
     // `deadlineMinutes` -- all three are pure speed knobs that cannot change a
     // battle's outcome (the memo returns what a re-simulation would return,
     // and worker count has been bit-identical to serial since the 2026-08-22

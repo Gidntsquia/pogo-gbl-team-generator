@@ -16,7 +16,7 @@ import { loadRoleScores } from '../meta/roles.js';
 import { buildTypeCoverageContext } from '../teams/typeCoverage.js';
 import { DEFAULTS, FITNESS_MODES, buildRunConfig, hashFile } from './config.js';
 import { FITNESS_SEMANTICS, TYPE_COVERAGE_META_SIZE } from './fitness.js';
-import { BATTLE_CACHE_MAX_ENTRIES, createBattleCache, createNullBattleCache } from './cache.js';
+import { BATTLE_CACHE_MAX_ENTRIES, createBattleCache, createNullBattleCache, loadBattleCacheFile } from './cache.js';
 import { expandBanToCandidateSpeciesIds, filterBannedCuratedTeams, filterBannedMovesetPool } from './bans.js';
 
 /**
@@ -73,6 +73,8 @@ import { expandBanToCandidateSpeciesIds, filterBannedCuratedTeams, filterBannedM
  *   opponentMetaPool?:number, - top-N species cap on the composed half of the
  *     opponent pool (see src/meta/sampleTeams.js).
  *   battleCache?:boolean, - memoize identical pairings (default true).
+ *   battleCacheFile?:string, - load the memo from this file at start and save it back at the end, so
+ *     separate runs share battles (a result depends only on the pairing; see cache.js).
  *   profile?:boolean, - capture per-worker CPU profiles into outDir on a
  *     clean exit (default false; no-op without threads). Also gates a live
  *     per-generation poll (see parallel.js's executor.stats()): with
@@ -285,6 +287,13 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
     typeCoverageContext = buildTypeCoverageContext(ctx, deduped.builtMons, coverageEntries, weights);
   }
   const battleCache = opts.battleCache === false ? createNullBattleCache() : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
+  // --battle-cache-file: start from battles an earlier run already fought (same league only).
+  const battleCacheScope = `cp${config.cp}|${config.cup}`;
+  if (opts.battleCacheFile && opts.battleCache !== false) {
+    const t0 = Date.now();
+    const { loaded, reason } = loadBattleCacheFile(battleCache, opts.battleCacheFile, battleCacheScope);
+    log(`evolve: battle cache file ${opts.battleCacheFile} -- ${reason ? `loaded nothing (${reason})` : `loaded ${loaded} battles`} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  }
   log(
     `evolve: shared setup done -- ${matrix.mons.length} mons built (no 1v1 scoring), sampling pool of ${pool.length} species, ` +
       `${curatedPool.length} curated opponent teams, opponent meta pool of ${movesetPool.length} species, league=${league.name}`
@@ -295,6 +304,6 @@ export async function buildEvolveSetup(csvPath, opts = {}) {
     config, outDir, reportPath, writeHtml, htmlPath, log, difficulty, threads, deadlineMs,
     importedMons, importWarnings, expanded, eligible, collectionHash, ctx, similarity, league, matrix, deduped, weights,
     banBaseIds, candidateExcludeSpecies, pool, roleScores, opponentLeadRoleScores,
-    curatedPool, movesetPool, typeCoverageContext, battleCache,
+    curatedPool, movesetPool, typeCoverageContext, battleCache, battleCacheScope,
   };
 }

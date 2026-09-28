@@ -26,6 +26,9 @@ const R10_DIR = path.join(ROOT, R10_REL);
 const STATE = path.join(R10_DIR, 'state.json');
 const CSV = path.join(R10_DIR, 'meta-collection-1500.csv');
 const SOURCE_CSV = path.join(ROOT, 'out', 'sizing-cells-r9', 'meta-collection-1500.csv');
+// One battle cache shared by every new cell (evolve --battle-cache-file): a battle's result depends only on
+// the pairing, so cells reuse each other's battles with identical results. Asked for by the user 2026-09-28.
+const BATTLE_CACHE_FILE = path.join(R10_DIR, 'battle-cache.json');
 const CONFIRM_SEEDS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const MAX_HOURS_DEFAULT = 72;
 
@@ -54,7 +57,7 @@ function runNewCell(sizes, seed, generations = FULL_GENERATIONS) {
     '--meta-mode', '--no-evolutions', '--curated-ratio', '0', '--pool', '100', '--opponent-meta-pool', '100',
     '--generations', String(generations), '--population', String(sizes.pop), '--opponents-per-gen', String(sizes.pool),
     '--sampled-opponents', String(sizes.k), '--population-final-ratio', '1', '--elites', '8',
-    '--final-archive', '10', '--final-fresh', '10', '--threads', '8',
+    '--final-archive', '10', '--final-fresh', '10', '--threads', '8', '--battle-cache-file', BATTLE_CACHE_FILE,
   ];
   if (!existsSync(path.join(dir, 'evolve-result.json'))) {
     const argv = ['scripts/evolve.mjs', CSV, '--seed', seed, ...flags, '--out-dir', dir, '--force-fresh'];
@@ -73,6 +76,8 @@ function runNewCell(sizes, seed, generations = FULL_GENERATIONS) {
     totalSeconds: result.totalElapsedMs / 1000,
     wallSeconds: wallSeconds ?? null,
     finalists: result.elites.map((e) => e.signature),
+    sharedCacheBattles: result.battleCacheStats?.diskHits ?? 0,
+    sharedCacheGenBattles: result.battleCacheStats?.diskHitsInGenerations ?? 0,
   };
 }
 
@@ -138,6 +143,7 @@ async function main() {
       // fixed per-process overhead that dominates its cheap corner-of-the-grid cells.
       return {
         ...c, quality: q ? q.meanTop : null, cheap: c.generations !== FULL_GENERATIONS,
+        genBattlesStandalone: c.genBattles + (c.sharedCacheGenBattles ?? 0),
         costSeconds: c.costSeconds ?? c.wallSeconds ?? c.totalSeconds ?? null,
       };
     }

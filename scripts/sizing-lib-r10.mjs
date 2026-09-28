@@ -102,6 +102,12 @@ function makeCell(c) {
     key, arm: c.arm, seed: c.seed, dir: c.dir, source: c.source, sizes, generations,
     cheap: generations !== FULL_GENERATIONS,
     genBattles: c.genBattles, totalBattles: c.totalBattles,
+    // Battles a cell took from the shared cross-cell battle cache instead of simulating (cells from
+    // 2026-09-28 on). genBattles/totalBattles count only simulated battles; the *Standalone figures are what
+    // the cell would have simulated on its own, which is the cost the recipe carries for a real run.
+    sharedCacheBattles: c.sharedCacheBattles ?? 0,
+    genBattlesStandalone: c.genBattles + (c.sharedCacheGenBattles ?? 0),
+    totalBattlesStandalone: c.totalBattles + (c.sharedCacheBattles ?? 0),
     wallSeconds: c.wallSeconds ?? null,
     // Cost in seconds: measured wall time for saved cells; evolve's own elapsed time for recovered cells.
     costSeconds: c.wallSeconds ?? c.totalSeconds ?? null,
@@ -317,7 +323,9 @@ export function candidateGrid() {
  */
 export function fitCost(cells) {
   const full = cells.filter((c) => !c.cheap);
-  const fb = ols(full.map((c) => features(c.sizes)), full.map((c) => Math.log2(c.genBattles)));
+  // Battles model on standalone counts (what a setting costs without the shared cache); the seconds fit
+  // below regresses wall time on the battles actually simulated, so both halves stay honest.
+  const fb = ols(full.map((c) => features(c.sizes)), full.map((c) => Math.log2(c.genBattlesStandalone ?? c.genBattles)));
   const timed = full.filter((c) => c.costSeconds != null && !c.inflated);
   const n = timed.length;
   let sx = 0, sy = 0, sxx = 0, sxy = 0;
