@@ -220,6 +220,12 @@ export function diffVec(from, to) {
   return b.map((v, i) => v - a[i]);
 }
 
+/**
+ * One point of quality in the units the model is fit in. Quality is a win-rate fraction (0..1; the report
+ * prints it x100), so 1 pt is 0.01 -- NOT 1, which would be 100 pts and make every knee test unpassable.
+ */
+export const ONE_PT = 0.01;
+
 /** Minimum population evolve accepts for a pool and K (src/evolve/cli.js: population >= ceil(pool/K)). */
 export function minPop(pool, k) { return Math.ceil(pool / Math.min(k, pool)); }
 
@@ -230,7 +236,7 @@ export function minPop(pool, k) { return Math.ceil(pool / Math.min(k, pool)); }
  * K >= pool (doubling K changes nothing); K's lower test at K = 1; pool's lower test at pool = 1.
  * @returns {{[size:string]: {up:object|null, down:object|null, upExempt:string|null, downExempt:string|null, pass:boolean}}}
  */
-export function kneeTests(fit, s, threshold = 1) {
+export function kneeTests(fit, s, threshold = ONE_PT) {
   const out = {};
   for (const key of SIZE_KEYS) {
     const up = { ...s, [key]: s[key] * 2 };
@@ -255,7 +261,7 @@ function fitForTests(fit) { return fit; }
  * from halving sit symmetrically around it (that placement makes both knee tests easiest to pass).
  * Returns {sizes, status:{pop,pool,k}} where a status other than 'knee' explains why a size sits at a bound.
  */
-export function kneeEstimate(fit, bounds, threshold = 1) {
+export function kneeEstimate(fit, bounds, threshold = ONE_PT) {
   const b = fit.beta;
   const center = logSizes({ pop: 200, pool: 50, k: 50 });
   const status = {};
@@ -266,8 +272,13 @@ export function kneeEstimate(fit, bounds, threshold = 1) {
     const bi = b[1 + i], ci = b[4 + i];
     const lo = Math.log2(bounds[key][0]) - center[i], hi = Math.log2(bounds[key][1]) - center[i];
     const slopeAt = (x) => bi + 2 * ci * x;
-    if (slopeAt(lo) <= threshold) { z[key] = lo; status[key] = 'minimum'; return; }
+    // The knee is the smallest value past which every further doubling gains < threshold. The slope is
+    // linear in x, so it is monotone: if it is still above threshold at the upper bound (whether the fit is
+    // concave or convex) the knee lies beyond the bounds; otherwise, if it is at/below threshold at the
+    // lower bound and not rising (concave or flat), every doubling from the minimum gains too little. A
+    // convex fit (ci > 0) that ends below threshold at hi was below it everywhere, so it is 'minimum' too.
     if (slopeAt(hi) > threshold) { z[key] = hi; status[key] = 'above search bound'; return; }
+    if (slopeAt(lo) <= threshold || ci >= 0) { z[key] = lo; status[key] = 'minimum'; return; }
     z[key] = (threshold - bi) / (2 * ci); status[key] = 'knee';
   });
   const val = (key, i) => Math.round(2 ** (z[key] + center[i]));
@@ -325,12 +336,12 @@ export function fitCost(cells) {
  * OLS covariance, so no refit is needed to score a candidate).
  * @returns {{sizes:object, score:number, seconds:number}|null}
  */
-export function chooseNext(fit, tests, recipe, cost, grid = candidateGrid()) {
+export function chooseNext(fit, tests, recipe, cost, grid = candidateGrid(), threshold = ONE_PT) {
   const vecs = [];
   for (const key of SIZE_KEYS) {
     const t = tests[key];
-    if (t.up && !(t.up.hi < 1)) vecs.push(diffVec(recipe, { ...recipe, [key]: recipe[key] * 2 }));
-    if (t.down && !(t.down.lo > 1)) vecs.push(diffVec({ ...recipe, [key]: recipe[key] / 2 }, recipe));
+    if (t.up && !(t.up.hi < threshold)) vecs.push(diffVec(recipe, { ...recipe, [key]: recipe[key] * 2 }));
+    if (t.down && !(t.down.lo > threshold)) vecs.push(diffVec({ ...recipe, [key]: recipe[key] / 2 }, recipe));
   }
   if (vecs.length === 0) return null;
   const A = fit.XtXinv;

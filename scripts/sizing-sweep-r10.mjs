@@ -198,4 +198,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main().catch((e) => { console.error(e); process.exit(1); });
+// Exit explicitly: the held-out scorer's worker threads keep the event loop alive after main() returns, so
+// without this a stopped/finished batch logs its exit but the process lingers (observed 2026-09-28).
+if (import.meta.url === `file://${process.argv[1]}`) main().then(() => process.exit(0), (e) => { console.error(e); process.exit(1); });
