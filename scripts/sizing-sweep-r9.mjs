@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Round-9 driver (plans/PLAN.md): joint gradient-descent-like search over (population, pool, K) for the
-// knee recipe at 90% certainty. Coordinate descent: for each of the three sizes in turn, compare the
-// current point to 2x and 0.5x that size (holding the other two fixed), using a Welch 90% CI on the mean
-// held-out-quality gain. A size is "resolved" when both checks in requirement 2 pass (or it is exempt).
-// Moving a size invalidates the other two sizes' resolved status (the point changed), so the loop repeats
-// until one full pass resolves all three at once, or a per-comparison seed cap is hit without resolving
-// (search stops, answer is "not found").
+// Round-9 driver (plans/PLAN.md, amended live by the user): joint search over (population, pool, K) for
+// the actual local-optimum recipe at 90% certainty. DEVIATION FROM PLAN.md's literal "knee" (doubling/
+// halving) definition, per explicit user instruction: doubling/halving only ever re-tests points we
+// already know are inferior (o500, p400, ...) and can only land on round power-of-2 values. Instead this
+// is Hooke-Jeeves-style pattern search with a shrinking multiplicative step per dimension: from the
+// current point, probe +step% and -step% (holding the other two dims fixed); if either neighbor is a
+// significant (90% CI wholly > 0) held-out-quality improvement, move there and keep the same step size
+// (exploit); if neither improves, halve the step and retry from the same point. A dimension is converged
+// once its step is below STEP_MIN (or would move by <1 unit). The search stops once all three dims are
+// converged -- landing on whatever integers the local optimum actually is, not the nearest power of 2.
 //
 //   node scripts/sizing-sweep-r9.mjs [--dir out/sizing-cells-r9]
 //
@@ -26,10 +29,11 @@ export const PRIOR_DIRS = ['out/sampled-k-ab-r3', 'out/sizing-cells', 'out/sizin
 // Known sleep/pause-inflated cells (plans/PLAN.md Facts): excluded from cost, kept for quality.
 export const INFLATED = new Set(['k10/s6', 'k10/s7', 'p400/s6']);
 
-export const THRESHOLD = 1.0; // pt of held-out quality per doubling
-export const MAX_SEEDS_PER_POINT_PAIR = 40; // per-comparison seed cap; hitting it -> "not found"
+export const MAX_SEEDS_PER_POINT_PAIR = 40; // per-comparison seed cap; hitting it counts as "no significant improvement"
 export const SEEDS_PER_STEP = 3; // seeds added to each side per CI check that is still inconclusive
-export const MAX_PASSES = 200; // safety valve against a cycling point; a real cycle would itself mean "not found"
+export const MAX_PASSES = 400; // safety valve; each pass can shrink one dim's step, so needs headroom
+export const STEP_INIT = 0.30; // starting probe size: +/-30% of the current value
+export const STEP_MIN = 0.04; // below this fraction, a dimension is converged
 
 const log = (m) => { const l = `[${new Date().toISOString()}] ${m}`; console.log(l); appendFileSync(LOG, l + '\n'); };
 
@@ -94,25 +98,35 @@ function runSeeds(arm, n) {
 }
 
 /**
- * Compare point B (2x or 0.5x on one dim) to point A. Adds seeds in batches of SEEDS_PER_STEP to
- * whichever side has fewer until the 90% CI on (B - A) resolves (fully above/below THRESHOLD) or the
- * per-comparison cap is hit. Returns {resolved, ci, aArm, bArm} — resolved is 'above' | 'below' | false.
+ * Does point B beat point A by a statistically significant (90% CI wholly > 0) held-out-quality margin?
+ * Adds seeds in batches of SEEDS_PER_STEP to whichever side has fewer until the 90% CI on (B - A)
+ * resolves fully above/at-or-below 0, or the per-comparison seed cap is hit (treated as "no", i.e. not a
+ * confirmed improvement -- the search just shrinks its step rather than stopping).
+ * Returns {beats: true|false, ci}.
  */
-function resolveComparison(aArm, bArm) {
+function probeBeats(aArm, bArm) {
   ensureArmsKnown(aArm, bArm);
   for (;;) {
     const a = qualityFor(aArm), b = qualityFor(bArm);
     const ci = welchCI(a, b);
     if (ci) {
-      if (ci.lo > THRESHOLD) { log(`  ${bArm} vs ${aArm}: gain 90% CI [${ci.lo.toFixed(2)}, ${ci.hi.toFixed(2)}] pt -- wholly above ${THRESHOLD}`); return { resolved: 'above', ci }; }
-      if (ci.hi < THRESHOLD) { log(`  ${bArm} vs ${aArm}: gain 90% CI [${ci.lo.toFixed(2)}, ${ci.hi.toFixed(2)}] pt -- wholly below ${THRESHOLD}`); return { resolved: 'below', ci }; }
-      log(`  ${bArm} vs ${aArm}: gain 90% CI [${ci.lo.toFixed(2)}, ${ci.hi.toFixed(2)}] pt -- straddles ${THRESHOLD}, n=${a.length}/${b.length}`);
+      if (ci.lo > 0) { log(`  ${bArm} vs ${aArm}: gain 90% CI [${ci.lo.toFixed(2)}, ${ci.hi.toFixed(2)}] pt -- significant improvement`); return { beats: true, ci }; }
+      if (ci.hi <= 0) { log(`  ${bArm} vs ${aArm}: gain 90% CI [${ci.lo.toFixed(2)}, ${ci.hi.toFixed(2)}] pt -- not better`); return { beats: false, ci }; }
+      log(`  ${bArm} vs ${aArm}: gain 90% CI [${ci.lo.toFixed(2)}, ${ci.hi.toFixed(2)}] pt -- inconclusive, n=${a.length}/${b.length}`);
     } else {
       log(`  ${bArm} vs ${aArm}: not enough seeds yet (n=${a.length}/${b.length})`);
     }
-    if (Math.min(a.length, b.length) >= MAX_SEEDS_PER_POINT_PAIR) { log(`  ${bArm} vs ${aArm}: seed cap ${MAX_SEEDS_PER_POINT_PAIR} reached without resolving`); return { resolved: false, ci }; }
+    if (Math.min(a.length, b.length) >= MAX_SEEDS_PER_POINT_PAIR) { log(`  ${bArm} vs ${aArm}: seed cap ${MAX_SEEDS_PER_POINT_PAIR} reached, treating as not a confirmed improvement`); return { beats: false, ci, capped: true }; }
     if (a.length <= b.length) runSeeds(aArm, a.length + SEEDS_PER_STEP); else runSeeds(bArm, b.length + SEEDS_PER_STEP);
   }
+}
+
+function clampPoint(pop, pool, k) {
+  pop = Math.max(1, Math.round(pop));
+  pool = Math.max(1, Math.round(pool));
+  k = Math.max(1, Math.min(Math.round(k), pool));
+  if (pop < minPop(pool, k)) pop = minPop(pool, k);
+  return { pop, pool, k };
 }
 
 // compare-search.mjs registers dynamic arms lazily on `cellFlags`/`run`; import it so ARMS gets populated
@@ -131,79 +145,57 @@ async function main() {
     return;
   }
   let P = state?.point ?? { pop: 200, pool: 50, k: 50 }; // start at the round 7-8 baseline
-  let resolved = state?.resolved ?? { pop: false, pool: false, k: false };
+  let step = state?.step ?? { pop: STEP_INIT, pool: STEP_INIT, k: STEP_INIT };
   const path_ = state?.path ?? [];
-  log(`round-9 sweep starting from pop=${P.pop} pool=${P.pool} k=${P.k}, resolved=${JSON.stringify(resolved)}`);
+  log(`round-9 pattern search starting from pop=${P.pop} pool=${P.pool} k=${P.k}, step=${JSON.stringify(step)}`);
 
   for (let pass = 0; pass < MAX_PASSES; pass++) {
-    if (resolved.pop && resolved.pool && resolved.k) {
-      log(`FOUND: pop=${P.pop} pool=${P.pool} k=${P.k}`);
-      saveState({ status: 'found', point: P, resolved, path: path_ });
-      return;
-    }
+    if (step.pop < STEP_MIN && step.pool < STEP_MIN && step.k < STEP_MIN) break;
     let movedThisPass = false;
     for (const dim of ['pop', 'pool', 'k']) {
-      if (resolved[dim]) continue;
-      const v = P[dim];
-      const exemptLo = dim === 'pop' ? v <= minPop(P.pool, P.k) : dim === 'k' ? v >= P.pool : v <= 1;
-      const exemptHi = dim === 'k' ? v >= P.pool : false;
-      const vHi = exemptHi ? v : v * 2;
-      const vLo = exemptLo ? v : Math.max(1, Math.round(v / 2));
-
-      const point = (pop, pool, k) => ({ pop, pool, k: Math.min(k, pool) });
-      const cur = point(P.pop, P.pool, P.k);
+      if (step[dim] < STEP_MIN) continue;
+      const cur = clampPoint(P.pop, P.pool, P.k);
       const curArm = armName(cur.pop, cur.pool, cur.k);
-      log(`pass ${pass}: checking ${dim} at ${curArm} (pop=${cur.pop} pool=${cur.pool} k=${cur.k})`);
+      const v = cur[dim];
+      const hiVal = v * (1 + step[dim]);
+      const loVal = v * (1 - step[dim]);
+      const hi = dim === 'pop' ? clampPoint(hiVal, cur.pool, cur.k) : dim === 'pool' ? clampPoint(cur.pop, hiVal, cur.k) : clampPoint(cur.pop, cur.pool, hiVal);
+      const lo = dim === 'pop' ? clampPoint(loVal, cur.pool, cur.k) : dim === 'pool' ? clampPoint(cur.pop, loVal, cur.k) : clampPoint(cur.pop, cur.pool, loVal);
+      log(`pass ${pass}: probing ${dim} around ${curArm} (pop=${cur.pop} pool=${cur.pool} k=${cur.k}), step=${(step[dim] * 100).toFixed(0)}%`);
 
-      let upperOk = exemptHi ? 'above' : null; // 'above' means: doubling still gains >=1pt (keep growing); exempt at K>=pool means no upper check needed
-      let hiResult = null;
-      if (!exemptHi) {
-        const hi = dim === 'pop' ? point(vHi, cur.pool, cur.k) : dim === 'pool' ? point(cur.pop, vHi, cur.k) : point(cur.pop, cur.pool, vHi);
+      let moved = false;
+      if (hi[dim] !== v) {
         const hiArm = armName(hi.pop, hi.pool, hi.k);
-        if (minPop(hi.pool, hi.k) > hi.pop) { log(`  ${hiArm} invalid (pop < ceil(pool/K)); treating doubling as unresolved, moving up cautiously`); upperOk = 'above'; }
-        else { hiResult = resolveComparison(curArm, hiArm); upperOk = hiResult.resolved === false ? 'stuck' : hiResult.resolved; }
+        const r = probeBeats(curArm, hiArm);
+        if (r.beats) {
+          P = hi;
+          path_.push({ pass, dim, action: 'step-up', to: { ...P }, arm: armName(P.pop, P.pool, P.k), step: step[dim] });
+          log(`  -> ${dim} up to ${P[dim]}: new point pop=${P.pop} pool=${P.pool} k=${P.k}`);
+          moved = true;
+        }
       }
-
-      if (upperOk === 'stuck') { saveState({ status: 'not-found', reason: `${dim} doubling from ${curArm} did not resolve within the seed cap`, point: P, resolved, path: path_ }); log('NOT FOUND: seed cap hit; stopping'); return; }
-      if (upperOk === 'above') {
-        // doubling still gains >=1pt -- grow this dim and keep going
-        P = dim === 'pop' ? point(vHi, P.pool, P.k) : dim === 'pool' ? point(P.pop, vHi, P.k) : point(P.pop, P.pool, vHi);
-        resolved = { pop: false, pool: false, k: false };
-        path_.push({ pass, dim, action: 'grow', to: { ...P }, arm: armName(P.pop, P.pool, P.k) });
-        movedThisPass = true;
-        log(`  -> growing ${dim} to ${P[dim]}: new point pop=${P.pop} pool=${P.pool} k=${P.k}`);
-        break; // re-evaluate from the new point next dim pass
+      if (!moved && lo[dim] !== v) {
+        const loArm = armName(lo.pop, lo.pool, lo.k);
+        const r = probeBeats(curArm, loArm);
+        if (r.beats) {
+          P = lo;
+          path_.push({ pass, dim, action: 'step-down', to: { ...P }, arm: armName(P.pop, P.pool, P.k), step: step[dim] });
+          log(`  -> ${dim} down to ${P[dim]}: new point pop=${P.pop} pool=${P.pool} k=${P.k}`);
+          moved = true;
+        }
       }
-
-      // upperOk === 'below' (or exempt): doubling gains <1pt. Now check the lower side, unless exempt.
-      if (exemptLo) {
-        resolved[dim] = true;
-        log(`  ${dim}=${v} resolved (exempt from lower check: ${dim === 'pop' ? 'at evolve minimum' : dim === 'k' ? 'K>=pool' : 'at floor'})`);
-        continue;
-      }
-      const lo = dim === 'pop' ? point(vLo, cur.pool, cur.k) : dim === 'pool' ? point(cur.pop, vLo, cur.k) : point(cur.pop, cur.pool, vLo);
-      const loArm = armName(lo.pop, lo.pool, lo.k);
-      if (minPop(lo.pool, lo.k) > lo.pop) { log(`  ${loArm} invalid; treating ${dim}=${v} as exempt on the low side`); resolved[dim] = true; continue; }
-      const loResult = resolveComparison(loArm, curArm); // gain from growing lo -> cur
-      if (loResult.resolved === false) { saveState({ status: 'not-found', reason: `${dim} halving check from ${curArm} did not resolve within the seed cap`, point: P, resolved, path: path_ }); log('NOT FOUND: seed cap hit; stopping'); return; }
-      if (loResult.resolved === 'above') { resolved[dim] = true; log(`  ${dim}=${v} resolved (upper<1pt, lower>1pt)`); continue; }
-      // gain from growing to current was <1pt too -- shrink
-      P = dim === 'pop' ? point(vLo, P.pool, P.k) : dim === 'pool' ? point(P.pop, vLo, P.k) : point(P.pop, P.pool, vLo);
-      resolved = { pop: false, pool: false, k: false };
-      path_.push({ pass, dim, action: 'shrink', to: { ...P }, arm: armName(P.pop, P.pool, P.k) });
-      movedThisPass = true;
-      log(`  -> shrinking ${dim} to ${P[dim]}: new point pop=${P.pop} pool=${P.pool} k=${P.k}`);
-      break;
+      if (moved) { movedThisPass = true; break; } // re-evaluate from the new point next dim
+      step[dim] /= 2;
+      log(`  neither neighbor of ${dim} improved; shrinking step to ${(step[dim] * 100).toFixed(1)}%`);
     }
-    saveState({ status: 'running', point: P, resolved, path: path_ });
-    if (!movedThisPass && (resolved.pop && resolved.pool && resolved.k)) break;
+    saveState({ status: 'running', point: P, step, path: path_ });
   }
-  if (resolved.pop && resolved.pool && resolved.k) {
+  if (step.pop < STEP_MIN && step.pool < STEP_MIN && step.k < STEP_MIN) {
     log(`FOUND: pop=${P.pop} pool=${P.pool} k=${P.k}`);
-    saveState({ status: 'found', point: P, resolved, path: path_ });
+    saveState({ status: 'found', point: P, step, path: path_ });
   } else {
-    log(`NOT FOUND: max passes (${MAX_PASSES}) reached without a stable joint resolution`);
-    saveState({ status: 'not-found', reason: `max passes (${MAX_PASSES}) reached`, point: P, resolved, path: path_ });
+    log(`NOT FOUND: max passes (${MAX_PASSES}) reached without all three dims converging`);
+    saveState({ status: 'not-found', reason: `max passes (${MAX_PASSES}) reached`, point: P, step, path: path_ });
   }
 
   // Confirmation seeds at the recommended recipe (requirement 3): a handful of fresh seeds beyond

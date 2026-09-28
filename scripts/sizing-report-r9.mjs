@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const arg = (n, d) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : d; };
 const DIR = path.resolve(ROOT, arg('--dir', 'out/sizing-cells-r9'));
 const OUT = path.resolve(ROOT, arg('--out', 'out/sizing-report-r9.html'));
-const THRESHOLD = 1.0;
+const STEP_MIN = 0.04; // must match scripts/sizing-sweep-r9.mjs
 
 const PRIOR_DIRS = ['out/sampled-k-ab-r3', 'out/sizing-cells', 'out/sizing-cells-r8'];
 const INFLATED = new Set(['k10/s6', 'k10/s7', 'p400/s6']);
@@ -73,20 +73,23 @@ const log = existsSync(path.join(DIR, 'sweep.log')) ? readFileSync(path.join(DIR
 function armNameFor(pop, pool, k) {
   return Object.keys(armFlags).find((a) => { const p = pointOf(a); return p && p.pop === pop && p.pool === pool && p.k === k; }) ?? `c${pop}o${pool}k${k}`;
 }
+// Local-optimum check: at the converged point, neither a small step up nor down should be a
+// significant (90% CI wholly > 0) improvement -- that is what "converged" means under pattern search.
 function dimRanges(point) {
   const dims = ['pop', 'pool', 'k'];
+  const clamp = (pop, pool, k) => ({ pop: Math.max(1, Math.round(pop)), pool: Math.max(1, Math.round(pool)), k: Math.max(1, Math.min(Math.round(k), Math.round(pool))) });
   const out = {};
+  const cur = clamp(point.pop, point.pool, point.k);
+  const curArm = armNameFor(cur.pop, cur.pool, cur.k);
   for (const dim of dims) {
-    const v = point[dim];
-    const minPop = (pool, k) => Math.max(1, Math.ceil(pool / k));
-    const exemptHi = dim === 'k' && v >= point.pool;
-    const exemptLo = dim === 'pop' ? v <= minPop(point.pool, point.k) : dim === 'k' ? v >= point.pool : v <= 1;
-    const at = (dd, val) => armNameFor(dd === 'pop' ? val : point.pop, dd === 'pool' ? val : point.pool, dd === 'k' ? val : point.k);
-    const curArm = at(dim, v);
+    const v = cur[dim];
+    const hiVal = v * (1 + STEP_MIN), loVal = v * (1 - STEP_MIN);
+    const at = (val) => clamp(dim === 'pop' ? val : cur.pop, dim === 'pool' ? val : cur.pool, dim === 'k' ? val : cur.k);
+    const hi = at(hiVal), lo = at(loVal);
     let upper = null, lower = null;
-    if (!exemptHi) { const hiArm = at(dim, v * 2); upper = welchCI(qualityFor(curArm), qualityFor(hiArm)); }
-    if (!exemptLo) { const loArm = at(dim, Math.max(1, Math.round(v / 2))); lower = welchCI(qualityFor(loArm), qualityFor(curArm)); }
-    out[dim] = { v, upper, lower, exemptHi, exemptLo, curArm };
+    if (hi[dim] !== v) { const hiArm = armNameFor(hi.pop, hi.pool, hi.k); upper = welchCI(qualityFor(curArm), qualityFor(hiArm)); }
+    if (lo[dim] !== v) { const loArm = armNameFor(lo.pop, lo.pool, lo.k); lower = welchCI(qualityFor(curArm), qualityFor(loArm)); }
+    out[dim] = { v, upper, lower, curArm };
   }
   return out;
 }
@@ -136,10 +139,9 @@ Cost: ${fint(recipeBlock.battles)} battles, ${fint(recipeBlock.secs)} s per run 
 const dimRows = found ? ['pop', 'pool', 'k'].map((dim) => {
   const r = recipeBlock.ranges[dim];
   const label = { pop: 'Candidate population', pool: 'Opponent pool', k: 'K' }[dim];
-  const fmt = (ci, dir) => !ci ? (dir === 'upper' ? (r.exemptHi ? 'exempt (K &ge; pool)' : 'n/a') : (r.exemptLo ? 'exempt (at evolve minimum)' : 'n/a')) : `${sgn(ci.lo)}..${sgn(ci.hi)} pt`;
-  const okUpper = r.exemptHi || (r.upper && r.upper.hi < THRESHOLD);
-  const okLower = r.exemptLo || (r.lower && r.lower.lo > THRESHOLD);
-  return `<tr><td>${label}</td><td>${r.v}</td><td>${fmt(r.upper, 'upper')}</td><td>${fmt(r.lower, 'lower')}</td><td>${okUpper && okLower ? 'yes' : 'no'}</td></tr>`;
+  const fmt = (ci) => !ci ? 'n/a (at boundary)' : `${sgn(ci.lo)}..${sgn(ci.hi)} pt`;
+  const stable = (!r.upper || r.upper.lo <= 0) && (!r.lower || r.lower.lo <= 0);
+  return `<tr><td>${label}</td><td>${r.v}</td><td>${fmt(r.upper)}</td><td>${fmt(r.lower)}</td><td>${stable ? 'yes' : 'no'}</td></tr>`;
 }).join('') : '';
 
 const pathRows = pathSteps.map((s) => `<tr><td>${s.pass}</td><td>${s.dim}</td><td>${s.action}</td><td>${s.arm}</td><td>pop=${s.to.pop} pool=${s.to.pool} k=${s.to.k}</td><td>${f1(s.q.m)}% <span class="dim">(n=${s.n})</span></td><td>${fint(s.battles)}</td></tr>`).join('');
@@ -166,19 +168,24 @@ pre{white-space:pre-wrap;font-size:.78rem;background:var(--card);border:1px soli
 <div class="card">${answerHtml}</div>
 
 <h2>1. Method</h2>
-<p>Coordinate descent over the three sizes, one dimension checked at a time, holding the other two fixed. At each step the current
-setting is compared to double and to half itself using Welch's 90% confidence interval on the mean held-out-quality gain (percentage
-points of top-5 mean raw win rate vs 60 fixed held-out opponents). A size is resolved when the gain from doubling it has a 90% range
-wholly below ${THRESHOLD} pt (grows are not worth it) and the gain from growing it from half its value has a 90% range wholly above
-${THRESHOLD} pt (it was worth growing to), or the size is exempt (at evolve's minimum accepted population, or K &ge; pool). Moving any
-one size invalidates the other two, so the loop repeats until one full pass resolves all three together. If a comparison needs more
-than 40 seeds per side without resolving, the search stops and reports not found. Cells flagged as sleep/pause-inflated (below) are
-excluded from cost figures but kept in quality figures (wall time does not change what was measured). Quality measure, collection and
-every other evolve setting are unchanged from rounds 3-8.</p>
+<p><b>Hooke-Jeeves pattern search</b> over the three sizes (deviation from a literal doubling/halving "knee" sweep, per direct
+instruction: doubling/halving only ever re-tests points already known to be worse, such as 500-opponent pools or 400-candidate
+populations, and can only land on round powers of two). From the current point, each dimension is probed at +30%/-30%
+(holding the other two fixed); if either neighbor is a statistically significant (Welch 90% CI on held-out-quality gain wholly
+above 0 pt) improvement, the point moves there and the same step size is tried again from the new point (exploit). If neither
+neighbor improves, the step for that dimension is halved and retried from the same point. A dimension is converged once its
+step falls below 4%; the search is done once all three dimensions are converged, at whatever integer point that lands on -- not
+necessarily a round number. Moving any one dimension re-probes all three next pass, since the point changed. If a single
+comparison needs more than 40 seeds per side without resolving, it is treated as "not a confirmed improvement" (the step shrinks)
+rather than stopping the whole search; the search only reports not-found if it exhausts its pass budget without all three
+dimensions converging. Cells flagged as sleep/pause-inflated (below) are excluded from cost figures but kept in quality figures
+(wall time does not change what was measured). Quality measure, collection and every other evolve setting are unchanged from
+rounds 3-8.</p>
 
-${found ? `<h2>2. Per-size 90% ranges at the recommended recipe</h2>
-<table><thead><tr><th>size</th><th>value</th><th>gain from doubling, 90% range</th><th>gain from halving-to-here, 90% range</th><th>resolved</th></tr></thead><tbody>${dimRows}</tbody></table>
-<p class="dim">Resolved = doubling's range is wholly under ${THRESHOLD} pt AND halving-to-here's range is wholly over ${THRESHOLD} pt (or the size is exempt on that side).</p>` : ''}
+${found ? `<h2>2. Local-optimum check at the recommended recipe</h2>
+<p class="dim">At the converged point, a final +/-4% probe on each size should not be a significant improvement in either direction --
+that is what "converged" means here.</p>
+<table><thead><tr><th>size</th><th>value</th><th>gain from +4%, 90% range</th><th>gain from -4%, 90% range</th><th>locally stable</th></tr></thead><tbody>${dimRows}</tbody></table>` : ''}
 
 <h2>${found ? 3 : 2}. Search path</h2>
 <p>${pathSteps.length ? 'Settings the search moved to, in order (a dimension check that did not move the point is not listed as a step):' : 'No moves recorded yet.'}</p>
