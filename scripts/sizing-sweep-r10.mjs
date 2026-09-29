@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   ROOT, R10_REL, R10_CELLS, TOP, FULL_GENERATIONS, armName, features, ols, kneeTests, kneeEstimate,
-  fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, BUDGET_SECONDS, loadAllCells, tQuantile,
+  fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, BUDGET_SECONDS, WINDOW_DOUBLINGS, loadAllCells, tQuantile,
 } from './sizing-lib-r10.mjs';
 import { ensureScores, qualityAt, loadStore } from './heldout-store-r10.mjs';
 
@@ -213,8 +213,10 @@ async function main() {
     }
 
     const cost = fitCost(full);
-    const maxSeconds = Math.max(MAX_CELL_SECONDS, cost.seconds(recipe));
-    const next = chooseNext(fit, tests, recipe, cost, { bounds: trust, maxSeconds });
+    const maxSeconds = MAX_CELL_SECONDS;
+    // Near the recipe first; if nothing there fits the time cap, anywhere in the trusted bounds.
+    const next = chooseNext(fit, tests, recipe, cost, { bounds: trust, maxSeconds, windowDoublings: WINDOW_DOUBLINGS })
+      ?? chooseNext(fit, tests, recipe, cost, { bounds: trust, maxSeconds });
     if (!next) { state.status = 'not-found'; state.reason = 'no candidate setting within the trusted bounds and cell-cost cap would move any still-undecided knee test'; saveState(state); log(state.reason); return; }
     const arm = armName(next.sizes);
     const seed = nextSeedFor(r10, arm);

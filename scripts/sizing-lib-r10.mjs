@@ -371,8 +371,21 @@ export function fitCost(cells) {
   };
 }
 
-/** Longest a picked cell may take, unless the current recipe itself costs more (it must be run to confirm anyway). */
-export const MAX_CELL_SECONDS = 3 * 3600;
+/**
+ * Longest a picked cell may take. A hard cap (2 h since 2026-09-29, was 3 h with an exception for a recipe
+ * costing more): the user found 2-3 h pop-1600 cells far too long. Confirmation seeds at the recipe are
+ * not picked cells and are not capped.
+ */
+export const MAX_CELL_SECONDS = 2 * 3600;
+
+/**
+ * Picked cells stay within this many doublings of the current recipe on every size (effective K =
+ * min(K, pool)). With the cost cap this keeps the picker out of both corners: the cheap one (pop 50 /
+ * pool 25 / K 25, which the per-hour score otherwise repeats dozens of times) and the expensive one
+ * (pop 1600, which information-only scoring chose all night). Added 2026-09-29 at the user's request
+ * ("not too much in the cheap corner, and not too much in the expensive corner").
+ */
+export const WINDOW_DOUBLINGS = 2;
 
 /**
  * The part of BOUNDS the data can speak for: each size may go at most one doubling past the largest value
@@ -410,10 +423,12 @@ export function trustBounds(cells, bounds = BOUNDS) {
  * alone; a cell longer than the budget counts as a fraction m < 1 of itself. Added 2026-09-29 at the
  * user's request: without it the picker spent the night on 2-3 hour pop-1600 cells ("1600 runs are far
  * too long; by intuition it is giving us less information than running other cells that go faster").
+ * Alone it fell into the cheap corner (simulated: 50/25/25 cells over and over), so the sweep also passes
+ * windowDoublings (WINDOW_DOUBLINGS) and the hard MAX_CELL_SECONDS cap.
  * @returns {{sizes:object, score:number, seconds:number, gain:number}|null}
  */
 export const BUDGET_SECONDS = 3600;
-export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSeconds = Infinity, grid = candidateGrid(), threshold = ONE_PT, budgetSeconds = BUDGET_SECONDS } = {}) {
+export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSeconds = Infinity, grid = candidateGrid(), threshold = ONE_PT, budgetSeconds = BUDGET_SECONDS, windowDoublings = Infinity } = {}) {
   const vecs = [];
   for (const key of SIZE_KEYS) {
     const t = tests[key];
@@ -426,6 +441,8 @@ export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSecon
   let best = null;
   for (const sizes of grid) {
     if (SIZE_KEYS.some((key) => sizes[key] > bounds[key][1])) continue;
+    const eff = { ...sizes, k: Math.min(sizes.k, sizes.pool) };
+    if (SIZE_KEYS.some((key) => Math.abs(Math.log2(eff[key] / recipe[key])) > windowDoublings + 1e-9)) continue;
     const seconds = cost.seconds(sizes);
     if (seconds > maxSeconds) continue;
     const x = features(sizes);
