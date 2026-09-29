@@ -402,9 +402,18 @@ export function trustBounds(cells, bounds = BOUNDS) {
  * Information is NOT divided by cost (the rule until 2026-09-28): cell cost spans ~1,200x across the grid
  * while information spans ~30x, so that ratio always chose the cheapest corner, whose "information" was
  * the global fit extrapolating five doublings. The cost cap plus trustBounds replace it.
+ *
+ * Cost is back in the score, but as information bought with a fixed budget of run time (budgetSeconds):
+ * a candidate costing s seconds is scored as m = budget/s repeats of itself, and repeats of one setting
+ * have diminishing returns (the rank-one gain with the row weighted by m: m(v.Ax)^2 / (1 + m x.Ax)). A
+ * cheap cell repeated many times saturates at what that setting can tell, so it cannot win on price
+ * alone; a cell longer than the budget counts as a fraction m < 1 of itself. Added 2026-09-29 at the
+ * user's request: without it the picker spent the night on 2-3 hour pop-1600 cells ("1600 runs are far
+ * too long; by intuition it is giving us less information than running other cells that go faster").
  * @returns {{sizes:object, score:number, seconds:number, gain:number}|null}
  */
-export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSeconds = Infinity, grid = candidateGrid(), threshold = ONE_PT } = {}) {
+export const BUDGET_SECONDS = 3600;
+export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSeconds = Infinity, grid = candidateGrid(), threshold = ONE_PT, budgetSeconds = BUDGET_SECONDS } = {}) {
   const vecs = [];
   for (const key of SIZE_KEYS) {
     const t = tests[key];
@@ -422,9 +431,11 @@ export function chooseNext(fit, tests, recipe, cost, { bounds = BOUNDS, maxSecon
     const x = features(sizes);
     const Ax = matVec(A, x);
     const denom = 1 + dot(x, Ax);
-    let gain = 0;
-    vecs.forEach((v, j) => { gain += (dot(v, Ax) ** 2 / denom) / base[j]; });
-    if (!best || gain > best.gain * (1 + 1e-9) || (gain > best.gain * (1 - 1e-9) && seconds < best.seconds)) best = { sizes, score: gain, seconds, gain };
+    const m = budgetSeconds / seconds;
+    const denomM = 1 + m * dot(x, Ax);
+    let gain = 0, score = 0;
+    vecs.forEach((v, j) => { const va = dot(v, Ax) ** 2; gain += (va / denom) / base[j]; score += (m * va / denomM) / base[j]; });
+    if (!best || score > best.score * (1 + 1e-9) || (score > best.score * (1 - 1e-9) && seconds < best.seconds)) best = { sizes, score, seconds, gain };
   }
   return best;
 }

@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   ROOT, R10_REL, R10_CELLS, TOP, FULL_GENERATIONS, armName, features, ols, kneeTests, kneeEstimate,
-  fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, loadAllCells, tQuantile,
+  fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, BUDGET_SECONDS, loadAllCells, tQuantile,
 } from './sizing-lib-r10.mjs';
 import { ensureScores, qualityAt, loadStore } from './heldout-store-r10.mjs';
 
@@ -45,6 +45,12 @@ function loadR10Cells() {
   return JSON.parse(readFileSync(R10_CELLS, 'utf8')).cells;
 }
 function saveR10Cells(cells) { mkdirSync(R10_DIR, { recursive: true }); const tmp = R10_CELLS + '.tmp'; writeFileSync(tmp, JSON.stringify({ cells }, null, 2)); renameSync(tmp, R10_CELLS); }
+
+// User-requested cells, run in order before the picker: {"cells":[{"pop":216,"pool":100,"k":100}, ...]}.
+// Edit the file while the batch runs; it is re-read before every cell.
+const QUEUE = path.join(R10_DIR, 'queue.json');
+function loadQueue() { return existsSync(QUEUE) ? JSON.parse(readFileSync(QUEUE, 'utf8')).cells ?? [] : []; }
+function saveQueue(cells) { const tmp = QUEUE + '.tmp'; writeFileSync(tmp, JSON.stringify({ cells }, null, 2)); renameSync(tmp, QUEUE); }
 
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 
@@ -158,6 +164,23 @@ async function main() {
     const passAll = Object.values(tests).every((t) => t.pass);
     log(`fit n=${full.length} full-cost cells; residual sd=${fit.residSd.toFixed(4)}; trust upper bounds pop ${trust.pop[1]} pool ${trust.pool[1]} K ${trust.k[1]}; recipe estimate=${JSON.stringify(recipe)}; passAll=${passAll}`);
 
+    // Cells the user asked for run first, ahead of confirmation and the picker. An entry leaves the queue
+    // only after its cell is recorded, so a stop or crash mid-cell re-runs it.
+    const queue = loadQueue();
+    if (queue.length) {
+      const sizes = queue[0];
+      const arm = armName(sizes);
+      const seed = nextSeedFor(r10, arm);
+      log(`placing queued cell at ${JSON.stringify(sizes)} (arm ${arm}, seed ${seed}; ${queue.length - 1} more queued)`);
+      const cell = runNewCell(sizes, seed);
+      r10.push(cell);
+      saveR10Cells(r10);
+      saveQueue(loadQueue().slice(1));
+      state.newCellSeconds = (state.newCellSeconds ?? 0) + (cell.wallSeconds ?? cell.totalSeconds ?? 0);
+      saveStateKeepingStop(state);
+      continue;
+    }
+
     if (passAll && !state.confirm) {
       // Run confirmation seeds at the recipe.
       log(`recipe candidate found: running ${CONFIRM_SEEDS.length} confirmation seeds at ${JSON.stringify(recipe)}`);
@@ -195,7 +218,7 @@ async function main() {
     if (!next) { state.status = 'not-found'; state.reason = 'no candidate setting within the trusted bounds and cell-cost cap would move any still-undecided knee test'; saveState(state); log(state.reason); return; }
     const arm = armName(next.sizes);
     const seed = nextSeedFor(r10, arm);
-    log(`placing next cell at ${JSON.stringify(next.sizes)} (arm ${arm}, seed ${seed}), expected ${next.seconds.toFixed(0)} s, information ${next.gain.toFixed(3)}`);
+    log(`placing next cell at ${JSON.stringify(next.sizes)} (arm ${arm}, seed ${seed}), expected ${next.seconds.toFixed(0)} s, information ${next.gain.toFixed(3)}, information per ${BUDGET_SECONDS / 3600} h ${next.score.toFixed(3)}`);
     const cell = runNewCell(next.sizes, seed);
     r10.push(cell);
     saveR10Cells(r10);
