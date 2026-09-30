@@ -64,14 +64,16 @@
 # recipes/standard.json (--config recipe, see evolve.mjs --help) and passed
 # as --config recipes/standard.json --seed <name>:
 #   opponents-per-gen 120, elites 15,
-#   snowball-weight 0.2, closer-weight 0.1, consistency-weight 0.1, shared-weakness-weight 0.2
+#   snowball-weight 0.4, closer-weight 0.1, consistency-weight 0.2, shared-weakness-weight 0.2,
+#   core-rivalry 0.2
 #   (--pool is left unset -- evolve.mjs's own default: no cap, whole deduped collection)
 # A passthrough --config overrides recipes/standard.json entirely (evolve.mjs
 # only accepts one --config), and any individual passthrough flag (e.g.
 # --snowball-weight 0) overrides that one key from the recipe file.
-# (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions,
-#  and sets snowball 0.4 / closer 0.1 / consistency 0.2 / shared-weakness 0.2
-#  identically on BOTH sides via the --opponent-*-weight flags)
+# (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions
+#  --meta-mode --random-opponent-lead, and passes the recipe's snowball 0.4 /
+#  closer 0.1 / consistency 0.2 / shared-weakness 0.2 identically on BOTH sides
+#  via the --opponent-*-weight flags)
 #
 # When a run finishes (evolve-DONE marker in its out dir), reports land in
 # out/evolve-<name>/my-teams-evolve.{md,html}; render the race chart with
@@ -213,7 +215,7 @@ if [ "$meta" = 1 ]; then
   # Both sides sample the same ranked field by pvpoke rank alone (1/(rank+20));
   # there is no 1v1 scoring in evolve runs. Real-collection runs (no --meta)
   # pool the player's mons and weight each by its own build's pvpoke rank.
-  cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --meta-mode)
+  cmd+=(--pool "$metapool" --opponent-meta-pool "$metapool" --no-evolutions --meta-mode --random-opponent-lead)
   # Both sides play the same game, so both get the same fitness weights.
   # Candidate-only bonus terms inflated candidate fitness ~5.5 pts over the
   # opponents' plain win rate in meta-vs-meta-retro-2 (2026-09-19).

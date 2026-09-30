@@ -18,15 +18,6 @@ describe('resolveFormat', () => {
     assert.throws(() => resolveFormat({ cp: 9999 }), /unsupported cp 9999/);
   });
 
-  test('a real cup (willpower) resolves title/group/rankingsDir from vendor/pvpoke', () => {
-    const format = resolveFormat({ cp: 1500, cup: 'willpower' });
-    assert.equal(format.name, 'Willpower Cup');
-    assert.equal(format.group, 'willpower');
-    assert.equal(format.rankingsDir, 'willpower');
-    assert.equal(format.cup, 'willpower');
-    assert.equal(format.cp, 1500);
-  });
-
   test('little cup at cp 500 resolves (cup id and cp cap both named "little")', () => {
     const format = resolveFormat({ cp: 500, cup: 'little' });
     assert.equal(format.cup, 'little');

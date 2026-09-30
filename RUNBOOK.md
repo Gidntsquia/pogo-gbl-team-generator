@@ -23,7 +23,7 @@ does not rank is last place).
 cd /home/jaxon/files/pogo-gbl-team-generator
 test "$(git branch --show-current)" = "main"
 bash scripts/setup.sh          # materializes/repairs vendor/pvpoke (gitignored) at the pin
-test "$(git -C vendor/pvpoke rev-parse HEAD)" = "bc28b41e766db0597e6c2b4d5e01ca9dd4ab2471"
+test "$(git -C vendor/pvpoke rev-parse HEAD)" = "e87448291024aff808f21a2e5f74e69f68b521df"
 ```
 
 `setup.sh` is idempotent and fixes an existing checkout to the pin.
@@ -96,6 +96,13 @@ Test fixtures for dry runs without personal data: `fixtures/*.csv`.
 
 ### The recipe every recent real run used
 
+Updated 2026-09-30: the raised weights (snowball 0.4, consistency 0.2) are now
+the baseline in `recipes/standard.json`, so the command below no longer repeats
+them or core-rivalry 0.2. Runs started earlier at snowball 0.2 / consistency 0.1
+must resume with `-- --snowball-weight 0.2 --consistency-weight 0.1` (and
+halving per the "Sequential Halving" section: R=3 is the default, on in every
+`sim.sh` run).
+
 Updated 2026-09-19: core-rivalry raised 0.1 -> 0.2 in `recipes/standard.json`
 (standard and `--meta` runs alike). Runs started earlier at 0.1 (e.g.
 `meta-vs-meta-retro-3`) must resume with `-- --core-rivalry 0.1` or evolve.mjs
@@ -108,9 +115,9 @@ baseline: opponent side co-evolves again (curated-ratio 0.66), candidate
 fitness blends snowball + closer + consistency, core-rivalry uses the
 similarity-aware terms, and shared-weakness-weight is on. Treat this as the
 default unless told otherwise. `sim.sh` already bakes in
-`--config recipes/standard.json` (opponents-per-gen 120, elites 15, baseline
-weights 0.2/0.1/0.1/0.2, core-rivalry 0.2 -- see `sim.sh` reference below), so the weight flags
-below just override those baseline values with this recipe's raised ones:
+`--config recipes/standard.json` (opponents-per-gen 120, elites 15, weights
+snowball 0.4 / closer 0.1 / consistency 0.2 / shared-weakness 0.2, core-rivalry
+0.2 -- see `sim.sh` reference below):
 
 ```bash
 COLLECTION="jaxon-gl-collection.csv"
@@ -125,13 +132,8 @@ scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
   --archetype-beta 0.5 \
   --opponent-strength-gamma 1 \
   --population-final-ratio 0.4 \
-  --snowball-weight 0.4 \
-  --closer-weight 0.1 \
-  --consistency-weight 0.2 \
-  --core-rivalry 0.2 \
   --similar-rivalry 1 \
-  --similar-floor 0.35 \
-  --shared-weakness-weight 0.2         # inspect, then rerun without --dry-run
+  --similar-floor 0.35                 # inspect, then rerun without --dry-run
 ```
 
 | Addition | Why |
@@ -249,42 +251,45 @@ grep "generation 0: done" out/evolve-shared-s2-gen-2.log
 | `--final-archive N` | final pass: strongest evolved opponents from the whole run, minus any fielded in the last `selection-trailing` generations; not in the fingerprint | 400 |
 | `--final-fresh N` | final pass: fresh meta-composed opponents never fought during the run -- these are essentially random legal teams, not opponent-GA-selected ones, so kept off by default; not in the fingerprint | 0 (20 at `--curated-ratio 0`) |
 
-### Meta vs. meta, 30 generations (both sides co-evolving)
+### Meta vs. meta (both sides co-evolving)
 
-The recipe behind the recent `meta-vs-meta-*` runs: no curated/community
-opponents anywhere (all Pokemon vs. all Pokemon), both the candidate side and
-the opponent side evolving. It's the "All-generated opponents with
-co-evolution" recipe above, but generations cut to 30 -- that's what those
-runs actually needed to converge, so it's the default for this recipe rather
-than the 75 used for the shared-s2 runs. Bare `evolve.mjs`, because `sim.sh`
-fixes opponents/elites.
+Updated 2026-09-30: this section now follows `scripts/sim.sh --meta`, which is
+the current recipe. The earlier raw `evolve.mjs` command (200 vs 200, 30
+generations, pool 70, every GA flag mirrored by hand) is retired; its settings
+no longer match what `--meta` runs, so don't resume those runs with it.
 
-**Symmetry rule (Jaxon, 2026-09-17): the candidate and opponent populations
-must be identical in size and in every GA flag.** Both sides draw from the
-same pool in a meta-vs-meta run, so there is no reason to break the symmetry.
-Concretely, every pair below is set to the same value on both sides, and the
-population ramp is switched off so the two sides stay the same size all run:
+No curated/community opponents anywhere (all Pokemon vs. all Pokemon), both
+sides evolving from the same pvpoke-ranked field:
 
-| Candidate side | Opponent side | Value |
-| --- | --- | --- |
-| `--population` | `--opponents-per-gen` | 200 (40k pairings/gen, same grid cost as the old 300x120) |
-| `--population-final-ratio 1` | (opponent count is derived from it) | 1 -- no shrink/grow, 200 vs 200 every generation |
-| `--pool` | `--opponent-meta-pool` | 70 |
-| `--death-rate` | `--opponent-death-rate` | 0.2 |
-| `--mutation-floor` / `--mutation-ceil` | `--opponent-mutation-floor` / `--opponent-mutation-ceil` | 0.05 / 0.4 |
-| `--mutation-floor-start` / `--mutation-ceil-start` | `--opponent-mutation-floor-start` / `--opponent-mutation-ceil-start` | 0.15 / 0.6 |
-| `--immigrant-fraction` | `--opponent-immigrant-fraction` | 0.08 |
+```bash
+scripts/sim.sh --meta --name meta-vs-meta-<cup>-N [--cup <cup>] --threads 8 --dry-run
+# inspect, then rerun without --dry-run
+```
 
-Also pass `--random-opponent-lead` (2026-09-17, Jaxon): without it, every
+`--meta` supplies everything else (`sim.sh --help` has the full list):
+
+| What | Value |
+| --- | --- |
+| Collection | built once per run from pvpoke's rankings (`scripts/build-meta-collection.mjs` -> `out/evolve-NAME/meta-collection-[CUP-]CP.csv`), reused on resume; IVs = pvpoke defaults |
+| Pools | `--pool 400 --opponent-meta-pool 400` (`--meta-pool N`; 0 = full field) |
+| Mode | `--no-evolutions --meta-mode --random-opponent-lead` |
+| Size | population 300, 100 generations, 120 opponents per generation, 15 elites (`recipes/standard.json` + `sim.sh` defaults) |
+| Fitness weights | snowball 0.4, closer 0.1, consistency 0.2, shared-weakness 0.2, on BOTH sides (`--opponent-*-weight`) |
+| Search | Sequential Halving R=3 (default), core-rivalry 0.2 |
+
+`--random-opponent-lead` (2026-09-17, Jaxon) stays on: without it every
 composed opponent gets pvpoke's own lead-prior winner rotated into slot 0
-(`composeSampledOpponent` -> `pickLeadIndex`), while the candidate side always
-assigns a uniform-random lead and only converges on a good one through
-selection (`assignLead` / `buildLeadRotation` in `src/teams/evolve.js`). That
-gap gave the opponent side a lead-quality head start from generation 0 on in
-every prior `meta-vs-meta-*` run -- a persistent opponent-fitness-over-
-candidate-fitness gap (~0.55 vs ~0.47 mean, both at gen 0 and after 20+
-generations) that never closed on its own. `--random-opponent-lead` makes
-opponent composition assign leads the same random way as candidates.
+(`composeSampledOpponent` -> `pickLeadIndex`), while the candidate side assigns
+a uniform-random lead and only converges on a good one through selection
+(`assignLead` / `buildLeadRotation` in `src/teams/evolve.js`). That gave the
+opponent side a lead-quality head start from generation 0 (~0.55 vs ~0.47 mean
+fitness in every pre-flag run) that never closed on its own. Before
+2026-09-30 `sim.sh --meta` did not pass it, so a `--meta` run started earlier
+has `randomOpponentLead: false` in its config and can't be resumed through
+`sim.sh --meta` now (config mismatch; there is no off-switch flag). Finish it
+with a raw `evolve.mjs` command built from its checkpoint `config`, or start a
+new run.
+
 
 #### Meta-vs-meta fitness symmetry: side-bias fix (2026-09-18) and `--meta-mode` (2026-09-19), gap within 0.02
 
@@ -377,54 +382,26 @@ node scripts/fitness-sides.mjs out/evolve-<name>        # per-generation means, 
 node scripts/symmetry-gap.mjs report --label <label>    # exit 0 = within 0.02; reads out/evolve-symgap-<label>-*
 ```
 
-Pass every one of these explicitly even where it matches a default, so the
-checkpoint `config` shows the symmetry rather than relying on two modules'
-defaults staying equal (they don't: candidate defaults are death 1/3, floor
-0.05, ceil 0.4, immigrants 0.1; opponent defaults are death 0.15, floor 0.02,
-ceil 0.2, immigrants 0.08). Older `meta-vs-meta-v1..v6` runs pre-date this
-rule (300 candidates vs 120 opponents, candidate death 1/3 vs opponent 0.2,
-ramp 0.4); don't resume them with this recipe -- the fingerprint won't match.
-`meta-vs-meta-v1..v6` and `meta-vs-meta-willpower-1/2` also pre-date
-`--random-opponent-lead` (added 2026-09-17) -- their opponent side used
-lead-prior leads throughout, so their fitness numbers aren't directly
-comparable to a run started with the flag on; don't resume them with it added
-either, same fingerprint-mismatch reason.
+The symmetry rule (Jaxon, 2026-09-17) still holds: both sides run the same
+GA settings (`--meta` gives both the same pool size and weights; candidate and
+opponent death rate, mutation ramps and immigrants are matched by the shared
+`evolveStep` and the defaults `--meta` relies on). The old meta-vs-meta runs
+(`v1..v6`, `willpower-1/2`, `retro-*`) pre-date one or more of these
+(population/opponent sizes, weights, `--meta-mode`, `--random-opponent-lead`);
+don't resume them with the current recipe -- the fingerprint won't match, and
+their fitness numbers aren't directly comparable.
 
-This rule is specific to meta-vs-meta. The standard recipe above (real
-collection vs. a co-evolving meta) is deliberately asymmetric -- the two sides
-draw from different pools -- and none of these flags or values carry over to
-it; `scripts/sim.sh` and its defaults are untouched by this recipe.
+This rule is specific to meta-vs-meta. The standard recipe (real collection
+vs. a co-evolving meta) is deliberately asymmetric -- the two sides draw from
+different pools.
 
-```bash
-COLLECTION="jaxon-gl-collection.csv"
-RUN_NAME="meta-vs-meta-vN"          # bump N each run
-
-nohup node scripts/evolve.mjs "$COLLECTION" \
-  --population 200 --opponents-per-gen 200 --population-final-ratio 1 \
-  --generations 30 --elites 30 --threads 8 \
-  --pool 70 --opponent-meta-pool 70 \
-  --curated-ratio 0 \
-  --death-rate 0.2 --opponent-death-rate 0.2 \
-  --mutation-floor 0.05 --mutation-ceil 0.4 \
-  --opponent-mutation-floor 0.05 --opponent-mutation-ceil 0.4 \
-  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
-  --opponent-mutation-floor-start 0.15 --opponent-mutation-ceil-start 0.6 \
-  --immigrant-fraction 0.08 --opponent-immigrant-fraction 0.08 \
-  --random-opponent-lead \
-  --seed "$RUN_NAME" --out-dir "out/evolve-$RUN_NAME" > "out/evolve-$RUN_NAME.log" 2>&1 &
-echo $! > "out/evolve-$RUN_NAME.pid"
-```
-
-Expected gen-0 log line:
-`generation 0: battling 200 teams against 200 opponents (0 curated, 200 evolved)`.
-
-Same "check gen 0 timing before walking away" rule as the shared-s2 recipe
-above applies -- the population schedule and both mutation anneals are indexed
-to `--generations`, so a deadline stop mid-schedule leaves them unfinished.
-`evolve-meta-vs-meta-v5-test` (2026-09-09/10) died mid-run (process killed,
-no `evolve-DONE`, stopped at generation 19) -- if a run under this recipe
-stops short, check `journalctl -u earlyoom` per section 1 before assuming it
-just finished.
+Expected gen-0 log line: `generation 0: battling 300 teams against 120 opponents (0 curated, 120 evolved)`.
+Check gen 0 timing before walking away: the population schedule and both
+mutation anneals are indexed to `--generations`, so a deadline stop
+mid-schedule leaves them unfinished. `evolve-meta-vs-meta-v5-test`
+(2026-09-09/10) died mid-run (process killed, no `evolve-DONE`, stopped at
+generation 19) -- if a run stops short, check `journalctl -u earlyoom` per
+section 1 before assuming it just finished.
 
 ### New meta: curated teams from a meta-vs-meta run
 
