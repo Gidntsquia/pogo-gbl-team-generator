@@ -323,6 +323,43 @@ export function kneeEstimate(fit, bounds, threshold = ONE_PT) {
 }
 
 /**
+ * The "good enough within a run budget" rule that replaced the knee tests as the batch's stopping rule on
+ * 2026-09-30, at the user's request: quality never levels off in the data (each further point costs about
+ * double the run time), so the 1-pt knee tests needed weeks of cells to clear. User: "I want the cheapest
+ * settings that give me the good enough results ... a 30 generation run needs to be completed in less than
+ * 8 hours (runnable overnight)".
+ */
+export const RUN_GENERATIONS = 30;
+export const RUN_BUDGET_SECONDS = 8 * 3600;
+/** A setting is good enough when its fitted quality is at most this far below the best in budget... */
+export const GOOD_ENOUGH_GAP = 0.005;
+/** ...and the upper end of the gap's 90% range is at most this, so a barely-measured setting can't win. */
+export const GOOD_ENOUGH_GAP_HI = ONE_PT;
+
+/**
+ * Cheapest good-enough setting whose RUN_GENERATIONS-generation run fits the budget: among grid settings
+ * inside `bounds` whose predicted run time is within `budgetSeconds`, find the best fitted quality, then
+ * return the cheapest setting whose fitted gap to it is <= GOOD_ENOUGH_GAP with the gap's 90% upper end
+ * <= GOOD_ENOUGH_GAP_HI. Run time comes from `cost.seconds(sizes, generations)` (8-generation cells scaled
+ * linearly in generations, standalone battle counts: a real run has no shared cache file).
+ * @returns {{sizes:object, best:object, predicted:number, bestPredicted:number, gap:object, runSeconds:number}|null}
+ */
+export function budgetRecipe(fit, bounds, cost, { generations = RUN_GENERATIONS, budgetSeconds = RUN_BUDGET_SECONDS, grid = candidateGrid() } = {}) {
+  const pred = (s) => dot(features(s), fit.beta);
+  const feasible = grid.filter((s) => SIZE_KEYS.every((key) => s[key] <= bounds[key][1]) && cost.seconds(s, generations) <= budgetSeconds);
+  if (!feasible.length) return null;
+  const best = feasible.reduce((b, s) => (pred(s) > pred(b) ? s : b));
+  let pick = null;
+  for (const s of feasible) {
+    const gap = contrast(fit, diffVec(s, best));
+    if (gap.est > GOOD_ENOUGH_GAP || gap.hi > GOOD_ENOUGH_GAP_HI) continue;
+    const runSeconds = cost.seconds(s, generations);
+    if (!pick || runSeconds < pick.runSeconds) pick = { sizes: s, best, predicted: pred(s), bestPredicted: pred(best), gap, runSeconds };
+  }
+  return pick;
+}
+
+/**
  * Search bounds: every setting the batch may place a cell at, and the range the knee estimate may pick from.
  * Floors raised 2026-09-28 at the user's request (pop 8 -> 50, pool 5 -> 25, K 2 -> 25): the batch had put
  * 391 of 688 cells at pop 12 / K 3, where fitness from a handful of opponents is too noisy for selection

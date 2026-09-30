@@ -19,6 +19,7 @@ import path from 'node:path';
 import {
   ROOT, R10_REL, R10_CELLS, TOP, FULL_GENERATIONS, armName, features, ols, kneeTests, kneeEstimate,
   fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, BUDGET_SECONDS, WINDOW_DOUBLINGS, loadAllCells, tQuantile,
+  budgetRecipe, RUN_GENERATIONS,
 } from './sizing-lib-r10.mjs';
 import { ensureScores, qualityAt, loadStore } from './heldout-store-r10.mjs';
 
@@ -159,10 +160,15 @@ async function main() {
 
     const { fit } = fitAll(full, N);
     const trust = trustBounds(full, BOUNDS);
-    const recipe = kneeEstimate(fit, trust).sizes;
+    // Stopping rule since 2026-09-30 (user): the cheapest good-enough setting whose 30-generation run fits in
+    // 8 h (budgetRecipe), confirmed by fresh seeds. The knee tests stay only to steer the picker after a
+    // confirmation miss.
+    const cost = fitCost(full);
+    const pick = budgetRecipe(fit, trust, cost);
+    const recipe = pick ? pick.sizes : kneeEstimate(fit, trust).sizes;
     const tests = kneeTests(fit, recipe);
-    const passAll = Object.values(tests).every((t) => t.pass);
-    log(`fit n=${full.length} full-cost cells; residual sd=${fit.residSd.toFixed(4)}; trust upper bounds pop ${trust.pop[1]} pool ${trust.pool[1]} K ${trust.k[1]}; recipe estimate=${JSON.stringify(recipe)}; passAll=${passAll}`);
+    const passAll = !!pick;
+    log(`fit n=${full.length} full-cost cells; residual sd=${fit.residSd.toFixed(4)}; trust upper bounds pop ${trust.pop[1]} pool ${trust.pool[1]} K ${trust.k[1]}; recipe estimate=${JSON.stringify(recipe)}${pick ? ` (predicted ${(pick.predicted * 100).toFixed(2)}, best in budget ${JSON.stringify(pick.best)} ${(pick.bestPredicted * 100).toFixed(2)}, ${RUN_GENERATIONS}-gen run ${(pick.runSeconds / 3600).toFixed(2)} h)` : ' (nothing fits the run budget)'}; passAll=${passAll}`);
 
     // Cells the user asked for run first, ahead of confirmation and the picker. An entry leaves the queue
     // only after its cell is recorded, so a stop or crash mid-cell re-runs it.
@@ -212,7 +218,6 @@ async function main() {
       continue;
     }
 
-    const cost = fitCost(full);
     const maxSeconds = MAX_CELL_SECONDS;
     // Near the recipe first; if nothing there fits the time cap, anywhere in the trusted bounds.
     const next = chooseNext(fit, tests, recipe, cost, { bounds: trust, maxSeconds, windowDoublings: WINDOW_DOUBLINGS })

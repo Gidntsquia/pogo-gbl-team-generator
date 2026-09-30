@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   FULL_GENERATIONS, TOP, armName, features, fitCost, kneeEstimate, kneeTests, ols, BOUNDS, trustBounds, loadAllCells,
+  budgetRecipe, RUN_GENERATIONS, RUN_BUDGET_SECONDS, GOOD_ENOUGH_GAP, GOOD_ENOUGH_GAP_HI,
 } from './sizing-lib-r10.mjs';
 import { loadStore, qualityAt } from './heldout-store-r10.mjs';
 
@@ -36,21 +37,28 @@ async function main() {
 
   function withQuality(c, n) {
     const q = qualityAt(store, c.finalists.slice(0, TOP), n);
-    return { ...c, qualityN: q ? q.meanTop : null };
+    return {
+      ...c, qualityN: q ? q.meanTop : null,
+      genBattlesStandalone: c.genBattles + (c.sharedCacheGenBattles ?? 0),
+      costSeconds: c.costSeconds ?? c.wallSeconds ?? c.totalSeconds ?? null,
+    };
   }
   const scored = cells.map((c) => withQuality(c, N));
   const full = scored.filter((c) => !c.cheap && c.qualityN != null && !c.inflated);
   const cheapLabeled = scored.filter((c) => c.cheap);
 
   // Fit the model on full-cost, non-inflated cells.
-  let fit = null, recipe = null, tests = null, passAll = false, cost = null, fitError = null;
+  let fit = null, recipe = null, tests = null, passAll = false, cost = null, fitError = null, pick = null;
   if (full.length > features({ pop: 1, pool: 1, k: 1 }).length) {
     try {
       fit = ols(full.map((c) => features(c.sizes)), full.map((c) => c.qualityN));
-      recipe = kneeEstimate(fit, trustBounds(full, BOUNDS)).sizes;
-      tests = kneeTests(fit, recipe);
-      passAll = Object.values(tests).every((t) => t.pass);
+      // Stopping rule since 2026-09-30 (user): cheapest good-enough setting whose 30-gen run fits 8 h.
+      const trust = trustBounds(full, BOUNDS);
       cost = fitCost(full);
+      pick = budgetRecipe(fit, trust, cost);
+      recipe = pick ? pick.sizes : kneeEstimate(fit, trust).sizes;
+      tests = kneeTests(fit, recipe);
+      passAll = !!pick;
     } catch (e) {
       fitError = e.message; // e.g. not enough size variation yet to identify every term
     }
@@ -82,6 +90,7 @@ async function main() {
   lines.push('</p>');
 
   if (found) {
+    recipe = state.confirm.recipe;
     const battles = cost.battles(recipe);
     const seconds = cost.seconds(recipe);
     lines.push('<h2>Recipe</h2><table><tr><th>size</th><th>value</th><th>label</th></tr>');
@@ -93,12 +102,14 @@ async function main() {
     lines.push(`<tr><td>confirmed quality (${state.confirm.n} fresh full-cost seeds)</td><td>${pct(state.confirm.confirmMean)}%</td><td class="lbl">measured</td></tr>`);
     lines.push(`<tr><td>predicted cost (battles)</td><td>${fint(battles)}</td><td class="lbl">inferred, from the cost model</td></tr>`);
     lines.push(`<tr><td>predicted cost (wall s)</td><td>${fint(seconds)}</td><td class="lbl">inferred, from the cost model</td></tr>`);
+    lines.push(`<tr><td>predicted ${RUN_GENERATIONS}-generation run (wall s)</td><td>${fint(cost.seconds(recipe, RUN_GENERATIONS))}</td><td class="lbl">inferred, from the cost model</td></tr>`);
     lines.push('</table>');
+    if (pick) lines.push(`<p class="lbl">Rule (user, 2026-09-30): among settings whose ${RUN_GENERATIONS}-generation run is predicted to take at most ${RUN_BUDGET_SECONDS / 3600} h, the cheapest one whose fitted quality is at most ${pct(GOOD_ENOUGH_GAP)} pts below the best in budget (${esc(sizeStr(pick.best))}, predicted ${pct(pick.bestPredicted)}%), with the gap's 90% upper end at most ${pct(GOOD_ENOUGH_GAP_HI)} pt. Quality kept rising with size everywhere measured, so no knee test could pass in reasonable time.</p>`);
   }
 
   // ---- per-size 90% ranges ---------------------------------------------------------------------------
   if (tests) {
-    lines.push('<h2>Per-size 90% knee tests</h2><table><tr><th>size</th><th>doubling gain (90%)</th><th>halving gain (90%)</th><th>pass?</th></tr>');
+    lines.push('<h2>Per-size 90% knee tests (informational; no longer the stopping rule)</h2><table><tr><th>size</th><th>doubling gain (90%)</th><th>halving gain (90%)</th><th>pass?</th></tr>');
     for (const key of ['pop', 'pool', 'k']) {
       const t = tests[key];
       const up = t.upExempt ? `exempt: ${esc(t.upExempt)}` : `[${f2(t.up.lo)}, ${f2(t.up.hi)}]`;
@@ -111,7 +122,7 @@ async function main() {
 
   // ---- model ------------------------------------------------------------------------------------------
   lines.push('<h2>Model</h2>');
-  lines.push('<p>quality = intercept + &sum; (b_i &middot; log2 size_i + c_i &middot; log2 size_i&sup2;) + &sum;<sub>i&lt;j</sub> d_ij &middot; log2 size_i &middot; log2 size_j, over population, pool and K (K capped at the pool; log sizes centered on 200/50/50), fit by ordinary least squares on full-cost, non-inflated cells only. A negative c_i gives that size a knee: the fitted gain per doubling shrinks as the size grows. The d_ij terms let one size's gain depend on the other two (e.g. a bigger population is worth more when fitness comes from more opponents).</p>');
+  lines.push('<p>quality = intercept + &sum; (b_i &middot; log2 size_i + c_i &middot; log2 size_i&sup2;) + &sum;<sub>i&lt;j</sub> d_ij &middot; log2 size_i &middot; log2 size_j, over population, pool and K (K capped at the pool; log sizes centered on 200/50/50), fit by ordinary least squares on full-cost, non-inflated cells only. A negative c_i gives that size a knee: the fitted gain per doubling shrinks as the size grows. The d_ij terms let one size\'s gain depend on the other two (e.g. a bigger population is worth more when fitness comes from more opponents).</p>');
   if (fit) {
     lines.push(`<p>Residual sd: ${f4(fit.residSd)} (n=${fit.n}, df=${fit.df}).</p>`);
     lines.push('<p class="lbl">Assumptions: independent, homoscedastic, normally distributed residuals across cells; the quadratic-in-log form with pairwise interactions is the whole model (no three-way or higher terms) -- the report does not claim more than this form can express.</p>');
