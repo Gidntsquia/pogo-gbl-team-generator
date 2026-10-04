@@ -1,0 +1,806 @@
+{
+  "cup": "colormega",
+  "source": "meta-vs-meta-colormega-1-gen99",
+  "teams": [
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-1",
+      "members": [
+        "kingdra_shadow",
+        "cradily",
+        "marowak_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-2",
+      "members": [
+        "charjabug",
+        "cradily",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-3",
+      "members": [
+        "kingdra_shadow",
+        "cradily",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-4",
+      "members": [
+        "kingdra_shadow",
+        "stunfisk",
+        "araquanid"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-5",
+      "members": [
+        "blaziken_shadow",
+        "cradily",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-6",
+      "members": [
+        "cradily",
+        "charjabug",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-7",
+      "members": [
+        "marowak_alolan_shadow",
+        "empoleon",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-8",
+      "members": [
+        "araquanid",
+        "stunfisk",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-9",
+      "members": [
+        "victreebel",
+        "marowak_alolan",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-10",
+      "members": [
+        "victreebel_shadow",
+        "walrein",
+        "marowak_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-11",
+      "members": [
+        "kingdra",
+        "lapras",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-12",
+      "members": [
+        "lumineon",
+        "cradily",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-13",
+      "members": [
+        "rapidash_shadow",
+        "jumpluff_shadow",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-14",
+      "members": [
+        "camerupt_shadow",
+        "cradily",
+        "seaking"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-15",
+      "members": [
+        "trevenant_shadow",
+        "empoleon",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-16",
+      "members": [
+        "victreebel",
+        "marowak_alolan",
+        "jellicent"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-17",
+      "members": [
+        "cradily_shadow",
+        "marowak_alolan",
+        "ampharos"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-18",
+      "members": [
+        "kingdra_shadow",
+        "jumpluff",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-19",
+      "members": [
+        "kingdra_shadow",
+        "stunfisk",
+        "chesnaught_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-20",
+      "members": [
+        "victreebel",
+        "marowak_alolan",
+        "walrein_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-21",
+      "members": [
+        "seaking",
+        "cradily",
+        "camerupt_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-22",
+      "members": [
+        "cradily",
+        "seaking",
+        "camerupt_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-23",
+      "members": [
+        "cradily",
+        "stunfisk",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-24",
+      "members": [
+        "mantine",
+        "kingdra_shadow",
+        "gastrodon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-25",
+      "members": [
+        "kingdra_shadow",
+        "quagsire_shadow",
+        "lapras"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-26",
+      "members": [
+        "abomasnow",
+        "marowak_alolan",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-27",
+      "members": [
+        "stunfisk",
+        "turtonator",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-28",
+      "members": [
+        "cramorant",
+        "houndoom_mega",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-29",
+      "members": [
+        "cradily",
+        "chesnaught_mega",
+        "marowak_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-30",
+      "members": [
+        "kingdra_shadow",
+        "gastrodon",
+        "mantine"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-31",
+      "members": [
+        "walrein",
+        "charjabug",
+        "galvantula"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-32",
+      "members": [
+        "magneton_shadow",
+        "cradily_shadow",
+        "araquanid"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-33",
+      "members": [
+        "kingdra_shadow",
+        "walrein",
+        "lapras"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-34",
+      "members": [
+        "cradily_shadow",
+        "jumpluff",
+        "ampharos"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-35",
+      "members": [
+        "victreebel",
+        "empoleon",
+        "lumineon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-36",
+      "members": [
+        "rapidash_shadow",
+        "magnemite_shadow",
+        "samurott_hisuian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-37",
+      "members": [
+        "cradily_shadow",
+        "jumpluff",
+        "rapidash"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-38",
+      "members": [
+        "empoleon",
+        "charjabug_shadow",
+        "blaziken_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-39",
+      "members": [
+        "lapras_shadow",
+        "jumpluff_shadow",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-40",
+      "members": [
+        "zeraora",
+        "cradily",
+        "blastoise"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-41",
+      "members": [
+        "swanna",
+        "stunfisk",
+        "chesnaught_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-42",
+      "members": [
+        "jumpluff_shadow",
+        "seaking",
+        "empoleon_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-43",
+      "members": [
+        "cradily_shadow",
+        "magneton_shadow",
+        "araquanid"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-44",
+      "members": [
+        "tentacruel",
+        "araquanid",
+        "marowak_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-45",
+      "members": [
+        "cramorant",
+        "victreebel_shadow",
+        "camerupt"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-46",
+      "members": [
+        "heatran_shadow",
+        "blastoise",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-47",
+      "members": [
+        "houndoom_shadow",
+        "rillaboom",
+        "ludicolo"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-48",
+      "members": [
+        "typhlosion_shadow",
+        "chesnaught_shadow",
+        "toxapex"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-49",
+      "members": [
+        "camerupt_shadow",
+        "charjabug_shadow",
+        "zapdos_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-candidate-50",
+      "members": [
+        "cramorant",
+        "stunfisk",
+        "emolga"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-1",
+      "members": [
+        "kingdra_shadow",
+        "gastrodon",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-2",
+      "members": [
+        "cradily",
+        "gastrodon",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-3",
+      "members": [
+        "cradily",
+        "lileep",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-4",
+      "members": [
+        "blaziken_shadow",
+        "cradily",
+        "ferrothorn"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-5",
+      "members": [
+        "victreebel",
+        "empoleon",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-6",
+      "members": [
+        "kingdra",
+        "electrode_shadow",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-7",
+      "members": [
+        "marowak_alolan",
+        "jumpluff",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-8",
+      "members": [
+        "magnemite",
+        "jumpluff",
+        "fletchinder_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-9",
+      "members": [
+        "blaziken_shadow",
+        "cradily",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-10",
+      "members": [
+        "victreebel_mega",
+        "marowak_alolan",
+        "cradily_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-11",
+      "members": [
+        "cradily",
+        "rapidash_shadow",
+        "seaking"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-12",
+      "members": [
+        "jellicent",
+        "amoonguss",
+        "swampert_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-13",
+      "members": [
+        "rapidash_shadow",
+        "cradily_shadow",
+        "seaking"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-14",
+      "members": [
+        "lumineon",
+        "amoonguss_shadow",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-15",
+      "members": [
+        "cradily",
+        "magnezone_shadow",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-16",
+      "members": [
+        "cradily",
+        "empoleon",
+        "lileep_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-17",
+      "members": [
+        "kingdra",
+        "jumpluff",
+        "emolga"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-18",
+      "members": [
+        "kingdra_shadow",
+        "charjabug",
+        "pelipper"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-19",
+      "members": [
+        "cramorant",
+        "rapidash_shadow",
+        "jumpluff_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-20",
+      "members": [
+        "walrein",
+        "stunfisk",
+        "lileep_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-21",
+      "members": [
+        "tentacruel",
+        "quagsire_shadow",
+        "camerupt"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-22",
+      "members": [
+        "cradily",
+        "tentacruel_shadow",
+        "marowak_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-23",
+      "members": [
+        "cramorant",
+        "cradily",
+        "morpeko_full_belly"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-24",
+      "members": [
+        "marowak_alolan",
+        "mantine",
+        "kingdra_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-25",
+      "members": [
+        "marowak_alolan",
+        "jumpluff",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-26",
+      "members": [
+        "marowak_alolan",
+        "cradily_shadow",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-27",
+      "members": [
+        "skeledirge",
+        "ferrothorn",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-28",
+      "members": [
+        "charjabug",
+        "lileep",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-29",
+      "members": [
+        "kingdra_shadow",
+        "gastrodon",
+        "tentacruel_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-30",
+      "members": [
+        "raichu_alolan",
+        "marowak_alolan_shadow",
+        "gourgeist_super"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-31",
+      "members": [
+        "cramorant",
+        "jumpluff",
+        "magnezone"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-32",
+      "members": [
+        "magnezone_shadow",
+        "cramorant",
+        "charjabug"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-33",
+      "members": [
+        "magneton",
+        "araquanid",
+        "victreebel"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-34",
+      "members": [
+        "tentacruel",
+        "charjabug_shadow",
+        "quagsire_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-35",
+      "members": [
+        "rapidash",
+        "poliwrath_shadow",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-36",
+      "members": [
+        "kingdra",
+        "torkoal",
+        "dartrix"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-37",
+      "members": [
+        "blaziken_shadow",
+        "seaking",
+        "morpeko_full_belly"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-38",
+      "members": [
+        "bellossom",
+        "gastrodon",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-39",
+      "members": [
+        "marowak_alolan_shadow",
+        "pelipper",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-40",
+      "members": [
+        "empoleon",
+        "ferrothorn",
+        "reshiram_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-41",
+      "members": [
+        "typhlosion_shadow",
+        "cradily",
+        "bellibolt"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-42",
+      "members": [
+        "kingdra_shadow",
+        "seismitoad",
+        "ninetales_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-43",
+      "members": [
+        "typhlosion_shadow",
+        "ampharos_shadow",
+        "tentacruel"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-44",
+      "members": [
+        "walrein",
+        "swampert_shadow",
+        "magnezone_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-45",
+      "members": [
+        "seaking",
+        "venusaur_shadow",
+        "mantine"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-46",
+      "members": [
+        "marowak_alolan_shadow",
+        "camerupt",
+        "lileep_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-47",
+      "members": [
+        "empoleon",
+        "rapidash",
+        "mantine"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-48",
+      "members": [
+        "turtonator",
+        "toedscruel",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-49",
+      "members": [
+        "empoleon",
+        "jumpluff_shadow",
+        "jellicent"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-colormega-1-gen99-opponent-50",
+      "members": [
+        "jellicent",
+        "ninetales_shadow",
+        "magnemite_shadow"
+      ]
+    }
+  ]
+}

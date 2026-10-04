@@ -1,0 +1,806 @@
+{
+  "cup": "retro",
+  "source": "meta-vs-meta-retro-3-gen49",
+  "teams": [
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-1",
+      "members": [
+        "turtonator",
+        "charjabug_shadow",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-2",
+      "members": [
+        "cramorant",
+        "ninetales",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-3",
+      "members": [
+        "charjabug_shadow",
+        "annihilape_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-4",
+      "members": [
+        "cramorant",
+        "ninetales_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-5",
+      "members": [
+        "furret",
+        "charjabug_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-6",
+      "members": [
+        "oranguru",
+        "charjabug",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-7",
+      "members": [
+        "annihilape_shadow",
+        "charjabug_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-8",
+      "members": [
+        "oranguru",
+        "charjabug_shadow",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-9",
+      "members": [
+        "girafarig_shadow",
+        "araquanid",
+        "snorlax"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-10",
+      "members": [
+        "girafarig_shadow",
+        "dunsparce",
+        "snorlax"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-11",
+      "members": [
+        "girafarig_shadow",
+        "araquanid",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-12",
+      "members": [
+        "annihilape_shadow",
+        "furret",
+        "lickilicky"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-13",
+      "members": [
+        "annihilape_shadow",
+        "aurorus",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-14",
+      "members": [
+        "walrein",
+        "corsola_galarian",
+        "snorlax"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-15",
+      "members": [
+        "oranguru",
+        "cramorant",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-16",
+      "members": [
+        "cramorant",
+        "walrein_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-17",
+      "members": [
+        "aurorus",
+        "ninetales_shadow",
+        "regidrago"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-18",
+      "members": [
+        "girafarig_shadow",
+        "araquanid",
+        "ampharos_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-19",
+      "members": [
+        "dunsparce",
+        "ampharos",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-20",
+      "members": [
+        "dunsparce",
+        "cramorant",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-21",
+      "members": [
+        "oranguru",
+        "snorlax",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-22",
+      "members": [
+        "raichu_alolan",
+        "araquanid_shadow",
+        "dunsparce"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-23",
+      "members": [
+        "corsola_galarian",
+        "jumpluff",
+        "aurorus"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-24",
+      "members": [
+        "jumpluff",
+        "ampharos_shadow",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-25",
+      "members": [
+        "charjabug_shadow",
+        "dunsparce",
+        "aurorus"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-26",
+      "members": [
+        "lapras_shadow",
+        "furret",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-27",
+      "members": [
+        "wartortle",
+        "ninetales",
+        "ampharos_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-28",
+      "members": [
+        "furret",
+        "annihilape_shadow",
+        "lickilicky"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-29",
+      "members": [
+        "aurorus_shadow",
+        "cresselia",
+        "latias_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-30",
+      "members": [
+        "annihilape_shadow",
+        "clodsire",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-31",
+      "members": [
+        "lapras_shadow",
+        "jumpluff",
+        "araquanid_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-32",
+      "members": [
+        "oranguru",
+        "aurorus",
+        "lapras"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-33",
+      "members": [
+        "annihilape_shadow",
+        "jumpluff",
+        "lopunny"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-34",
+      "members": [
+        "aurorus",
+        "charjabug",
+        "regidrago"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-35",
+      "members": [
+        "turtonator",
+        "charjabug_shadow",
+        "volbeat"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-36",
+      "members": [
+        "furret",
+        "dusknoir_shadow",
+        "snorlax"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-37",
+      "members": [
+        "blastoise_shadow",
+        "lunatone",
+        "dusclops"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-38",
+      "members": [
+        "kingdra_shadow",
+        "annihilape_shadow",
+        "abomasnow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-39",
+      "members": [
+        "annihilape",
+        "aurorus",
+        "lapras"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-40",
+      "members": [
+        "aurorus",
+        "jumpluff",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-41",
+      "members": [
+        "regidrago",
+        "dusclops",
+        "walrein_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-42",
+      "members": [
+        "cramorant",
+        "spidops",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-43",
+      "members": [
+        "snorlax_shadow",
+        "ninetales_shadow",
+        "ampharos"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-44",
+      "members": [
+        "wartortle",
+        "charjabug_shadow",
+        "ampharos_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-45",
+      "members": [
+        "charjabug_shadow",
+        "dunsparce",
+        "shelgon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-46",
+      "members": [
+        "lapras_shadow",
+        "furret",
+        "pachirisu"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-47",
+      "members": [
+        "araquanid_shadow",
+        "jumpluff",
+        "lapras_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-48",
+      "members": [
+        "aurorus_shadow",
+        "charjabug_shadow",
+        "latias_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-49",
+      "members": [
+        "araquanid",
+        "aurorus",
+        "dusknoir"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-candidate-50",
+      "members": [
+        "dragonair_shadow",
+        "cramorant",
+        "walrein_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-1",
+      "members": [
+        "turtonator",
+        "furret",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-2",
+      "members": [
+        "amaura",
+        "annihilape_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-3",
+      "members": [
+        "oranguru",
+        "corsola_galarian",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-4",
+      "members": [
+        "cramorant",
+        "jumpluff",
+        "ninetales_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-5",
+      "members": [
+        "oranguru",
+        "furret",
+        "araquanid_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-6",
+      "members": [
+        "amaura_shadow",
+        "annihilape",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-7",
+      "members": [
+        "annihilape_shadow",
+        "cetitan",
+        "snorlax"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-8",
+      "members": [
+        "furret",
+        "araquanid_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-9",
+      "members": [
+        "fearow",
+        "crustle_shadow",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-10",
+      "members": [
+        "shelgon_shadow",
+        "walrein",
+        "aurorus"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-11",
+      "members": [
+        "oinkologne_female",
+        "cramorant",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-12",
+      "members": [
+        "ninetales",
+        "annihilape_shadow",
+        "snorlax_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-13",
+      "members": [
+        "ninetales_shadow",
+        "snorlax",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-14",
+      "members": [
+        "cramorant",
+        "charjabug",
+        "walrein"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-15",
+      "members": [
+        "cramorant",
+        "oranguru",
+        "pachirisu"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-16",
+      "members": [
+        "araquanid_shadow",
+        "furret",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-17",
+      "members": [
+        "furret",
+        "crustle_shadow",
+        "fearow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-18",
+      "members": [
+        "corsola_galarian",
+        "pachirisu",
+        "amaura"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-19",
+      "members": [
+        "samurott",
+        "snorlax",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-20",
+      "members": [
+        "cresselia",
+        "snorlax",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-21",
+      "members": [
+        "ninetales_shadow",
+        "jumpluff",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-22",
+      "members": [
+        "kingdra_shadow",
+        "snorlax",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-23",
+      "members": [
+        "dusclops",
+        "aurorus",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-24",
+      "members": [
+        "annihilape_shadow",
+        "oinkologne_female",
+        "aurorus_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-25",
+      "members": [
+        "ninetales",
+        "annihilape_shadow",
+        "cresselia"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-26",
+      "members": [
+        "fearow",
+        "amaura",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-27",
+      "members": [
+        "annihilape",
+        "volbeat",
+        "abomasnow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-28",
+      "members": [
+        "spidops",
+        "crustle",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-29",
+      "members": [
+        "walrein",
+        "shelgon_shadow",
+        "aurorus"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-30",
+      "members": [
+        "annihilape",
+        "amaura_shadow",
+        "oranguru"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-31",
+      "members": [
+        "annihilape_shadow",
+        "tentacruel",
+        "snorlax"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-32",
+      "members": [
+        "corsola_galarian",
+        "charjabug_shadow",
+        "persian_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-33",
+      "members": [
+        "regidrago",
+        "kingdra_shadow",
+        "vigoroth"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-34",
+      "members": [
+        "mantine",
+        "charjabug_shadow",
+        "latias"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-35",
+      "members": [
+        "corsola_galarian",
+        "clodsire",
+        "aurorus_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-36",
+      "members": [
+        "oranguru",
+        "cramorant",
+        "pachirisu"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-37",
+      "members": [
+        "dunsparce",
+        "aurorus",
+        "clodsire"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-38",
+      "members": [
+        "spidops",
+        "altaria",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-39",
+      "members": [
+        "amaura",
+        "pachirisu",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-40",
+      "members": [
+        "volbeat",
+        "shelgon_shadow",
+        "lapras"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-41",
+      "members": [
+        "persian_shadow",
+        "dusknoir_shadow",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-42",
+      "members": [
+        "snorlax",
+        "ninetales_shadow",
+        "cradily"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-43",
+      "members": [
+        "dusknoir_shadow",
+        "araquanid",
+        "regidrago"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-44",
+      "members": [
+        "aurorus_shadow",
+        "jumpluff",
+        "runerigus"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-45",
+      "members": [
+        "girafarig_shadow",
+        "wartortle",
+        "persian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-46",
+      "members": [
+        "charjabug_shadow",
+        "corsola_galarian",
+        "persian_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-47",
+      "members": [
+        "fearow",
+        "crustle",
+        "furret"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-48",
+      "members": [
+        "jumpluff",
+        "dusknoir_shadow",
+        "castform_sunny"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-49",
+      "members": [
+        "ninetales",
+        "snorlax_shadow",
+        "kecleon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-retro-3-gen49-opponent-50",
+      "members": [
+        "charjabug",
+        "cramorant",
+        "walrein"
+      ]
+    }
+  ]
+}
