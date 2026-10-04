@@ -22,6 +22,7 @@ import {
   budgetRecipe, RUN_GENERATIONS, runGenerations,
 } from './sizing-lib-r10.mjs';
 import { ensureScores, qualityAt, loadStore } from './heldout-store-r10.mjs';
+import { BATTLE_CACHE_MAX_ENTRIES } from '../src/evolve/cache.js';
 
 const R10_DIR = path.join(ROOT, R10_REL);
 const STATE = path.join(R10_DIR, 'state.json');
@@ -30,6 +31,24 @@ const SOURCE_CSV = path.join(ROOT, 'out', 'sizing-cells-r9', 'meta-collection-15
 // One battle cache shared by every new cell (evolve --battle-cache-file): a battle's result depends only on
 // the pairing, so cells reuse each other's battles with identical results. Asked for by the user 2026-09-28.
 const BATTLE_CACHE_FILE = path.join(R10_DIR, 'battle-cache.json');
+/**
+ * True once a cell's run saw the shared cache file at the in-memory cap. A full file starts every cell with
+ * a full cache, so the cell can store nothing it simulates: no repeat pairings across its own generations
+ * are served (~0.35-0.43 of battles at K = pool) and the cell runs slower than a real run, which starts
+ * empty. From then on cells run without the file (2026-10-03; it was at 2,000,000 entries with ~0% hits).
+ */
+let cacheFileSeenFull = false;
+function sharedCacheFull() {
+  // Any cell that saw it full settles it: the file never shrinks. (Cells run without the file report their
+  // own, smaller in-memory size, so only "some cell reached the cap" is a valid test, not the latest cell.)
+  if (cacheFileSeenFull) return true;
+  for (const c of loadR10Cells().reverse()) {
+    const file = path.join(R10_DIR, `${c.arm}-${c.seed}`, 'evolve-result.json');
+    if (!existsSync(file)) continue;
+    if ((JSON.parse(readFileSync(file, 'utf8')).battleCacheStats?.size ?? 0) >= BATTLE_CACHE_MAX_ENTRIES) return (cacheFileSeenFull = true);
+  }
+  return false;
+}
 const CONFIRM_SEEDS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const MAX_HOURS_DEFAULT = 72;
 
@@ -64,7 +83,8 @@ function runNewCell(sizes, seed, generations = FULL_GENERATIONS) {
     '--meta-mode', '--no-evolutions', '--curated-ratio', '0', '--pool', '100', '--opponent-meta-pool', '100',
     '--generations', String(generations), '--population', String(sizes.pop), '--opponents-per-gen', String(sizes.pool),
     '--sampled-opponents', String(sizes.k), '--population-final-ratio', '1', '--elites', '8',
-    '--final-archive', '10', '--final-fresh', '10', '--threads', '8', '--battle-cache-file', BATTLE_CACHE_FILE,
+    '--final-archive', '10', '--final-fresh', '10', '--threads', '8',
+    ...(sharedCacheFull() ? [] : ['--battle-cache-file', BATTLE_CACHE_FILE]),
   ];
   if (!existsSync(path.join(dir, 'evolve-result.json'))) {
     const argv = ['scripts/evolve.mjs', CSV, '--seed', seed, ...flags, '--out-dir', dir, '--force-fresh'];
@@ -211,7 +231,11 @@ async function main() {
       const confirmMean = confirmQ.reduce((a, b) => a + b, 0) / confirmQ.length;
       const xr = features(recipe);
       const est = xr.reduce((s, x, i) => s + x * fit.beta[i], 0);
-      const se = Math.sqrt(xr.reduce((s, x, i) => s + x * fit.cov[i].reduce((s2, v, j) => s2 + v * xr[j], 0), 0));
+      // Prediction interval for the mean of CONFIRM_SEEDS new cells: the fitted mean's uncertainty plus the
+      // seed-to-seed noise of a 6-cell average. Until 2026-10-03 this was the fitted mean's interval alone
+      // (+-0.6 pt where seeds vary 1.3-2.7 pt), which failed 283/141/141, 400/100/100 and 200/141/141 on noise.
+      const seMean = Math.sqrt(xr.reduce((s, x, i) => s + x * fit.cov[i].reduce((s2, v, j) => s2 + v * xr[j], 0), 0));
+      const se = Math.sqrt(seMean ** 2 + fit.residSd ** 2 / confirmCells.length);
       const t = tQuantile(0.95, fit.df);
       const lo = est - t * se, hi = est + t * se;
       const inside = confirmMean >= lo && confirmMean <= hi;
