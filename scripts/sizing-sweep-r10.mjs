@@ -19,7 +19,7 @@ import path from 'node:path';
 import {
   ROOT, R10_REL, R10_CELLS, TOP, FULL_GENERATIONS, armName, features, ols, kneeTests, kneeEstimate,
   fitCost, chooseNext, BOUNDS, trustBounds, MAX_CELL_SECONDS, BUDGET_SECONDS, WINDOW_DOUBLINGS, loadAllCells, tQuantile,
-  budgetRecipe, RUN_GENERATIONS,
+  budgetRecipe, RUN_GENERATIONS, runGenerations,
 } from './sizing-lib-r10.mjs';
 import { ensureScores, qualityAt, loadStore } from './heldout-store-r10.mjs';
 
@@ -152,6 +152,7 @@ async function main() {
         ...c, quality: q ? q.meanTop : null, cheap: c.generations !== FULL_GENERATIONS,
         genBattlesStandalone: c.genBattles + (c.sharedCacheGenBattles ?? 0),
         costSeconds: c.costSeconds ?? c.wallSeconds ?? c.totalSeconds ?? null,
+        gens: c.gens ?? runGenerations(c),
       };
     }
     const scoredPrior = priorCells.map(withQuality);
@@ -187,13 +188,18 @@ async function main() {
       continue;
     }
 
-    if (passAll && !state.confirm) {
-      // Run confirmation seeds at the recipe.
-      log(`recipe candidate found: running ${CONFIRM_SEEDS.length} confirmation seeds at ${JSON.stringify(recipe)}`);
+    // A recipe that missed confirmation is re-checked only once the fit has new cells; otherwise the same
+    // fit picks the same recipe and the check repeats forever (2026-10-01: ~240k NaN misses in 3 h).
+    const recipeArm = armName(recipe);
+    const lastMiss = (state.confirmMisses ?? []).filter((m) => m.arm === recipeArm).at(-1);
+    if (passAll && !state.confirm && !(lastMiss && lastMiss.fitN >= full.length)) {
+      // Run confirmation seeds at the recipe; seeds already run (a re-check, or a stop mid-confirmation)
+      // are reused rather than re-run.
+      log(`recipe candidate found: confirming at ${JSON.stringify(recipe)} with ${CONFIRM_SEEDS.length} seeds`);
       const confirmCells = [];
       for (const seed of CONFIRM_SEEDS) {
-        const arm = armName(recipe);
-        if (r10.some((c) => c.arm === arm && c.seed === seed)) continue;
+        const existing = r10.find((c) => c.arm === recipeArm && c.seed === seed);
+        if (existing) { confirmCells.push(existing); continue; }
         const cell = runNewCell(recipe, seed);
         r10.push(cell);
         saveR10Cells(r10);
@@ -213,6 +219,7 @@ async function main() {
       saveStateKeepingStop(state);
       if (inside) { state.status = 'found'; saveState(state); log(`FOUND: recipe ${JSON.stringify(recipe)} confirmed (mean ${confirmMean.toFixed(4)} in [${lo.toFixed(4)}, ${hi.toFixed(4)}])`); return; }
       log(`confirmation missed the predicted range (mean ${confirmMean.toFixed(4)} vs [${lo.toFixed(4)}, ${hi.toFixed(4)}]); continuing the search`);
+      state.confirmMisses = [...(state.confirmMisses ?? []), { arm: recipeArm, recipe, confirmMean, predLo: lo, predHi: hi, fitN: full.length, at: new Date().toISOString() }];
       state.confirm = null;
       saveStateKeepingStop(state);
       continue;

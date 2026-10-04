@@ -3,6 +3,8 @@
 // (the batch) and sizing-report-r10.mjs (the report).
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { halvingSlices } from '../src/evolve/halving.js';
+import { blocksForPerCandidate } from '../src/evolve/sampled.js';
 
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 /** Post-fix cell dirs from rounds 3-9 (read-only). Pre-fix out/sampled-k-ab/ is never used. */
@@ -112,7 +114,50 @@ function makeCell(c) {
     // Cost in seconds: measured wall time for saved cells; evolve's own elapsed time for recovered cells.
     costSeconds: c.wallSeconds ?? c.totalSeconds ?? null,
     finalists: c.finalists, old60: c.old60 ?? null, inflated,
+    gens: runGenerations({ dir: c.dir, arm: c.arm, seed: c.seed }),
   };
+}
+
+/**
+ * Battle directions one 8-generation cell's generation runs at `sizes` under the default Sequential Halving
+ * (R=3, keep 0.5) inside --sampled-opponents blocks, mirroring src/evolve/sampled.js + halving.js:
+ * `fresh` = distinct pairings x 2 seats, `replay` = the earlier rounds' pairings each later round replays
+ * from the memo. Exact: 700 of 738 cells' per-generation lookups (simulated + cached) equal `fresh`; the
+ * other 38 equal `fresh + replay` or drift toward it, because the shared cache was full and replays were
+ * re-simulated (fixed in halving.js 2026-10-03).
+ * @returns {{fresh:number, replay:number}}
+ */
+export function battlesPerGeneration({ pop, pool, k }, rounds = 3, keep = 0.5) {
+  const blocks = Math.min(blocksForPerCandidate(pool, k), pop, pool);
+  const share = (n, g) => Math.floor(n / blocks) + (g < n % blocks ? 1 : 0);
+  let fresh = 0, replay = 0;
+  for (let g = 0; g < blocks; g++) {
+    const slices = halvingSlices(share(pool, g), rounds);
+    let alive = share(pop, g), seen = 0;
+    for (let r = 0; r < rounds; r++) {
+      fresh += alive * (slices[r] - seen);
+      replay += alive * seen;
+      seen = slices[r];
+      if (r < rounds - 1) alive = Math.max(1, Math.ceil(alive * keep));
+    }
+  }
+  return { fresh: 2 * fresh, replay: 2 * replay };
+}
+
+const runGenerationsMemo = new Map();
+/**
+ * Per-generation {simulated, cached, seconds} of a cell's run, from its evolve-result.json (memoized; the
+ * sweep reloads every cell once per placed cell). Round-10 records carry no `dir`, so it defaults to R10_REL.
+ * @returns {Array<{simulated:number, cached:number, seconds:number}>|null}
+ */
+export function runGenerations({ dir = R10_REL, arm, seed }) {
+  const file = path.join(ROOT, dir, `${arm}-${seed}`, 'evolve-result.json');
+  if (!runGenerationsMemo.has(file)) {
+    runGenerationsMemo.set(file, existsSync(file)
+      ? JSON.parse(readFileSync(file, 'utf8')).generationRecords.map((g) => ({ simulated: g.timing.battleCount, cached: g.timing.cachedCount ?? 0, seconds: g.timing.elapsedMs / 1000 }))
+      : null);
+  }
+  return runGenerationsMemo.get(file);
 }
 
 // ---------------------------------------------------------------- statistics
@@ -380,31 +425,49 @@ export function candidateGrid() {
 }
 
 /**
- * Fit a cost model: log2(genBattles) quadratic in log sizes, from full-cost cells. Seconds from battles via
- * a two-parameter linear fit (fixed per-process overhead + measured seconds-per-battle) over cells with a
- * clean wall time, not a single overhead-free ratio: at small battle counts (this round's search-floor
- * cells: ~230-460 battles) a fresh `node scripts/evolve.mjs` process's own startup/module-load/pvpoke-VM-boot
- * cost (measured ~17 s, independent of battle count) dominates and a pure per-battle rate underprices these
- * cells by 3x+ -- which is what drove round 10's chooseNext to spend its whole batch re-sampling the
- * cheapest grid point instead of the settings that still decide the knee tests (see WORKER_NOTES.md).
+ * Fit a cost model from three measured pieces, so a cache hit is priced as the near-free lookup it is
+ * rather than folded into a battle count (rewritten 2026-10-03 at the user's request, after the old model
+ * -- log2(simulated battles) quadratic in log sizes, x one seconds-per-battle -- put 800/800/35's 30-gen run
+ * at 5.12 h against ~7.5 h measured):
+ *  - lookups per generation: exact, battlesPerGeneration(sizes).fresh;
+ *  - share of them served by the run's own cache: quadratic in log2(min(K, pool)/pool), fitted on cells
+ *    whose lookups equal `fresh` (no re-simulated replays). Repeats come from surviving teams meeting
+ *    surviving opponents, so the share is ~0.43 at K = pool and falls with K/pool (~0.08 below 1/10), at
+ *    any pop or pool. Hits from the shared cross-cell cache file are subtracted: a real run has no file.
+ *    The 8-generation share includes generation 0's zero, so applying it to 30 generations errs long;
+ *  - seconds: per-generation least squares on this round's cells (older rounds ran slower engine code) of
+ *    elapsed time on simulated and cached battles, plus a per-process overhead (median cell wall time minus
+ *    its generations: startup, final pass, cache file I/O).
+ * A fresh run's in-memory cache (BATTLE_CACHE_MAX_ENTRIES = 2M) never fills inside the 8 h budget: at
+ * ~0.021 s per simulated battle, 8 h is ~1.4M entries.
  */
 export function fitCost(cells) {
-  const full = cells.filter((c) => !c.cheap);
-  // Battles model on standalone counts (what a setting costs without the shared cache); the seconds fit
-  // below regresses wall time on the battles actually simulated, so both halves stay honest.
-  const fb = ols(full.map((c) => features(c.sizes)), full.map((c) => Math.log2(c.genBattlesStandalone ?? c.genBattles)));
-  const timed = full.filter((c) => c.costSeconds != null && !c.inflated);
-  const n = timed.length;
-  let sx = 0, sy = 0, sxx = 0, sxy = 0;
-  for (const c of timed) { sx += c.genBattles; sy += c.costSeconds; sxx += c.genBattles * c.genBattles; sxy += c.genBattles * c.costSeconds; }
-  const secPerBattle = (n * sxy - sx * sy) / (n * sxx - sx * sx);
-  const overheadSeconds = Math.max(0, (sy - secPerBattle * sx) / n);
+  const full = cells.filter((c) => !c.cheap && !c.inflated && c.gens);
+  const timed = full.filter((c) => (c.dir ?? R10_REL) === R10_REL && c.costSeconds != null);
+  const gens = timed.flatMap((c) => c.gens);
+  const t = ols(gens.map((g) => [1, g.simulated, g.cached]), gens.map((g) => g.seconds));
+  const [genOverheadSeconds, secPerBattle, secPerHit] = t.beta.map((v) => Math.max(0, v));
+  const overheads = timed.map((c) => c.costSeconds - c.gens.reduce((s, g) => s + g.seconds, 0)).sort((a, b) => a - b);
+  const overheadSeconds = Math.max(0, overheads[overheads.length >> 1] ?? 0);
+
+  const hitFeatures = ({ pool, k }) => { const r = Math.log2(Math.min(k, pool) / pool); return [1, r, r * r]; };
+  const clean = full.filter((c) => { const { fresh } = battlesPerGeneration(c.sizes); return c.gens.every((g) => Math.abs(g.simulated + g.cached - fresh) <= 16); });
+  const h = ols(clean.map((c) => hitFeatures(c.sizes)), clean.map((c) => {
+    const cached = c.gens.reduce((s, g) => s + g.cached, 0);
+    const fileHits = (c.genBattlesStandalone ?? c.genBattles) - c.genBattles;
+    return Math.max(0, cached - fileHits) / (c.gens.length * battlesPerGeneration(c.sizes).fresh);
+  }));
+  const hitRate = (sizes) => Math.min(0.95, Math.max(0, dot(hitFeatures(sizes), h.beta)));
+
   return {
-    secPerBattle, overheadSeconds,
-    battles: (sizes, generations = FULL_GENERATIONS) => 2 ** dot(features(sizes), fb.beta) * (generations / FULL_GENERATIONS),
-    // Overhead is a fixed per-process cost (Node startup, pvpoke VM boot), paid once per cell regardless of
-    // how few battles it runs -- it does not scale down with `generations` the way battle time does.
-    seconds(sizes, generations = FULL_GENERATIONS) { return overheadSeconds + this.battles(sizes, generations) * secPerBattle; },
+    secPerBattle, secPerHit, genOverheadSeconds, overheadSeconds, hitRate, hitResidSd: h.residSd,
+    /** Battles a fresh run simulates (cache hits excluded). */
+    battles: (sizes, generations = FULL_GENERATIONS) => generations * battlesPerGeneration(sizes).fresh * (1 - hitRate(sizes)),
+    seconds(sizes, generations = FULL_GENERATIONS) {
+      const { fresh } = battlesPerGeneration(sizes);
+      const hr = hitRate(sizes);
+      return overheadSeconds + generations * (genOverheadSeconds + fresh * ((1 - hr) * secPerBattle + hr * secPerHit));
+    },
   };
 }
 

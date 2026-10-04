@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateWithHalving, halvingSlices } from '../src/evolve/halving.js';
+import { createBattleCache } from '../src/evolve/cache.js';
 
 const spec = (id) => ({ speciesId: id, ivs: { atk: 0, def: 0, hp: 0 }, shadow: false, bestBuddy: false });
 
@@ -49,9 +50,10 @@ test('halvingSlices doubles up to the full pool', () => {
   assert.deepEqual(halvingSlices(30, 4), [4, 8, 15, 30]);
 });
 
-test('halving fights fewer pairings, keeps the strong teams, and never ranks a cut team above a survivor', async () => {
-  const run = await evaluateWithHalving({}, params, halving);
-  // 8 teams x 2 opps + 4 x 2 new + 2 x 4 new, two seats each = 64 (the full grid is 128)
+for (const [label, cache] of [['no shared cache', undefined], ['a full shared cache', createBattleCache(0)]]) test(`halving fights fewer pairings, keeps the strong teams, and never ranks a cut team above a survivor (${label})`, async () => {
+  const run = await evaluateWithHalving({}, { ...params, cache }, halving);
+  // 8 teams x 2 opps + 4 x 2 new + 2 x 4 new, two seats each = 64 (the full grid is 128); a full shared
+  // cache must not make later rounds re-simulate earlier rounds' pairings
   assert.equal(run.battleCount, 64);
   assert.equal(run.results.length, N);
   const finalists = run.results.slice(4).map((r) => r.winRate);

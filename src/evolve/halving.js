@@ -40,6 +40,28 @@ function shuffled(items, seed) {
 const pick = (arr, idxs) => (arr ? idxs.map((i) => arr[i]) : arr);
 
 /**
+ * The run's shared cache plus a memo local to this call for results the shared cache refused (it stops
+ * accepting entries at its cap). Without it, a full shared cache makes every later round re-simulate the
+ * earlier rounds' pairings: round 10's sizing cells ran ~1.5x their halving battle count once the shared
+ * cache file reached 2,000,000 entries (2026-10-03).
+ */
+function withOverflowMemo(shared) {
+  const overflow = new Map();
+  return {
+    ...shared,
+    get(key) {
+      const hit = shared.get(key);
+      return hit !== undefined ? hit : overflow.get(key);
+    },
+    set(key, result) {
+      const dropped = shared.stats().dropped;
+      shared.set(key, result);
+      if (shared.stats().dropped > dropped) overflow.set(key, result);
+    },
+  };
+}
+
+/**
  * Drop-in replacement for evaluateTeamsInOrder (same params, same return shape)
  * that battles fewer pairings. `fitnessOf(result)` is the number selection
  * ranks on (winRate or blendFitness). Results stay positional.
@@ -52,7 +74,7 @@ export async function evaluateWithHalving(ctx, params, halving) {
   const { teams, opponents } = params;
   const { rounds, keep = 0.5, seed, fitnessOf } = halving;
   // Later rounds replay earlier rounds' pairings, so a real memo is required even under --no-battle-cache.
-  const cache = params.cache && !params.cache.disabled ? params.cache : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
+  const cache = params.cache && !params.cache.disabled ? withOverflowMemo(params.cache) : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
   const order = shuffled(opponents.map((_, j) => j), `${seed}-halving`);
   const sizes = halvingSlices(opponents.length, rounds);
 
