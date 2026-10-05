@@ -99,7 +99,7 @@ async function main() {
     lines.push(`<tr><td>sampled-opponents (K)</td><td>${recipe.k}</td><td class="lbl">inferred</td></tr>`);
     const predQ = features(recipe).reduce((s, x, i) => s + x * fit.beta[i], 0);
     lines.push(`<tr><td>predicted quality</td><td>${pct(predQ)}%</td><td class="lbl">inferred, from the fit</td></tr>`);
-    lines.push(`<tr><td>confirmed quality (${state.confirm.n} fresh full-cost seeds)</td><td>${pct(state.confirm.confirmMean)}%</td><td class="lbl">measured</td></tr>`);
+    lines.push(`<tr><td>confirmed quality (6 fresh full-cost seeds, ${state.confirm.n} held-out opponents)</td><td>${pct(state.confirm.confirmMean)}%</td><td class="lbl">measured</td></tr>`);
     lines.push(`<tr><td>predicted cost (battles)</td><td>${fint(battles)}</td><td class="lbl">inferred, from the cost model</td></tr>`);
     lines.push(`<tr><td>predicted cost (wall s)</td><td>${fint(seconds)}</td><td class="lbl">inferred, from the cost model</td></tr>`);
     lines.push(`<tr><td>predicted ${RUN_GENERATIONS}-generation run (wall s)</td><td>${fint(cost.seconds(recipe, RUN_GENERATIONS))}</td><td class="lbl">inferred, from the cost model</td></tr>`);
