@@ -34,6 +34,7 @@ import { runEvolution } from '../src/evolve/run.js';
 import { initEngine, buildPokemon } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { runBattles } from '../src/engine/parallel.js';
+import { applyGroupMoveset } from '../src/scoring/index.js';
 import { loadCommunityTeams } from '../src/meta/teams.js';
 import { mirrorBattleResult } from '../src/evolve/fitness.js';
 
@@ -116,6 +117,21 @@ describe('battleTeams: the 3v3 driver', () => {
     assert.ok(memo && memo.hits + memo.misses > 0, 'the memo saw this battle\'s lookaheads');
     const direct = battleTeams(ctx, { ...args(), scenarioMemo: false });
     assert.deepEqual(memoized, direct, 'memoized lookaheads change nothing about the outcome');
+  });
+
+  test('the memo is exact for form-changing mons: a Mimikyu team fought both ways, memo on and off agree', () => {
+    // Regression (fixed-K serial vs threaded divergence): a replayed lookahead cannot restore the
+    // in-place form rewrite Mimikyu/Cramorant/Aegislash undergo, so a warm memo made results depend
+    // on battle order. Captured from a real run: two mirrored battles, memoized on fresh mons vs direct.
+    const mk = (speciesId, atk, def, hp, shadow, fastMove, chargedMoves) => {
+      const p = buildPokemon(ctx, { speciesId, ivs: { atk, def, hp }, shadow });
+      applyGroupMoveset(p, { fastMove, chargedMoves });
+      return p;
+    };
+    const mkA = () => [mk('forretress', 5, 15, 13, true, 'VOLT_SWITCH', ['SAND_TOMB', 'ROCK_TOMB']), mk('rillaboom', 5, 15, 13, false, 'SCRATCH', ['DRUM_BEATING', 'EARTH_POWER']), mk('corsola_galarian', 4, 15, 14, false, 'ASTONISH', ['NIGHT_SHADE', 'POWER_GEM'])];
+    const mkB = () => [mk('mimikyu', 4, 14, 15, false, 'SHADOW_CLAW', ['SHADOW_SNEAK', 'PLAY_ROUGH']), mk('quagsire', 4, 15, 10, false, 'MUD_SHOT', ['AQUA_TAIL', 'STONE_EDGE']), mk('lapras', 4, 11, 12, true, 'PSYWAVE', ['SPARKLING_ARIA', 'ICE_BEAM'])];
+    const run = (scenarioMemo) => [battleTeams(ctx, { teamA: mkA(), teamB: mkB(), scenarioMemo }), battleTeams(ctx, { teamA: mkB(), teamB: mkA(), scenarioMemo })];
+    assert.deepEqual(run(true), run(false));
   });
 
   test('returns a well-formed result object', () => {

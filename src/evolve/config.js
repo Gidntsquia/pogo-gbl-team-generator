@@ -329,6 +329,11 @@ export function buildRunConfig(csvPath, opts) {
           hoeffdingConfidence: opts.hoeffdingConfidence ?? 0.1,
         }
       : {}),
+    // Sampled combats (src/evolve/sampled.js), EXPERIMENTAL, off by default. Only-when-on, like halving/hoeffding:
+    // an off run's config is byte-identical to before, and a run resumed with the switch or fraction changed is refused.
+    ...(opts.sampledCombats ? { sampledCombats: opts.sampledCombats } : {}),
+    // Fixed-K sampled combats: each candidate fights K opponents per generation, whatever the pool sizes.
+    ...(opts.sampledOpponents ? { sampledOpponents: opts.sampledOpponents } : {}),
     ...(opts.selectionTrailing !== undefined ? { selectionTrailing: opts.selectionTrailing } : {}),
     ...(opts.convWindow !== undefined || opts.convTopN !== undefined
       ? {
@@ -338,7 +343,7 @@ export function buildRunConfig(csvPath, opts) {
           },
         }
       : {}),
-    // NOT in the fingerprint, deliberately: `battleCache`, `threads` and
+    // NOT in the fingerprint, deliberately: `battleCache` (and `battleCacheFile`), `threads` and
     // `deadlineMinutes` -- all three are pure speed knobs that cannot change a
     // battle's outcome (the memo returns what a re-simulation would return,
     // and worker count has been bit-identical to serial since the 2026-08-22

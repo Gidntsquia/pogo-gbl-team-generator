@@ -36,6 +36,30 @@ export const ARMS = {
   // `hoeffding` differs only by replacing halving with --hoeffding-races (halving off).
   base: ['--halving-rounds', '3'],
   hoeffding: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.1'],
+  // Sampled-combats round (plans/PLAN.md 2026-09-23): `base` above is the control. Idea arms: sampled fraction
+  // (s2 = 1/2, s4 = 1/4) x Halving (h0 off, h3 R=3), with --population/--opponents-per-gen sized by pilot so
+  // mean battles per run is within 10% of control's (see RUNBOOK sampled-combats section).
+  s2h0: ['--halving-rounds', '0', '--sampled-combats', '0.5', '--population', '37', '--opponents-per-gen', '28'],
+  s2h3: ['--halving-rounds', '3', '--sampled-combats', '0.5', '--population', '48', '--opponents-per-gen', '36'],
+  s4h0: ['--halving-rounds', '0', '--sampled-combats', '0.25', '--population', '47', '--opponents-per-gen', '35'],
+  s4h3: ['--halving-rounds', '3', '--sampled-combats', '0.25', '--population', '62', '--opponents-per-gen', '47'],
+  // Fixed-K sampled-combats round (plans/PLAN.md round 2, scripts/sampled-k-stats.mjs): `base` is the control.
+  // --population-final-ratio 1 keeps each arm's sizes literal (no ramp) -- see RUNBOOK. k10eq's --population is
+  // sized by pilot so mean battles per run is within 10% of control's.
+  k10eq: ['--halving-rounds', '3', '--sampled-opponents', '10', '--population', '56', '--opponents-per-gen', '300', '--population-final-ratio', '1'],
+  o50: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  o500: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
+  c40: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '40', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
+  c320: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '320', '--opponents-per-gen', '500', '--population-final-ratio', '1'],
+  // Sizing round (plans/PLAN.md round 7, scripts/sizing-sweep.mjs): one knob moves off the o50 baseline
+  // (200 candidates, 50-opponent pool, K=50) at a time. pN = candidates, oN = pool, kN = K (pool 50).
+  p50: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '50', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  p100: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '100', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  p400: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '400', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  o100: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '100', '--population-final-ratio', '1'],
+  o200: ['--halving-rounds', '3', '--sampled-opponents', '50', '--population', '200', '--opponents-per-gen', '200', '--population-final-ratio', '1'],
+  k10: ['--halving-rounds', '3', '--sampled-opponents', '10', '--population', '200', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
+  k25: ['--halving-rounds', '3', '--sampled-opponents', '25', '--population', '200', '--opponents-per-gen', '50', '--population-final-ratio', '1'],
   // Round-4 setting probe (plans/PLAN.md): confidence variants to find the one whose
   // battle count is closest to Halving's. Not used by the real A/B; probe-only arms.
   conf50: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.5'],
@@ -47,8 +71,22 @@ export const ARMS = {
   conf30: ['--halving-rounds', '0', '--hoeffding-races', '--hoeffding-confidence', '0.3'],
 };
 
+// Round-9 (plans/PLAN.md): dynamic arms for the joint (population, pool, K) search, named
+// `c<pop>o<pool>k<K>` (e.g. c284o71k71). Registered into ARMS on first use so cellFlags/runCell
+// and the results.json arm bookkeeping work unchanged.
+const DYNAMIC_ARM_RE = /^c(\d+)o(\d+)k(\d+)$/;
+export function ensureArm(name) {
+  if (ARMS[name]) return name;
+  const m = DYNAMIC_ARM_RE.exec(name);
+  if (!m) return name;
+  const [, pop, pool, k] = m;
+  ARMS[name] = ['--halving-rounds', '3', '--sampled-opponents', k, '--population', pop, '--opponents-per-gen', pool, '--population-final-ratio', '1'];
+  return name;
+}
+
 /** BASE_FLAGS with the arm's own value replacing any flag the arm also sets, then the arm's flags. */
 export function cellFlags(arm) {
+  ensureArm(arm);
   const own = ARMS[arm];
   const over = new Set(own.filter((x) => x.startsWith('--')));
   const base = [];
@@ -116,6 +154,17 @@ async function main() {
       renderHoeffdingReport(data, path.join(ROOT, 'out'));
       return;
     }
+    if (data.arms.includes('k10eq')) {
+      const { renderSampledKReport } = await import('./compare-sampled-k-report.mjs');
+      const r3File = path.join(ROOT, 'out', 'sampled-k-ab-r3', 'results.json');
+      renderSampledKReport(data, path.join(ROOT, 'out'), existsSync(r3File) ? JSON.parse(readFileSync(r3File, 'utf8')) : undefined);
+      return;
+    }
+    if (data.arms.includes('s2h0')) {
+      const { renderSampledReport } = await import('./compare-sampled-report.mjs');
+      renderSampledReport(data, path.join(ROOT, 'out'));
+      return;
+    }
     const { renderReport } = await import('./compare-search-report.mjs');
     renderReport(data, path.join(ROOT, 'out'));
     return;
@@ -124,7 +173,7 @@ async function main() {
     console.error('usage: compare-search.mjs run|report');
     process.exit(2);
   }
-  const arms = flagValue(argv, '--arms', 'control,h3,h4').split(',');
+  const arms = flagValue(argv, '--arms', 'control,h3,h4').split(',').map(ensureArm);
   const seeds = flagValue(argv, '--seeds', 's1,s2,s3').split(',');
   const top = Number(flagValue(argv, '--top', '5'));
   const heldoutCount = Number(flagValue(argv, '--heldout', '60'));
@@ -178,4 +227,8 @@ async function main() {
   console.log(`wrote ${RESULTS}`);
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Guarded so scripts/sizing-sweep-r9.mjs can `import { ensureArm } from './compare-search.mjs'` for
+// dynamic-arm registration without triggering a CLI run.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}

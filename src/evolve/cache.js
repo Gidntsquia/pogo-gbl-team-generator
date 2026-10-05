@@ -1,3 +1,5 @@
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import path from 'node:path';
 
 // Memo-cache ceiling. Measured (2026-08-26, heap-delta over a real run) at
 // 289 bytes per trimmed entry plus its interned key, so a FULL cache is about
@@ -58,6 +60,8 @@ export function createBattleCache(maxEntries) {
   let hits = 0;
   let misses = 0;
   let dropped = 0;
+  let diskHits = 0; // distinct entries loaded from a previous run's file that this run used
+  const preloaded = new Set();
 
   function teamId(specs) {
     const key = specs.map(monSpecKey).join(';');
@@ -80,6 +84,7 @@ export function createBattleCache(maxEntries) {
         return undefined;
       }
       hits += 1;
+      if (preloaded.delete(key)) diskHits += 1; // counted once per entry: battles this run did not re-simulate
       return hit;
     },
     set(key, result) {
@@ -90,9 +95,66 @@ export function createBattleCache(maxEntries) {
       results.set(key, trimBattleResult(result));
     },
     stats() {
-      return { hits, misses, size: results.size, dropped };
+      return { hits, misses, size: results.size, dropped, diskHits };
+    },
+    /**
+     * Load entries saved by `exportState` (a previous run's cache). Must run
+     * before the first `keyFor`, because keys embed interned team ids and the
+     * saved ids are only valid when interned in the same order.
+     * @param {{teams:string[], entries:Array<[string, object]>}} state
+     */
+    importState(state) {
+      if (teamIds.size || results.size) throw new Error('battle cache: importState must run on an empty cache');
+      state.teams.forEach((key, i) => teamIds.set(key, i));
+      for (const [key, value] of state.entries) {
+        if (results.size >= maxEntries) break;
+        results.set(key, value);
+        preloaded.add(key);
+      }
+    },
+    /** Every entry plus the team-id table its keys refer to, as plain JSON-able data. */
+    exportState() {
+      return { teams: [...teamIds.keys()], entries: [...results.entries()] };
     },
   };
+}
+
+/** On-disk format version of a saved battle cache (`--battle-cache-file`). */
+export const BATTLE_CACHE_FILE_VERSION = 1;
+
+/**
+ * Load a saved battle cache into a fresh `createBattleCache` instance. A
+ * battle's result is a pure function of its key (teams, leads, difficulty; the
+ * engine derives the RNG seed from the matchup), so entries from another run
+ * are exactly what this run would compute -- provided the league matches,
+ * which `scope` (cp/cup) guards. A missing file or a scope mismatch loads
+ * nothing.
+ * @returns {{loaded:number, reason:string|null}}
+ */
+export function loadBattleCacheFile(cache, file, scope) {
+  if (!existsSync(file)) return { loaded: 0, reason: 'no file yet' };
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  if (data.version !== BATTLE_CACHE_FILE_VERSION) return { loaded: 0, reason: `version ${data.version} != ${BATTLE_CACHE_FILE_VERSION}` };
+  if (data.scope !== scope) return { loaded: 0, reason: `scope ${data.scope} != ${scope}` };
+  cache.importState(data);
+  return { loaded: cache.stats().size, reason: null };
+}
+
+/** Save a battle cache for later runs (atomic: temp file + rename). */
+export function saveBattleCacheFile(cache, file, scope) {
+  mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  const { teams, entries } = cache.exportState();
+  // Written piecewise: a single JSON.stringify of a million-entry cache can exceed V8's max string length.
+  const fd = openSync(tmp, 'w');
+  writeSync(fd, `{"version":${BATTLE_CACHE_FILE_VERSION},"scope":${JSON.stringify(scope)},"teams":${JSON.stringify(teams)},"entries":[`);
+  for (let i = 0; i < entries.length; i += 10000) {
+    const chunk = entries.slice(i, i + 10000).map((e) => JSON.stringify(e)).join(',');
+    writeSync(fd, (i ? ',' : '') + chunk);
+  }
+  writeSync(fd, ']}');
+  closeSync(fd);
+  renameSync(tmp, file);
 }
 
 /**

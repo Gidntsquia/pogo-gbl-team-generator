@@ -890,3 +890,29 @@ probe table, the per-generation cut table from the real A/B cells, and the one s
 `out/hoeffding-ab.md` (rebuild with `node scripts/compare-search.mjs report --dir out/hoeffding-ab-cut`;
 rerun the A/B with `node scripts/hoeffding-overnight.mjs --dir out/hoeffding-ab-cut`, same stop rule,
 same seeds). Halving stays the default.
+
+## Sampled combats (`--sampled-combats F`, EXPERIMENTAL, off by default)
+
+**Status (2026-09-24): experiment, on branch `experiments/sampled-combats`, not merged.** Each generation the opponent pool is shuffled into K = 1/F blocks and the candidates into K groups; each group fights one block, so every candidate meets a random 1/K of the opponents. F must be 1/K (0.5, 0.25, ...); it cannot combine with `--hoeffding-races`; it works with Halving on or off. Same seed gives identical results serial or threaded. A checkpoint made without it refuses to resume with it (the error names the key).
+
+A/B, 18 seeds, control = Halving R=3 (40 teams / 30 opponents), each arm sized to within 10% of control battles (arm sizes as population/opponents: 1/2 no-Halving 37/28, 1/2 Halving 48/36, 1/4 no-Halving 47/35, 1/4 Halving 62/47): only 1/2 sample + Halving KEEPs (+1.6 pt held-out, 95% range +0.1..+3.1, 0.93x battles). The other three DROP. Report: `out/sampled-ab.html`. Rerun: `node scripts/sampled-overnight.mjs --dir out/sampled-ab` (unattended, resumable, ~4 h, threads 8); rebuild the report with `node scripts/compare-search.mjs report --dir out/sampled-ab`.
+Note: the 1/2, Halving-off arm needed *smaller* sizes than control to match its cost, not larger.
+
+### Fixed-K sampled combats (`--sampled-opponents K`, EXPERIMENTAL, round 2)
+
+Each candidate fights K sampled opponents per generation, whatever the pool sizes. The opponent pool is split into ceil(opponents/K) blocks, candidates are shuffled into the same number of groups, and Sequential Halving runs inside each block. Needs candidates >= blocks (start-up refuses otherwise). Resuming with a different or missing K is refused (message names `sampledOpponents`). Cannot be combined with `--sampled-combats`.
+
+A/B (2026-09-24, 5 seeds, 8 generations, meta mode, Halving R=3, idea arms use `--population-final-ratio 1`; control keeps the default 40->16 ramp, so "40 candidates" means 40 all run long in the idea arms). Compute budget (10 h) ended the run at 5 seeds; undecided arms got the plain reading. Quality = mean held-out win rate of the top 5 finalists vs 60 fresh meta teams; control 57.8%.
+
+| arm | vs control (95% range) | battles vs control | verdict |
+|---|---|---|---|
+| K=10, 56 cand x 300 opp (equal cost) | -3.4 (-8.0..+1.2) | 1.05x | DROP |
+| K=50, 200 x 50 | +0.7 (-3.4..+4.7) | 8.2x | DROP |
+| K=50, 200 x 500 | +4.4 (+1.0..+7.9) | 13.4x | KEEP |
+| K=50, 40 x 500 | -3.5 (-6.4..-0.7) | 2.7x | DROP |
+| K=50, 320 x 500 | +2.7 (+0.9..+4.5) | 21.4x | KEEP |
+
+Sweeps: more candidates (40 -> 320) YES, +6.2 pt (+1.9..+10.5); more opponents (50 -> 500) CAN'T TELL, +3.8 (-1.8..+9.4). At equal cost sampling did not beat control; the gains come only with 13-21x the battles. Report: `out/sampled-k-ab.html`. Rerun: `node scripts/sampled-k-overnight.mjs --dir out/sampled-k-ab`; rebuild the report: `node scripts/compare-search.mjs report --dir out/sampled-k-ab`.
+
+**Round 3 (2026-09-25): determinism fix and opponent-sweep rerun.** Round 2's fixed-K runs were not thread-independent: the scenario memo replayed sims for form-changing mons, so `--threads 8` and `--threads 1` diverged from gen1 (fixed in c899273). After the fix the K=10 repro (56 x 300, seed `evalk`) and an o500 cell (seed `evalo`) match across `--threads 8`/`--threads 1` in every checkpoint and the finalists, timing fields aside. Only o50 and o500 were rerun (seeds s1-s8, all after the fix, cells in `out/sampled-k-ab-r3/`, copied into `round3` of `out/sampled-k-ab/results.json`; round-2 cells stay in `cells`). The s1-s5 rerun cells differ from round 2's. Result: more opponents (50 -> 500) **CAN'T TELL**, -1.1 pt (95% range -4.2..+2.0, width 6.2, was 11.2 on 5 seeds), 500 ahead on 3 of 8 seeds. The 8 h budget ended the run at 8 seeds (8.74 h summed; the last seed started before the limit) with the rule unfired. k10eq, c40, c320 and the control are still round 2's 5-seed pre-fix results. Rerun: `node scripts/sampled-k-r3-sweep.mjs` (resumable); rebuild: `node scripts/compare-search.mjs report --dir out/sampled-k-ab`.
+**Round 4 (2026-09-25): sweep continued, answer NO.** Same o50/o500 arms, seeds s9-s21 added on top of s1-s8 (s1-s8 untouched, checksum-verified), stop-rule band widened to +-2 for the sweep only (other arms keep +-1). The rule fired after 21 seeds: more opponents (50 -> 500) **NO**, -0.03 pt (95% range -1.93..+1.87). New cells took 9.54 h of the 12 h budget (cap 24 seeds). Cells in `out/sampled-k-ab-r3/`, pooled into `round3` of `out/sampled-k-ab/results.json`. Resume/rerun: `node scripts/sampled-k-r3-sweep.mjs`; rebuild: `node scripts/compare-search.mjs report --dir out/sampled-k-ab`.
