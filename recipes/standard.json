@@ -1,5 +1,7 @@
 {
-  "opponents-per-gen": 120,
+  "opponents-per-gen": 566,
+  "sampled-opponents": 400,
+  "population-final-ratio": 1,
   "elites": 15,
   "snowball-weight": 0.4,
   "closer-weight": 0.1,

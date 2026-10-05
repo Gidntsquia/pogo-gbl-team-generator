@@ -115,7 +115,7 @@ baseline: opponent side co-evolves again (curated-ratio 0.66), candidate
 fitness blends snowball + closer + consistency, core-rivalry uses the
 similarity-aware terms, and shared-weakness-weight is on. Treat this as the
 default unless told otherwise. `sim.sh` already bakes in
-`--config recipes/standard.json` (opponents-per-gen 120, elites 15, weights
+`--config recipes/standard.json` (opponents-per-gen 566, sampled-opponents 400, population-final-ratio 1, elites 15, weights
 snowball 0.4 / closer 0.1 / consistency 0.2 / shared-weakness 0.2, core-rivalry
 0.2 -- see `sim.sh` reference below):
 
@@ -273,7 +273,7 @@ scripts/sim.sh --meta --name meta-vs-meta-<cup>-N [--cup <cup>] --threads 8 --dr
 | Collection | built once per run from pvpoke's rankings (`scripts/build-meta-collection.mjs` -> `out/evolve-NAME/meta-collection-[CUP-]CP.csv`), reused on resume; IVs = pvpoke defaults |
 | Pools | `--pool 400 --opponent-meta-pool 400` (`--meta-pool N`; 0 = full field) |
 | Mode | `--no-evolutions --meta-mode --random-opponent-lead` |
-| Size | population 300, 100 generations, 120 opponents per generation, 15 elites (`recipes/standard.json` + `sim.sh` defaults) |
+| Size | population 200, 100 generations, 566 opponents per generation with each candidate fighting 400 sampled (`--sampled-opponents`), no population ramp, 15 elites (`recipes/standard.json` + `sim.sh` defaults) |
 | Fitness weights | snowball 0.4, closer 0.1, consistency 0.2, shared-weakness 0.2, on BOTH sides (`--opponent-*-weight`) |
 | Search | Sequential Halving R=3 (default), core-rivalry 0.2 |
 
@@ -453,7 +453,7 @@ Options (anything else is passed through to `evolve.mjs`):
 
 The launcher always adds `--config recipes/standard.json --seed NAME
 --out-dir out/evolve-NAME`. `recipes/standard.json` holds the baked
-defaults -- `opponents-per-gen 120`, `elites 15`, weights
+defaults -- `opponents-per-gen 566`, `sampled-opponents 400`, `population-final-ratio 1`, `elites 15`, weights
 `snowball/closer/consistency/shared-weakness 0.2/0.1/0.1/0.2`, `core-rivalry 0.2` -- edit that
 file, not `sim.sh`, to change them for every future run. A passthrough flag
 of the same name overrides its `--config` value; a passthrough `--config

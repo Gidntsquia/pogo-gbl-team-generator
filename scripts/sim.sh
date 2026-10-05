@@ -33,7 +33,7 @@
 #                     opponents, foreground (implies --fg; try it on
 #                     fixtures/sample-pokegenie.csv)
 #   --generations G   generation cap                          (default 100)
-#   --population N    GA population                           (default 300)
+#   --population N    GA population                           (default 200)
 #   --hours H         wall-clock budget -> --deadline-minutes (default: none)
 #   --threads N       worker threads (default: evolve.mjs's cpus-1, capped at 8)
 #   --profile         passthrough to evolve.mjs: per-worker CPU profile +
@@ -63,7 +63,7 @@
 # evolve.mjs. Defaults follow the established run recipe, baked into
 # recipes/standard.json (--config recipe, see evolve.mjs --help) and passed
 # as --config recipes/standard.json --seed <name>:
-#   opponents-per-gen 120, elites 15,
+#   opponents-per-gen 566, sampled-opponents 400, population-final-ratio 1, elites 15,
 #   snowball-weight 0.4, closer-weight 0.1, consistency-weight 0.2, shared-weakness-weight 0.2,
 #   core-rivalry 0.2
 #   (--pool is left unset -- evolve.mjs's own default: no cap, whole deduped collection)
@@ -115,7 +115,7 @@ metapool=400
 cp=1500
 cup=all
 generations=100
-population=300
+population=200
 hours=""
 threads=""
 fg=0
