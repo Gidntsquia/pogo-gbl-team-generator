@@ -93,7 +93,7 @@ test('tool lists: pogo-sim keeps the lifecycle set, pogo-sim-extra the rest', as
   };
   const core = await names('mcp/server.mjs', async (c) => (await c.listTools()).tools.map((t) => t.name).sort());
   const extra = await names('mcp/server-extra.mjs', async (c) => (await c.listTools()).tools.map((t) => t.name).sort());
-  assert.deepEqual(core, ['cancel_stop', 'check_oom', 'list_runs', 'resume_sim', 'run_meta', 'run_standard', 'status_sim', 'stop_sim', 'tail_log']);
-  assert.equal(extra.length, 14);
-  assert.ok(!extra.some((n) => core.includes(n)) && extra.includes('get_report'));
+  assert.deepEqual(core, ['cancel_stop', 'check_oom', 'get_report', 'list_runs', 'resume_sim', 'run_meta', 'run_standard', 'status_sim', 'stop_sim', 'tail_log']);
+  assert.equal(extra.length, 13);
+  assert.ok(!extra.some((n) => core.includes(n)) && extra.includes('render_report'));
 });

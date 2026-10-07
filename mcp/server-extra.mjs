@@ -41,15 +41,6 @@ tool('list_collections', 'List collection CSVs (repo root and fixtures/) with ro
 
 // ---- reports ----
 
-tool('get_report', 'Returns the final HTML report of a finished run (rendering it first if missing or stale) and returns only its absolute file path (HTML is not inlined).',
-  { name: z.string() }, async (a) => {
-    const n = safeName(a.name);
-    const r = await ensureReport(n);
-    if (r.err) return fail(r.err);
-    const kb = (statSync(r.html).size / 1024).toFixed(0);
-    return reply(`Report: ${r.html} (${kb} KB). Open it by path; HTML not inlined.`, { path: r.html, uri: `file://${r.html}` });
-  });
-
 server.registerResource('run-report', new ResourceTemplate('pogo-sim://runs/{name}/report.html', { list: undefined }), { description: 'Final HTML report of a run', mimeType: 'text/html' }, async (uri, { name }) => {
   const r = await ensureReport(safeName(String(name)));
   if (r.err) throw new Error(r.err);
