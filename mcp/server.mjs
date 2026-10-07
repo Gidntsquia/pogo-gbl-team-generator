@@ -27,7 +27,7 @@ tool('status_sim', 'Status of a run: top teams, speed, ETA, memory; report path 
     const cp = latestCheckpoint(n);
     if (!cp) return fail(`no checkpoint yet for '${n}'`);
     const logText = readLog(n);
-    const s = buildStatus(cp, logText, a.top ?? 3);
+    const s = buildStatus(cp, logText, a.top ?? 15);
     const pid = pidOf(n);
     let liveRssMB = null;
     if (pid && alive(pid)) liveRssMB = processTree(execFileSync('ps', ['-eo', 'pid,ppid,rss'], { encoding: 'utf8' }), pid).rssMB;
