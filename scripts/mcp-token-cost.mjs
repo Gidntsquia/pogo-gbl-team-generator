@@ -199,7 +199,7 @@ async function offline() {
     add('stop+resume', 'bash', kill);
 
     // report
-    const gr = await call(c, 'get_report', { name: reportRun });
+    const gr = await call(c, 'status_sim', { name: reportRun, top: 1 }); // report path is the last line of a DONE run's status
     add('report', 'mcp', [`${gr.name} ${JSON.stringify(gr.args)}\n${gr.text}`]);
     const html = `out/evolve-${reportRun}/my-teams-evolve.html`;
     add('report', 'bash', [
@@ -395,7 +395,7 @@ async function live() {
   mkdirSync(path.join(DIR, 'live'), { recursive: true });
   cleanRuns();
   const noMcp = JSON.stringify({ mcpServers: {} });
-  const ways = { mcp: ['--mcp-config', path.join(REPO, '.mcp.json'), '--strict-mcp-config'], bash: ['--mcp-config', noMcp, '--strict-mcp-config'] };
+  const ways = { mcp: ['--mcp-config', JSON.stringify({ mcpServers: { 'pogo-sim': JSON.parse(readFileSync(path.join(REPO, '.mcp.json'), 'utf8')).mcpServers['pogo-sim'] } }), '--strict-mcp-config'], bash: ['--mcp-config', noMcp, '--strict-mcp-config'] };
   const extra = { mcp: ' Use the pogo-sim MCP tools for this.', bash: ' Use only Bash and scripts/sim.sh; no MCP tools exist.' };
   for (const [task, mk] of Object.entries(TASKS)) {
     for (const [way, flags] of Object.entries(ways)) {

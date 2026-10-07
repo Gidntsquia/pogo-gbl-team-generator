@@ -917,18 +917,31 @@ Sweeps: more candidates (40 -> 320) YES, +6.2 pt (+1.9..+10.5); more opponents (
 **Round 3 (2026-09-25): determinism fix and opponent-sweep rerun.** Round 2's fixed-K runs were not thread-independent: the scenario memo replayed sims for form-changing mons, so `--threads 8` and `--threads 1` diverged from gen1 (fixed in c899273). After the fix the K=10 repro (56 x 300, seed `evalk`) and an o500 cell (seed `evalo`) match across `--threads 8`/`--threads 1` in every checkpoint and the finalists, timing fields aside. Only o50 and o500 were rerun (seeds s1-s8, all after the fix, cells in `out/sampled-k-ab-r3/`, copied into `round3` of `out/sampled-k-ab/results.json`; round-2 cells stay in `cells`). The s1-s5 rerun cells differ from round 2's. Result: more opponents (50 -> 500) **CAN'T TELL**, -1.1 pt (95% range -4.2..+2.0, width 6.2, was 11.2 on 5 seeds), 500 ahead on 3 of 8 seeds. The 8 h budget ended the run at 8 seeds (8.74 h summed; the last seed started before the limit) with the rule unfired. k10eq, c40, c320 and the control are still round 2's 5-seed pre-fix results. Rerun: `node scripts/sampled-k-r3-sweep.mjs` (resumable); rebuild: `node scripts/compare-search.mjs report --dir out/sampled-k-ab`.
 **Round 4 (2026-09-25): sweep continued, answer NO.** Same o50/o500 arms, seeds s9-s21 added on top of s1-s8 (s1-s8 untouched, checksum-verified), stop-rule band widened to +-2 for the sweep only (other arms keep +-1). The rule fired after 21 seeds: more opponents (50 -> 500) **NO**, -0.03 pt (95% range -1.93..+1.87). New cells took 9.54 h of the 12 h budget (cap 24 seeds). Cells in `out/sampled-k-ab-r3/`, pooled into `round3` of `out/sampled-k-ab/results.json`. Resume/rerun: `node scripts/sampled-k-r3-sweep.mjs`; rebuild: `node scripts/compare-search.mjs report --dir out/sampled-k-ab`.
 
-## MCP server (`mcp/server.mjs`, project-scoped `pogo-sim`)
+## MCP servers (`mcp/server.mjs` = `pogo-sim`, `mcp/server-extra.mjs` = `pogo-sim-extra`)
 
-`.mcp.json` registers it for Claude Code sessions in this folder only. It shells out to the
-scripts below; every launch is detached, so closing the session never kills a sim.
+`.mcp.json` registers both for Claude Code sessions in this folder only. `pogo-sim` has
+`"alwaysLoad": true`, so its tool schemas load inline on turn 1 (otherwise Claude Code defers
+every MCP tool behind a `ToolSearch` turn, whatever its size). `pogo-sim-extra` is off by default
+via `disabledMcpjsonServers` in `.claude/settings.json`; to use it for a session, remove it
+from that list (or run `/mcp` and enable it). Every launch is detached, so closing the session
+never kills a sim.
+
+`pogo-sim` (kept: used in 4+ of the last 20 sessions, or a lifecycle tool kept by decision):
 
 | tool | RUNBOOK counterpart |
 |---|---|
-| `preflight`, `smoke_test`, `check_sim`, `check_oom` | section 1 checks, `--quick` trial, `evolve.mjs --check`, earlyoom journal grep |
 | `run_standard`, `run_meta` | section 3 `scripts/sim.sh [--meta]` (`dry_run` prints the command; `extra` goes after `--`) |
-| `run_raw` | bare `node scripts/evolve.mjs` recipe; any `--help` flag, typos rejected with a suggestion |
-| `status_sim`, `list_runs`, `tail_log`, `list_collections` | `sim.sh status`, `tail -f`, section 2 |
+| `status_sim`, `list_runs`, `tail_log` | `sim.sh status`, `tail -f`, section 2. `status_sim` on a DONE run ends with `report: <abs html path>` (renders if stale) |
 | `stop_sim` (`after_generation` / `hard`), `cancel_stop` | section 4; soft stop = detached `mcp/soft-stop.mjs` (polls every 10 s, SIGTERM after the next checkpoint) |
 | `resume_sim` | section 4 resume; flags rebuilt from the checkpoint `config`, non-fingerprint flags from `out/evolve-NAME/launch.json` |
+| `check_oom` | earlyoom journal grep |
+
+`pogo-sim-extra`:
+
+| tool | RUNBOOK counterpart |
+|---|---|
+| `preflight`, `smoke_test`, `check_sim` | section 1 checks, `--quick` trial, `evolve.mjs --check` |
+| `run_raw` | bare `node scripts/evolve.mjs` recipe; any `--help` flag, typos rejected with a suggestion |
+| `list_collections` | section 2 |
 | `get_report` (+ resource `pogo-sim://runs/{name}/report.html`), `render_report`, `chart_top_teams`, `fitness_sides`, `symmetry_gap`, `build_curated_from_meta` | section 5 |
 | `build_shared_collection`, `build_meta_collection`, `refresh_usage` | section 6 |
