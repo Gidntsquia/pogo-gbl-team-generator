@@ -194,6 +194,9 @@ tool('status_sim', 'Lightweight status of a run: top candidate/opponent teams an
       `speed: gen ${s.speed.lastGenElapsedSec}s, ${s.speed.msPerBattle} ms/battle, ${s.speed.battlesSimulated} simulated + ${s.speed.battlesCached} cached, ETA ${s.speed.etaMinutes} min`,
       `memory: logged RSS ${s.memory.lastLoggedRssMB} MB, live ${liveRssMB ?? 'n/a'} MB`,
       'top teams:', ...s.topTeams.map((t) => `  ${t.rank}. ${t.members.join(' / ')} fit ${t.fitness} win ${t.winRate}`),
+      'top candidate Pokemon:', ...s.topSpecies.map((p, i) => `  ${i + 1}. ${p.species} mean fit ${p.meanFitness} rep ${p.representation}`),
+      'top opponent teams:', ...s.topOpponentTeams.map((o, i) => `  ${i + 1}. ${o.name} (${o.origin}) fit ${o.fitness}`),
+      'top opponent Pokemon:', ...s.topOpponentSpecies.map((p, i) => `  ${i + 1}. ${p.species} mean fit ${p.meanFitness} rep ${p.representation}`),
     ];
     return reply(lines.join('\n'), { state, softStopPending: !!pending, logLine: lastLine, ...s });
   });
@@ -242,6 +245,7 @@ tool('stop_sim', 'STOPS a run. mode "after_generation" starts a detached watcher
       cwd: REPO, detached: true, stdio: 'ignore',
     });
     child.unref();
+    writeFileSync(path.join(OUT, `evolve-${n}.stop.pid`), String(child.pid));
     return reply(`Soft stop armed (watcher pid ${child.pid}); will SIGTERM run ${pid} once checkpoint gen ${startGen + 1} exists. Log: out/evolve-${n}.stop.log`,
       { watcherPid: child.pid, waitingForGeneration: startGen + 1 });
   });
@@ -301,18 +305,13 @@ async function ensureReport(n) {
   return { html };
 }
 
-tool('get_report', 'Returns the final HTML report of a finished run (rendering it first if missing or stale) as an embedded text/html resource plus the file path.',
+tool('get_report', 'Returns the final HTML report of a finished run (rendering it first if missing or stale) and returns only its absolute file path (HTML is not inlined).',
   { name: z.string() }, async (a) => {
     const n = safeName(a.name);
     const r = await ensureReport(n);
     if (r.err) return fail(r.err);
-    const text = readFileSync(r.html, 'utf8');
-    return {
-      content: [
-        { type: 'text', text: `Report: ${r.html} (${(text.length / 1024).toFixed(0)} KB)` },
-        { type: 'resource', resource: { uri: `file://${r.html}`, mimeType: 'text/html', text } },
-      ],
-    };
+    const kb = (statSync(r.html).size / 1024).toFixed(0);
+    return reply(`Report: ${r.html} (${kb} KB). Open it by path; HTML not inlined.`, { path: r.html, uri: `file://${r.html}` });
   });
 
 server.registerResource('run-report', new ResourceTemplate('pogo-sim://runs/{name}/report.html', { list: undefined }), { description: 'Final HTML report of a run', mimeType: 'text/html' }, async (uri, { name }) => {
