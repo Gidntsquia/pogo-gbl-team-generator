@@ -227,3 +227,20 @@ export function tallyUsage(sessions, allTools, minSessions = 4) {
     keep: r.ids.size >= minSessions || LIFECYCLE.includes(r.tool),
   })).sort((a, b) => b.sessions - a.sessions || b.calls - a.calls);
 }
+
+/**
+ * Characters of tool-result text the model read in one session (all tools).
+ * @param {object[]} records parsed session jsonl records
+ * @returns {number}
+ */
+export function toolResultChars(records) {
+  let n = 0;
+  for (const r of records) {
+    if (r.type !== 'user' || !Array.isArray(r.message?.content)) continue;
+    for (const c of r.message.content) {
+      if (c.type !== 'tool_result') continue;
+      n += Array.isArray(c.content) ? c.content.reduce((a, x) => a + (x.text ?? '').length, 0) : String(c.content ?? '').length;
+    }
+  }
+  return n;
+}

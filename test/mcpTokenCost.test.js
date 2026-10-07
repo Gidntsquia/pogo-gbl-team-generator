@@ -66,3 +66,12 @@ test('usage mapping: commands -> pogo-sim tool names', async () => {
   assert.ok(isRawStatusOpener('Report on sim status') && isRawStatusOpener('Check the status of the new meta vs meta sim')
     && isRawStatusOpener('Check logs/status, and give me a brief look') && !isRawStatusOpener('Fix the status page'));
 });
+
+test('toolResultChars sums text of all tool results', async () => {
+  const { toolResultChars } = await import('../scripts/mcp-token-cost-lib.mjs');
+  const recs = [
+    { type: 'user', message: { content: [{ type: 'tool_result', content: 'abcd' }, { type: 'tool_result', content: [{ text: 'xy' }, { text: 'z' }] }] } },
+    { type: 'assistant', message: {} },
+  ];
+  assert.equal(toolResultChars(recs), 7);
+});

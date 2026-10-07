@@ -24,7 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PRICES, PRICES_DATE, convert, groupCycles, mean, readJsonl, summarizeSession, detectRole,
-  tallyUsage, isRawStatusOpener, LIFECYCLE,
+  tallyUsage, isRawStatusOpener, LIFECYCLE, toolResultChars,
 } from './mcp-token-cost-lib.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -395,11 +395,14 @@ async function live() {
   mkdirSync(path.join(DIR, 'live'), { recursive: true });
   cleanRuns();
   const noMcp = JSON.stringify({ mcpServers: {} });
-  const ways = { mcp: ['--mcp-config', JSON.stringify({ mcpServers: { 'pogo-sim': JSON.parse(readFileSync(path.join(REPO, '.mcp.json'), 'utf8')).mcpServers['pogo-sim'] } }), '--strict-mcp-config'], bash: ['--mcp-config', noMcp, '--strict-mcp-config'] };
+  const srv = { ...JSON.parse(readFileSync(path.join(REPO, '.mcp.json'), 'utf8')).mcpServers['pogo-sim'] };
+  if (process.argv.includes('--deferred')) delete srv.alwaysLoad; // let Claude Code defer the tools behind ToolSearch
+  const ways = { mcp: ['--mcp-config', JSON.stringify({ mcpServers: { 'pogo-sim': srv } }), '--strict-mcp-config'], bash: ['--mcp-config', noMcp, '--strict-mcp-config'] };
   const extra = { mcp: ' Use the pogo-sim MCP tools for this.', bash: ' Use only Bash and scripts/sim.sh; no MCP tools exist.' };
   for (const [task, mk] of Object.entries(TASKS)) {
     if (arg('task') && arg('task') !== task) continue;
     for (const [way, flags] of Object.entries(ways)) {
+      if (arg('way') && arg('way') !== way) continue;
       cleanRuns();
       const name = `mcp-cost-live-${task}-${way}`;
       let target = task === 'report' ? reportRun : name;
@@ -492,6 +495,45 @@ function rawStatus() {
   console.log(md);
 }
 
+/** Sessions that never touch a sim tool: what the schema alone costs, no MCP vs alwaysLoad vs deferred. */
+function schemaMode() {
+  const reps = Number(arg('reps', 2));
+  const base = JSON.parse(readFileSync(path.join(REPO, '.mcp.json'), 'utf8')).mcpServers['pogo-sim'];
+  const { alwaysLoad, ...deferred } = base;
+  const cfgs = { none: {}, 'always-loaded': { 'pogo-sim': { ...deferred, alwaysLoad: true } }, deferred: { 'pogo-sim': deferred } };
+  const rows = [];
+  for (let i = 0; i < reps; i++) {
+    for (const [mode, servers] of Object.entries(cfgs)) {
+      const sid = crypto.randomUUID();
+      spawnSync('claude', ['-p', '[mcp-cost-live] Reply with the single word ok. Do nothing else.', '--session-id', sid, '--model', 'claude-sonnet-5-5', '--output-format', 'json', '--permission-mode', 'bypassPermissions', '--mcp-config', JSON.stringify({ mcpServers: servers }), '--strict-mcp-config'], { cwd: REPO, encoding: 'utf8', timeout: 600000 });
+      const file = path.join(LOGS, `${sid}.jsonl`);
+      const s = existsSync(file) ? summarizeSession(readJsonl(file)) : null;
+      rows.push({ mode, rep: i + 1, sessionId: sid, turns: s?.turns, fe: s?.fe, usd: s?.usd, tokens: s?.tokens });
+      console.log(mode, i + 1, s?.turns, s?.fe && Math.round(s.fe));
+    }
+  }
+  write(path.join(DIR, 'schema-mode.json'), JSON.stringify({ rows }, null, 2));
+}
+
+/** Status cost in one unit across raw sessions, live Bash, live MCP, offline Bash: tool-result tokens and whole-session FE. */
+function statusUnits() {
+  const off = JSON.parse(readFileSync(path.join(DIR, 'offline.json'), 'utf8'));
+  const cpt = off.cpt;
+  const raw = JSON.parse(readFileSync(path.join(DIR, 'raw-status.json'), 'utf8'));
+  const med = (a) => { const b = [...a].sort((x, y) => x - y); return b.length % 2 ? b[(b.length - 1) / 2] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2; };
+  const rawRows = raw.rows.map((r) => ({ ...r, resultTokens: toolResultChars(readJsonl(path.join(LOGS, `${r.id}.jsonl`))) / cpt }));
+  const live = (f) => { const j = JSON.parse(readFileSync(path.join(DIR, 'live', f), 'utf8')); return { fe: j.fe, resultTokens: toolResultChars(readJsonl(path.join(LOGS, `${j.sessionId}.jsonl`))) / cpt, turns: j.turns }; };
+  const out = {
+    cpt,
+    rawN: rawRows.length, rawMedianResultTokens: med(rawRows.map((r) => r.resultTokens)), rawMedianFe: med(rawRows.map((r) => r.fe)),
+    liveBash: live('status-bash-d15.json'), liveMcp: live('status-mcp-d15.json'),
+    offlineBash: off.rows.find((r) => r.task === 'status' && r.way === 'bash').tokens, offlineMcp: off.rows.find((r) => r.task === 'status' && r.way === 'mcp').tokens,
+    rows: rawRows.map((r) => ({ id: r.id, resultTokens: r.resultTokens, fe: r.fe })),
+  };
+  write(path.join(DIR, 'status-units.json'), JSON.stringify(out, null, 2));
+  console.log(JSON.stringify({ ...out, rows: undefined }, null, 1));
+}
+
 const cmd = process.argv[2];
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
@@ -500,6 +542,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     else if (cmd === 'live') await live();
     else if (cmd === 'usage') usage();
     else if (cmd === 'raw-status') rawStatus();
+    else if (cmd === 'status-units') statusUnits();
+    else if (cmd === 'schema-mode') schemaMode();
     else if (cmd === 'live-clean') cleanRuns();
     else { console.error('usage: mcp-token-cost.mjs offline | sessions [--last 20] | live | live-clean'); process.exit(2); }
   } catch (e) {
