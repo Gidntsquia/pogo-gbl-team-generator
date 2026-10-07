@@ -10,7 +10,7 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
 - `vendor/pvpoke` is a pinned read-only sparse clone (gitignored). Load/execute its code and data; never edit it, never reimplement its battle math. Need a path not checked out? `git -C vendor/pvpoke sparse-checkout add <path>`.
 - Module interfaces are documented in the JSDoc on each exported function, and the GitHub wiki explains how the pieces fit — follow them exactly; if one proves wrong, say so in your report rather than silently changing it.
-- Workers: do NOT `git commit` (the orchestrator commits); keep your diff inside the files your task owns.
+- Keep your diff inside the files your task owns; commit them with `git add <paths>` (never `-A`). There is no orchestrator: nobody else commits or pushes your work.
 - Output artifacts (reports, caches) go in `out/` (gitignored).
 
 ## Orientation — what this is and where things live
