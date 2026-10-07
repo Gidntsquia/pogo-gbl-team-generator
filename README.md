@@ -73,6 +73,21 @@ node scripts/evolve.mjs --help                        # full flag list
 - Deterministic: the same seed gives identical results, serial or with
   `--threads N`.
 
+## MCP server 🔌
+
+The project-scoped MCP server `pogo-sim` (`mcp/server.mjs`, registered in
+`.mcp.json`) lets an agent launch, monitor, stop, resume, and report on evolve
+runs through 23 tools instead of composing `sim.sh` commands. Its token cost
+was measured against plain Bash with `scripts/mcp-token-cost.mjs`: per task,
+the server returns 30 to 15,000 fewer tokens of tool output (mean 4,879), most
+of it on launch, where Bash reads the runbook, and on report, where the tool
+returns a path rather than the 88 KB HTML. A status call is the exception, as
+one result is larger than a bare log tail. The tool schemas add about 4,800
+tokens per session if sent in full. Extrapolated over the project's session
+history, the net saving is 3.2 to 15.9 million Fable-Equivalent tokens ($7.63
+to $17.03). Method, per-task tables, and caveats are on the
+[wiki page](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs).
+
 ## Documentation 📚
 
 For running evolutionary simulations, including the complete standard recipe
@@ -87,6 +102,7 @@ Detailed documentation is in the
 - [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm, fitness, checkpoints
 - [Shared Collections](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Shared-Collections) — teams two players can both build
 - [Development and Tests](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Development-and-Tests) — test tiers, what to run when
+- [MCP Server Token Costs](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs) — what the pogo-sim MCP server saves against Bash
 
 ## License 📄
 
