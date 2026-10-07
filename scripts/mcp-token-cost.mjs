@@ -199,7 +199,7 @@ async function offline() {
     add('stop+resume', 'bash', kill);
 
     // report
-    const gr = await call(c, 'get_report', { name: reportRun });
+    const gr = await call(c, 'status_sim', { name: reportRun });
     add('report', 'mcp', [`${gr.name} ${JSON.stringify(gr.args)}\n${gr.text}`]);
     const html = `out/evolve-${reportRun}/my-teams-evolve.html`;
     add('report', 'bash', [

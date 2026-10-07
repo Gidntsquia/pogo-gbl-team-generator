@@ -51,6 +51,10 @@ const script = (file, build) => async (a) => {
   const r = await sh('node', [file, ...build(a)]);
   return r.ok ? reply(r.out.split('\n').slice(-25).join('\n')) : fail(r.out);
 };
+tool('get_report', 'Build the HTML report of a finished run; returns its path.', { name: z.string() }, async (a) => {
+  const r = await ensureReport(safeName(a.name));
+  return r.err ? fail(r.err) : reply(r.html);
+});
 tool('render_report', 'Re-render a run\'s reports from evolve-result.json.', { name: z.string() }, script('scripts/render-report.mjs', (a) => [`out/evolve-${safeName(a.name)}`]));
 tool('chart_top_teams', 'Race chart of the top teams of a run.', { name: z.string(), top: z.number().optional(), out: z.string().optional() },
   script('scripts/chart-top-teams.mjs', (a) => [`out/evolve-${safeName(a.name)}`, ...(a.top ? ['--top', String(a.top)] : []), ...(a.out ? ['--out', a.out] : [])]));

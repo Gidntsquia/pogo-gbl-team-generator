@@ -137,9 +137,4 @@ tool('check_oom', 'Find earlyoom kills of a run.', { name: z.string() }, async (
   return reply(r.out || `no earlyoom entries found for '${n}' (journal may be unavailable)`);
 });
 
-tool('get_report', 'Build the HTML report of a finished run; returns its path.', { name: z.string() }, async (a) => {
-  const r = await ensureReport(safeName(a.name));
-  return r.err ? fail(r.err) : reply(r.html);
-});
-
 await start();

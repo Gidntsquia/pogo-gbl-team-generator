@@ -935,12 +935,12 @@ never kills a sim.
 | `stop_sim` (`after_generation` / `hard`), `cancel_stop` | section 4; soft stop = detached `mcp/soft-stop.mjs` (polls every 10 s, SIGTERM after the next checkpoint) |
 | `resume_sim` | section 4 resume; flags rebuilt from the checkpoint `config`, non-fingerprint flags from `out/evolve-NAME/launch.json` |
 | `check_oom` | earlyoom journal grep |
-| `get_report` | builds the HTML report of a finished run (if missing or stale), returns only its path |
 
 `pogo-sim-extra`:
 
 | tool | RUNBOOK counterpart |
 |---|---|
+| `get_report` | builds the HTML report of a finished run (if missing or stale), returns only its path (rarely used, so not in `pogo-sim`) |
 | `preflight`, `smoke_test`, `check_sim` | section 1 checks, `--quick` trial, `evolve.mjs --check` |
 | `run_raw` | bare `node scripts/evolve.mjs` recipe; any `--help` flag, typos rejected with a suggestion |
 | `list_collections` | section 2 |
