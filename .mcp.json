@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "pogo-sim": { "command": "node", "args": ["mcp/server.mjs"] },
+    "pogo-sim": { "command": "node", "args": ["mcp/server.mjs"], "alwaysLoad": true },
     "pogo-sim-extra": { "command": "node", "args": ["mcp/server-extra.mjs"] }
   }
 }
