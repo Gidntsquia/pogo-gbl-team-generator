@@ -73,19 +73,6 @@ node scripts/evolve.mjs --help                        # full flag list
 - Deterministic: the same seed gives identical results, serial or with
   `--threads N`.
 
-## MCP server 🔌
-
-Does the MCP server save tokens? Yes, modestly: about 158,000 Fable-Equivalent
-(FE) tokens ($0.24) per plan→worker→eval cycle with on-demand tool schemas, and
-roughly break-even (−3,200 FE tokens, +$0.06) if every schema is sent each turn.
-The project-scoped server `pogo-sim` (`mcp/server.mjs`, registered in
-`.mcp.json`) lets an agent launch, monitor, stop, resume, and report on evolve
-runs through 23 tools instead of composing `sim.sh` commands. Per task it returns
-30 to 15,000 fewer tokens of output (mean 4,800); the schemas add about 4,800
-tokens per session if sent in full. These are extrapolations from 20 sessions;
-the [wiki page](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs)
-has the method and caveats.
-
 ## Documentation 📚
 
 For running evolutionary simulations, including the complete standard recipe
