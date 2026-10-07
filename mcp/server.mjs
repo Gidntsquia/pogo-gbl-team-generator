@@ -48,7 +48,7 @@ tool('status_sim', 'Status of a run: top teams, speed, ETA, memory; report path 
       `opp mons: ${join(s.topOpponentSpecies, (p) => `${p.species} ${f3(p.meanFitness)}`)}`,
     ];
     let reportLine = '';
-    if (state === 'DONE') { const r = await ensureReport(n); reportLine = r.html ? `\nreport: ${r.html}` : ''; }
+    if (state === 'DONE') { const r = await ensureReport(n); reportLine = r.html ? `\nreport: ${r.html} (self-contained HTML; to share it call Artifact with this file_path as-is, do not read it)` : ''; }
     return reply(lines.join('\n') + reportLine); // compact plain text: only the model reads it
   });
 
