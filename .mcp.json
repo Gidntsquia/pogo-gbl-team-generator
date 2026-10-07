@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "pogo-sim": { "command": "node", "args": ["mcp/server.mjs"] }
+  }
+}
