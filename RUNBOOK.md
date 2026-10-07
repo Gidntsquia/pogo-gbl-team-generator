@@ -931,10 +931,11 @@ never kills a sim.
 | tool | RUNBOOK counterpart |
 |---|---|
 | `run_standard`, `run_meta` | section 3 `scripts/sim.sh [--meta]` (`dry_run` prints the command; `extra` goes after `--`) |
-| `status_sim`, `list_runs`, `tail_log` | `sim.sh status`, `tail -f`, section 2. `status_sim` on a DONE run ends with `report: <abs html path>` (renders if stale) |
+| `status_sim` (default depth 15, compact text), `list_runs`, `tail_log` | `sim.sh status`, `tail -f`, section 2. `status_sim` on a DONE run ends with `report: <abs html path>` (renders if stale) |
 | `stop_sim` (`after_generation` / `hard`), `cancel_stop` | section 4; soft stop = detached `mcp/soft-stop.mjs` (polls every 10 s, SIGTERM after the next checkpoint) |
 | `resume_sim` | section 4 resume; flags rebuilt from the checkpoint `config`, non-fingerprint flags from `out/evolve-NAME/launch.json` |
 | `check_oom` | earlyoom journal grep |
+| `get_report` | builds the HTML report of a finished run (if missing or stale), returns only its path |
 
 `pogo-sim-extra`:
 
@@ -943,5 +944,5 @@ never kills a sim.
 | `preflight`, `smoke_test`, `check_sim` | section 1 checks, `--quick` trial, `evolve.mjs --check` |
 | `run_raw` | bare `node scripts/evolve.mjs` recipe; any `--help` flag, typos rejected with a suggestion |
 | `list_collections` | section 2 |
-| `get_report` (+ resource `pogo-sim://runs/{name}/report.html`), `render_report`, `chart_top_teams`, `fitness_sides`, `symmetry_gap`, `build_curated_from_meta` | section 5 |
+| resource `pogo-sim://runs/{name}/report.html`, `render_report`, `chart_top_teams`, `fitness_sides`, `symmetry_gap`, `build_curated_from_meta` | section 5 |
 | `build_shared_collection`, `build_meta_collection`, `refresh_usage` | section 6 |
