@@ -27,37 +27,36 @@ tool('status_sim', 'Status of a run: top teams, speed, ETA, memory; report path 
     const cp = latestCheckpoint(n);
     if (!cp) return fail(`no checkpoint yet for '${n}'`);
     const logText = readLog(n);
-    const s = buildStatus(cp, logText, a.top ?? 15);
+    const s = buildStatus(cp, logText, a.top ?? 3);
     const pid = pidOf(n);
     let liveRssMB = null;
     if (pid && alive(pid)) liveRssMB = processTree(execFileSync('ps', ['-eo', 'pid,ppid,rss'], { encoding: 'utf8' }), pid).rssMB;
     const stopPid = (() => { try { return Number(readFileSync(path.join(OUT, `evolve-${n}.stop.pid`), 'utf8')); } catch { return null; } })();
-    let reportLine = '';
-    if (runState(n) === 'DONE') { const r = await ensureReport(n); reportLine = r.html ? `\nreport: ${r.html}` : ''; }
     const lastLine = logText.trim().split('\n').at(-1) ?? '';
     const state = runState(n);
     s.memory.liveRssMB = liveRssMB;
     const pending = stopPid && alive(stopPid) ? ` | soft stop PENDING (watcher pid ${stopPid})` : '';
-    const head = `${n}: ${state}${pending} -- checkpoint gen ${s.checkpointGeneration} of ${s.generations} (from evolve-gen${s.checkpointGeneration}.json; log line: "${lastLine.slice(0, 120)}")`;
+    const f3 = (x) => String(Math.round(Number(x) * 1000) / 1000).replace(/^0\./, '.');
+    const nm = (t) => t.replace(/ \((Shadow|Alolan|Mega|Galarian|Hisuian)\)/g, (_, k) => (k === 'Shadow' ? '*' : `-${k[0]}`));
+    const join = (rows, fn) => rows.map(fn).join('; ');
     const lines = [
-      head,
-      `speed: gen ${s.speed.lastGenElapsedSec}s, ${s.speed.msPerBattle} ms/battle, ${s.speed.battlesSimulated} simulated + ${s.speed.battlesCached} cached, ETA ${s.speed.etaMinutes} min`,
-      `memory: logged RSS ${s.memory.lastLoggedRssMB} MB, live ${liveRssMB ?? 'n/a'} MB`,
-      'top teams:', ...s.topTeams.map((t) => `  ${t.rank}. ${t.members.join(' / ')} fit ${t.fitness} win ${t.winRate}`),
-      'top candidate Pokemon:', ...s.topSpecies.map((p, i) => `  ${i + 1}. ${p.species} mean fit ${p.meanFitness} rep ${p.representation}`),
-      'top opponent teams:', ...s.topOpponentTeams.map((o, i) => `  ${i + 1}. ${o.name} (${o.origin}) fit ${o.fitness}`),
-      'top opponent Pokemon:', ...s.topOpponentSpecies.map((p, i) => `  ${i + 1}. ${p.species} mean fit ${p.meanFitness} rep ${p.representation}`),
+      `${n} ${state}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}`,
+      `${s.speed.lastGenElapsedSec}s/gen ${s.speed.msPerBattle}ms/battle ETA ${s.speed.etaMinutes}m RSS ${liveRssMB ?? s.memory.lastLoggedRssMB}MB`,
+      `teams: ${join(s.topTeams, (t) => `${t.members.join('/')} ${f3(t.fitness)}`)}`,
+      `mons: ${join(s.topSpecies, (p) => `${p.species} ${f3(p.meanFitness)}`)}`,
+      `opp teams: ${join(s.topOpponentTeams, (o) => `${nm(o.name)} ${f3(o.fitness)}`)}`,
+      `opp mons: ${join(s.topOpponentSpecies, (p) => `${p.species} ${f3(p.meanFitness)}`)}`,
     ];
-    const out = reply(lines.join('\n')); // text only: the JSON blob duplicated every line
-    out.content[0].text += reportLine; // the report path is the last line of a DONE run's text
-    return out;
+    let reportLine = '';
+    if (state === 'DONE') { const r = await ensureReport(n); reportLine = r.html ? `\nreport: ${r.html}` : ''; }
+    return reply(lines.join('\n') + reportLine); // compact plain text: only the model reads it
   });
 
 tool('list_runs', 'List runs with state and last log line.', {}, async () => {
   const rows = runNames().map((n) => ({
     name: n, state: runState(n), checkpointGen: latestGen(gens(n)), lastLog: readLog(n).trim().split('\n').at(-1) ?? '',
   }));
-  return reply(rows.map((r) => `${r.name}: ${r.state}, gen ${r.checkpointGen}\n  ${r.lastLog.slice(0, 140)}`).join('\n') || 'no runs', rows);
+  return reply(rows.map((r) => `${r.name}: ${r.state}, gen ${r.checkpointGen}\n  ${r.lastLog.slice(0, 80)}`).join('\n') || 'no runs');
 });
 
 tool('tail_log', 'Tail a run log.', { name: z.string(), lines: z.number().optional() }, async (a) => {
