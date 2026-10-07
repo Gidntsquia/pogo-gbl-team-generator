@@ -75,18 +75,16 @@ node scripts/evolve.mjs --help                        # full flag list
 
 ## MCP server 🔌
 
-The project-scoped MCP server `pogo-sim` (`mcp/server.mjs`, registered in
+Does the MCP server save tokens? Yes, modestly: about 158,000 Fable-Equivalent
+(FE) tokens ($0.24) per plan→worker→eval cycle with on-demand tool schemas, and
+roughly break-even (−3,200 FE tokens, +$0.06) if every schema is sent each turn.
+The project-scoped server `pogo-sim` (`mcp/server.mjs`, registered in
 `.mcp.json`) lets an agent launch, monitor, stop, resume, and report on evolve
-runs through 23 tools instead of composing `sim.sh` commands. Its token cost
-was measured against plain Bash with `scripts/mcp-token-cost.mjs`: per task,
-the server returns 30 to 15,000 fewer tokens of tool output (mean 4,879), most
-of it on launch, where Bash reads the runbook, and on report, where the tool
-returns a path rather than the 88 KB HTML. A status call is the exception, as
-one result is larger than a bare log tail. The tool schemas add about 4,800
-tokens per session if sent in full. Extrapolated over the project's session
-history, the net saving is 3.2 to 15.9 million Fable-Equivalent tokens ($7.63
-to $17.03). Method, per-task tables, and caveats are on the
-[wiki page](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs).
+runs through 23 tools instead of composing `sim.sh` commands. Per task it returns
+30 to 15,000 fewer tokens of output (mean 4,800); the schemas add about 4,800
+tokens per session if sent in full. These are extrapolations from 20 sessions;
+the [wiki page](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs)
+has the method and caveats.
 
 ## Documentation 📚
 

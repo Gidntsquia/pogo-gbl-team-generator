@@ -327,11 +327,19 @@ function project(list, cycles, off, live, roleCounts) {
       return a + (r ? r[key] : 0);
     }, 0)));
   };
+  // per-role breakdown of the mean complete cycle: sessions of that role in the cycle x per-session net
+  const cycleSample = complete.length ? complete : cycles;
+  const perCycleRoles = {};
+  for (const role of ['planner', 'worker', 'evaluator']) {
+    const n = mean(cycleSample.map((c) => c.sessions.filter((s) => (role === 'worker' ? ['worker', 'interactive'].includes(s.role) : s.role === role)).length));
+    const r = byRole[role];
+    perCycleRoles[role] = { sessions: n, ...Object.fromEntries(['netEagerFe', 'netEagerUsd', 'netDeferredFe', 'netDeferredUsd'].map((k) => [k, r ? r[k] * n : 0])) };
+  }
   const projectTotal = (key) => ['planner', 'worker', 'evaluator'].reduce((a, role) => a + (byRole[role] ? byRole[role][key] * (role === 'worker' ? roleCounts.worker + roleCounts.interactive : roleCounts[role]) : 0), 0);
   const keys = ['netEagerFe', 'netEagerUsd', 'netDeferredFe', 'netDeferredUsd'];
   return {
     savePerTaskTokens: savePerTask, callsPerTask, liveSavingFePerTask: liveSaving, byRole,
-    perCycle: Object.fromEntries(keys.map((k) => [k, perCycle(k)])),
+    perCycle: Object.fromEntries(keys.map((k) => [k, perCycle(k)])), perCycleRoles,
     wholeProject: Object.fromEntries(keys.map((k) => [k, projectTotal(k)])),
     wholeProjectSessions: roleCounts, extrapolation: true,
   };
@@ -350,14 +358,23 @@ function sessionsMd(r) {
   L.push('', `Complete cycles: ${full.length}; mean sessions per complete cycle: planner ${cnt('planner').toFixed(1)}, worker/interactive ${cnt('worker').toFixed(1)}, evaluator ${cnt('evaluator').toFixed(1)}; mean FE tokens per complete cycle: ${fmt(mean(full.map((c) => c.fe)))}.`);
   const p = r.projection;
   if (p) {
-    L.push('', '## Projection (extrapolation from these sessions)', '',
+    const pc = p.perCycle;
+    const verdict = (a, b) => `${a > 0 ? 'saves' : 'costs'} ${fmt(Math.abs(a))} FE tokens (${usd(Math.abs(b))})`;
+    L.push('', '## Bottom line: does the server save tokens?', '',
+      `${pc.netDeferredFe > 0 ? 'Yes' : 'No'}, modestly. Per plan->worker->eval cycle the server ${verdict(pc.netDeferredFe, pc.netDeferredUsd)} when tool schemas load on demand (how Claude Code ran in the live sessions), and ${verdict(pc.netEagerFe, pc.netEagerUsd)} if all schemas are sent every turn. Extrapolation, not a measurement.`, '',
+      '## Projection per plan->worker->eval cycle (extrapolation from these sessions)', '',
+      '| role in cycle | sessions per cycle | net FE (deferred schema) | net $ (deferred) | net FE (full schema) | net $ (full) |', '|---|---:|---:|---:|---:|---:|');
+    for (const [role, b] of Object.entries(p.perCycleRoles)) L.push(`| ${role} | ${b.sessions.toFixed(1)} | ${fmt(b.netDeferredFe)} | ${usd(b.netDeferredUsd)} | ${fmt(b.netEagerFe)} | ${usd(b.netEagerUsd)} |`);
+    L.push(`| **cycle total** | | ${fmt(pc.netDeferredFe)} | ${usd(pc.netDeferredUsd)} | ${fmt(pc.netEagerFe)} | ${usd(pc.netEagerUsd)} |`, '',
+      'Why signs differ: a role pays the schema once per session whether or not it runs sims. Planners run few sim operations, so with the full schema their saving is smaller than the schema cost (negative in FE). Dollars and FE tokens can disagree in sign because FE weights each token class by the model price relative to Fable while dollars use the role model\'s own prices, and cache reads are cheap in dollars. Live single runs can also be negative (report: the MCP agent spent an extra turn loading schemas) because one run is noisy.', '',
+      '### Per role, per session (secondary)', '',
       `Sim-ops frequency counts Bash calls mentioning sim.sh, evolve.mjs, out/evolve-, render-report or kill; one task = ${p.callsPerTask.toFixed(1)} Bash calls (mean of the Bash transcripts). Saving per task: ${fmt(p.savePerTaskTokens)} tokens offline${p.liveSavingFePerTask === null ? '' : `, ${fmt(p.liveSavingFePerTask)} FE tokens live`}.`, '',
       '| role | model | sessions | turns/session | tasks/session | gross saving FE | schema (full) FE | net FE (full schema) | net $ (full schema) | net FE (deferred schema) | net $ (deferred) |', '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
     for (const [role, b] of Object.entries(p.byRole)) {
       if (!b) { L.push(`| ${role} | - | 0 | | | | | | | | |`); continue; }
       L.push(`| ${role} | ${b.model} | ${b.sessions} | ${b.meanTurns.toFixed(0)} | ${b.tasksPerSession.toFixed(2)} | ${fmt(b.grossFe)} | ${fmt(b.schemaEagerFe)} | ${fmt(b.netEagerFe)} | ${usd(b.netEagerUsd)} | ${fmt(b.netDeferredFe)} | ${usd(b.netDeferredUsd)} |`);
     }
-    L.push('', `Per complete cycle (mean): net ${fmt(p.perCycle.netEagerFe)} FE tokens / ${usd(p.perCycle.netEagerUsd)} with the full schema every turn; ${fmt(p.perCycle.netDeferredFe)} FE tokens / ${usd(p.perCycle.netDeferredUsd)} with deferred schema.`,
+    L.push('',
       `Whole project (${Object.entries(p.wholeProjectSessions).map(([k, v]) => `${v} ${k}`).join(', ')} sessions; extrapolation from the sampled per-role means): net ${fmt(p.wholeProject.netEagerFe)} FE tokens / ${usd(p.wholeProject.netEagerUsd)} (full schema); ${fmt(p.wholeProject.netDeferredFe)} FE tokens / ${usd(p.wholeProject.netDeferredUsd)} (deferred).`);
   }
   return L.join('\n');
