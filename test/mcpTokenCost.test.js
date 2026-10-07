@@ -50,3 +50,19 @@ test('cycle grouping: interactive counts as worker, partials labelled, empties s
   ]);
   assert.deepEqual(cycles.map((c) => [c.complete, c.sessions.length]), [[false, 2], [true, 4], [false, 2]]);
 });
+
+test('usage mapping: commands -> pogo-sim tool names', async () => {
+  const { mapBashToTool, isRawStatusOpener } = await import('../scripts/mcp-token-cost-lib.mjs');
+  const cases = [
+    ['scripts/sim.sh status', 'status_sim'], ['tail -30 out/evolve-x.log', 'tail_log'], ['ps -o pid,rss -p 5', 'status_sim'],
+    ['ls out/evolve-x/evolve-gen[0-9]*.json', 'status_sim'], ['scripts/sim.sh a.csv --name n', 'run_standard'],
+    ['scripts/sim.sh --meta --name n', 'run_meta'], ['node scripts/evolve.mjs a.csv --seed 1', 'run_raw'],
+    ['kill 123', 'stop_sim'], ['node scripts/evolve.mjs a.csv --resume', 'resume_sim'], ['ls out/', 'list_runs'],
+    ['ls *.csv', 'list_collections'], ['node scripts/render-report.mjs out/evolve-x', 'render_report'],
+    ['node scripts/symmetry-gap.mjs report --label a', 'symmetry_gap'], ['node scripts/evolve.mjs a.csv --check', 'check_sim'],
+    ['journalctl -u earlyoom', 'check_oom'], ['mcp__pogo-sim__status_sim', 'status_sim'], ['git status', null],
+  ];
+  for (const [cmd, tool] of cases) assert.equal(mapBashToTool(cmd), tool, cmd);
+  assert.ok(isRawStatusOpener('Report on sim status') && isRawStatusOpener('Check the status of the new meta vs meta sim')
+    && isRawStatusOpener('Check logs/status, and give me a brief look') && !isRawStatusOpener('Fix the status page'));
+});

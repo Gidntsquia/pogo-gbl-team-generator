@@ -157,3 +157,73 @@ export function groupCycles(sessions) {
 
 /** @param {number[]} xs @returns {number} arithmetic mean, 0 for empty. */
 export const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+/** Tools that the user's "probably just #1" decision keeps regardless of session count. */
+export const LIFECYCLE = ['run_standard', 'run_meta', 'status_sim', 'list_runs', 'tail_log', 'stop_sim', 'cancel_stop', 'resume_sim'];
+
+const USAGE_RULES = [
+  [/journalctl[^\n]*earlyoom/, 'check_oom'],
+  [/chart-top-teams/, 'chart_top_teams'],
+  [/fitness-sides/, 'fitness_sides'],
+  [/symmetry-gap/, 'symmetry_gap'],
+  [/build-curated-from-meta/, 'build_curated_from_meta'],
+  [/build-shared-collection/, 'build_shared_collection'],
+  [/build-meta-collection/, 'build_meta_collection'],
+  [/refresh-usage/, 'refresh_usage'],
+  [/evolve\.mjs[^\n]*--check\b/, 'check_sim'],
+  [/evolve\.mjs[^\n]*--quick\b|sim\.sh[^\n]*--quick\b/, 'smoke_test'],
+  [/render-report/, 'render_report'],
+  [/\.html\b/, 'get_report'],
+  [/soft-stop[^\n]*(kill|rm)|\bkill\b[^\n]*stop\.pid|cancel[-_ ]?stop/, 'cancel_stop'],
+  [/soft-stop|\bkill\b|pkill/, 'stop_sim'],
+  [/evolve\.mjs[^\n]*--resume\b|sim\.sh[^\n]*--name\s+(\S+)[^\n]*\bresum/, 'resume_sim'],
+  [/sim\.sh[^\n]*--meta\b/, 'run_meta'],
+  [/sim\.sh\s+\S+\.csv|sim\.sh\s+[^\n]*\.csv/, 'run_standard'],
+  [/node\s+scripts\/evolve\.mjs/, 'run_raw'],
+  [/sim\.sh\s+status|\btail\b[^\n]*out\/evolve-[^\n]*\.log|\bps\b[^\n]*\brss\b|evolve-gen[^\s]*\.json|out\/evolve-[^\n]*\.log/, 'STATUS'],
+  [/\bls\b[^\n]*\.csv/, 'list_collections'],
+  [/\bls\b[^\n]*\bout\/?(\s|$)/, 'list_runs'],
+  [/setup\.sh|rev-parse[^\n]*vendor\/pvpoke|vendor\/pvpoke[^\n]*rev-parse|BODY_SLAM/, 'preflight'],
+];
+
+/**
+ * Map one Bash command (or a pogo-sim MCP tool name) to the pogo-sim tool that replaces it.
+ * Order matters: specific scripts first, then lifecycle patterns. `tail ... out/evolve-*.log` is
+ * tail_log; every other status read (sim.sh status, ps rss, checkpoint JSON) is status_sim.
+ * @param {string} cmd Bash command text
+ * @returns {string|null} tool name, or null when the command is not sim-related
+ */
+export function mapBashToTool(cmd) {
+  const c = String(cmd ?? '');
+  if (/^mcp__pogo-sim(-extra)?__/.test(c)) return c.replace(/^mcp__pogo-sim(-extra)?__/, '');
+  for (const [re, tool] of USAGE_RULES) {
+    if (!re.test(c)) continue;
+    if (tool === 'STATUS') return /\btail\b[^\n]*out\/evolve-[^\n]*\.log/.test(c) ? 'tail_log' : 'status_sim';
+    return tool;
+  }
+  return null;
+}
+
+/** First-message opener of a "raw status" session (Report on / Check ... status, or "Check logs/status"). */
+export const isRawStatusOpener = (s) => /^\s*(report on|check)\b.*\bstatus\b/i.test(String(s ?? '').split('\n')[0])
+  || /^\s*check logs\/status/i.test(String(s ?? ''));
+
+/**
+ * Per-tool usage across sessions. sessions: [{id, commands: string[]}]. Tools in `allTools` always get a row.
+ * @returns {{tool:string, sessions:number, calls:number, keep:boolean, lifecycle:boolean}[]}
+ */
+export function tallyUsage(sessions, allTools, minSessions = 4) {
+  const rows = new Map(allTools.map((t) => [t, { tool: t, ids: new Set(), calls: 0 }]));
+  for (const s of sessions) {
+    for (const cmd of s.commands) {
+      const t = mapBashToTool(cmd);
+      if (!t) continue;
+      const r = rows.get(t) ?? rows.set(t, { tool: t, ids: new Set(), calls: 0 }).get(t);
+      r.ids.add(s.id); r.calls++;
+    }
+  }
+  return [...rows.values()].map((r) => ({
+    tool: r.tool, sessions: r.ids.size, calls: r.calls, lifecycle: LIFECYCLE.includes(r.tool),
+    keep: r.ids.size >= minSessions || LIFECYCLE.includes(r.tool),
+  })).sort((a, b) => b.sessions - a.sessions || b.calls - a.calls);
+}

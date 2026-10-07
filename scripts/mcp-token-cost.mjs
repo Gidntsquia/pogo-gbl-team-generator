@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PRICES, PRICES_DATE, convert, groupCycles, mean, readJsonl, summarizeSession, detectRole,
+  tallyUsage, isRawStatusOpener, LIFECYCLE,
 } from './mcp-token-cost-lib.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -425,12 +426,79 @@ async function live() {
   }
 }
 
+// ---------- usage + raw-status ----------
+
+const ALL_TOOLS = ['run_standard', 'run_meta', 'run_raw', 'status_sim', 'list_runs', 'list_collections', 'tail_log', 'stop_sim', 'cancel_stop',
+  'resume_sim', 'get_report', 'render_report', 'chart_top_teams', 'fitness_sides', 'symmetry_gap', 'build_curated_from_meta',
+  'build_shared_collection', 'build_meta_collection', 'refresh_usage', 'preflight', 'smoke_test', 'check_sim', 'check_oom'];
+
+/** Tool-use commands of one session: Bash command text and mcp__pogo-sim__* tool names. */
+function sessionCommands(recs) {
+  const seen = new Set(); const out = [];
+  for (const r of recs) {
+    if (r.type !== 'assistant') continue;
+    for (const c of r.message?.content ?? []) {
+      if (c.type !== 'tool_use' || seen.has(c.id)) continue;
+      seen.add(c.id);
+      if (c.name === 'Bash') out.push(c.input?.command ?? '');
+      else if (c.name.startsWith('mcp__pogo-sim')) out.push(c.name);
+    }
+  }
+  return out;
+}
+/** First real user message: skips /clear and other local-command wrappers. */
+const firstPrompt = (recs) => {
+  const u = recs.find((r) => r.type === 'user' && typeof r.message?.content === 'string' && !/^\s*</.test(r.message.content));
+  return u?.message?.content ?? '';
+};
+
+function usage() {
+  const n = Number(arg('last', 20));
+  const picked = []; 
+  for (const x of recentFiles(400, {})) {
+    const recs = readJsonl(path.join(LOGS, x.f));
+    if (firstPrompt(recs).startsWith('[mcp-cost-live]') || !recs.some((r) => r.type === 'assistant')) continue;
+    picked.push({ id: x.id, commands: sessionCommands(recs) });
+    if (picked.length === n) break;
+  }
+  const rows = tallyUsage(picked, ALL_TOOLS);
+  const md = [`# pogo-sim tool usage in the last ${picked.length} sessions (${new Date().toISOString().slice(0, 10)})`, '',
+    'Each Bash call (and each mcp__pogo-sim__ call) is mapped to the tool that replaces it by command pattern. Keep = used in 4+ sessions, or a lifecycle tool kept by the "probably just #1" decision.', '',
+    '| tool | sessions | calls | keep | why |', '|---|---:|---:|---|---|',
+    ...rows.map((r) => `| ${r.tool} | ${r.sessions} | ${r.calls} | ${r.keep ? 'yes' : 'no'} | ${r.sessions >= 4 ? 'count >= 4' : r.lifecycle ? 'lifecycle (user decision), count < 4' : 'moved to extra'} |`)].join('\n');
+  write(path.join(DIR, 'usage.json'), JSON.stringify({ sessions: picked.length, rows }, null, 2));
+  write(path.join(DIR, 'usage.md'), md);
+  console.log(md);
+}
+
+function rawStatus() {
+  const rows = [];
+  for (const x of recentFiles(2000, {})) {
+    const recs = readJsonl(path.join(LOGS, x.f));
+    const p = firstPrompt(recs);
+    if (!isRawStatusOpener(p)) continue;
+    const s = summarizeSession(recs);
+    if (s.empty || s.mcp > 0) continue;
+    rows.push({ id: x.id, date: (s.start ?? '').slice(0, 10), opener: p.split('\n')[0].slice(0, 60), models: s.models, turns: s.turns, bash: s.bash, tokens: s.tokens, fe: s.fe, usd: s.usd });
+  }
+  const med = (a) => { const b = [...a].sort((x, y) => x - y); return b.length ? (b.length % 2 ? b[(b.length - 1) / 2] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2) : 0; };
+  const agg = { n: rows.length, medianFe: med(rows.map((r) => r.fe)), meanFe: mean(rows.map((r) => r.fe)), medianUsd: med(rows.map((r) => r.usd)), meanUsd: mean(rows.map((r) => r.usd)) };
+  const md = ['# Raw "status" sessions (Bash only, whole session)', '', `n = ${agg.n}. Median ${fmt(agg.medianFe)} FE tokens / ${usd(agg.medianUsd)}; mean ${fmt(agg.meanFe)} FE / ${usd(agg.meanUsd)}.`, '',
+    '| id | date | opening phrase | models | turns | Bash | input | cache write | cache read | output | FE | $ |', '|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|',
+    ...rows.map((r) => `| ${r.id.slice(0, 8)} | ${r.date} | ${r.opener} | ${r.models.join(', ')} | ${r.turns} | ${r.bash} | ${fmt(r.tokens.input)} | ${fmt(r.tokens.write5m + r.tokens.write1h)} | ${fmt(r.tokens.read)} | ${fmt(r.tokens.output)} | ${fmt(r.fe)} | ${usd(r.usd)} |`)].join('\n');
+  write(path.join(DIR, 'raw-status.json'), JSON.stringify({ ...agg, rows }, null, 2));
+  write(path.join(DIR, 'raw-status.md'), md);
+  console.log(md);
+}
+
 const cmd = process.argv[2];
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     if (cmd === 'offline') await offline();
     else if (cmd === 'sessions') sessions();
     else if (cmd === 'live') await live();
+    else if (cmd === 'usage') usage();
+    else if (cmd === 'raw-status') rawStatus();
     else if (cmd === 'live-clean') cleanRuns();
     else { console.error('usage: mcp-token-cost.mjs offline | sessions [--last 20] | live | live-clean'); process.exit(2); }
   } catch (e) {
