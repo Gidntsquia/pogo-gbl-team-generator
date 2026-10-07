@@ -82,3 +82,18 @@ test('processTree sums descendants', () => {
   assert.deepEqual([...t.pids].sort(), [1, 2, 3]);
   assert.equal(t.rssMB, 4);
 });
+
+test('tool lists: pogo-sim keeps the lifecycle set, pogo-sim-extra the rest', async () => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const names = async (file, fn) => {
+    const c = new Client({ name: 't', version: '1' });
+    await c.connect(new StdioClientTransport({ command: 'node', args: [file], cwd: new URL('..', import.meta.url).pathname }));
+    try { return await fn(c); } finally { await c.close(); }
+  };
+  const core = await names('mcp/server.mjs', async (c) => (await c.listTools()).tools.map((t) => t.name).sort());
+  const extra = await names('mcp/server-extra.mjs', async (c) => (await c.listTools()).tools.map((t) => t.name).sort());
+  assert.deepEqual(core, ['cancel_stop', 'check_oom', 'list_runs', 'resume_sim', 'run_meta', 'run_standard', 'status_sim', 'stop_sim', 'tail_log']);
+  assert.equal(extra.length, 14);
+  assert.ok(!extra.some((n) => core.includes(n)) && extra.includes('get_report'));
+});
