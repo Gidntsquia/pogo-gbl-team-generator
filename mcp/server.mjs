@@ -48,7 +48,7 @@ tool('status_sim', 'Status of a run: top teams, speed, ETA, memory; report path 
       'top opponent teams:', ...s.topOpponentTeams.map((o, i) => `  ${i + 1}. ${o.name} (${o.origin}) fit ${o.fitness}`),
       'top opponent Pokemon:', ...s.topOpponentSpecies.map((p, i) => `  ${i + 1}. ${p.species} mean fit ${p.meanFitness} rep ${p.representation}`),
     ];
-    const out = reply(lines.join('\n'), { state, softStopPending: !!pending, logLine: lastLine, ...s });
+    const out = reply(lines.join('\n')); // text only: the JSON blob duplicated every line
     out.content[0].text += reportLine; // the report path is the last line of a DONE run's text
     return out;
   });

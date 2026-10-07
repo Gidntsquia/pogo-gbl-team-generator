@@ -398,6 +398,7 @@ async function live() {
   const ways = { mcp: ['--mcp-config', JSON.stringify({ mcpServers: { 'pogo-sim': JSON.parse(readFileSync(path.join(REPO, '.mcp.json'), 'utf8')).mcpServers['pogo-sim'] } }), '--strict-mcp-config'], bash: ['--mcp-config', noMcp, '--strict-mcp-config'] };
   const extra = { mcp: ' Use the pogo-sim MCP tools for this.', bash: ' Use only Bash and scripts/sim.sh; no MCP tools exist.' };
   for (const [task, mk] of Object.entries(TASKS)) {
+    if (arg('task') && arg('task') !== task) continue;
     for (const [way, flags] of Object.entries(ways)) {
       cleanRuns();
       const name = `mcp-cost-live-${task}-${way}`;
@@ -419,7 +420,7 @@ async function live() {
         answer: (() => { try { return String(JSON.parse(r.stdout).result).slice(0, 300); } catch { return (r.stderr ?? '').slice(0, 300); } })(),
         source: 'live session',
       };
-      write(path.join(DIR, 'live', `${task}-${way}.json`), JSON.stringify(res, null, 2));
+      write(path.join(DIR, 'live', `${task}-${way}${arg('suffix', '')}.json`), JSON.stringify(res, null, 2));
       console.log(task, way, res.turns, res.fe && Math.round(res.fe));
       cleanRuns();
     }
