@@ -10,6 +10,8 @@ const SPECIES_STATS_CAP = 25; // report/analytics-JSON cap on how many species r
 const TOP_CORES_CAP = 15;
 
 
+const TOP_TEAMS_CAP = 15; // how many candidate teams a checkpoint's analytics.topTeams keeps (topCores still uses the top 10).
+const TOP_CORES_TEAMS = 10; // teams feeding core-pair stats
 const TOUGHEST_OPPONENTS_CAP = 15; // report/analytics-JSON cap on how many opponent rows are kept (same documented-not-silent rule as SPECIES_STATS_CAP).
 
 const FINAL_OPPONENT_POOL_REPORT_CAP = 20; // final-report-only cap (summarizeOpponentPool's `toughest`), separate from the smaller per-generation TOUGHEST_OPPONENTS_CAP.
@@ -177,7 +179,7 @@ export function computeGenerationAnalytics({ matrix, population, fitness, lineag
   }
 
   const rankedIdx = population.map((_, i) => i).sort((a, b) => fitness[b] - fitness[a] || a - b);
-  const eliteIdx = rankedIdx.slice(0, Math.min(10, population.length)); // fixed top-10 for core-pair stats AND topTeams (below), independent of --elites (report's final-ranking count)
+  const eliteIdx = rankedIdx.slice(0, Math.min(TOP_TEAMS_CAP, population.length)); // top-15 for topTeams; core-pair stats use only the first TOP_CORES_TEAMS; independent of --elites
 
   // Per-team battle-reality metrics for THIS generation's top-10,
   // written into out/evolve-generations.json so they're trackable across
@@ -205,7 +207,7 @@ export function computeGenerationAnalytics({ matrix, population, fitness, lineag
   });
 
   const coreCounts = new Map();
-  for (const i of eliteIdx) {
+  for (const i of eliteIdx.slice(0, TOP_CORES_TEAMS)) {
     const species = [...new Set(speciesOfTeam(matrix, population[i]))].sort();
     for (let a = 0; a < species.length; a++) {
       for (let b = a + 1; b < species.length; b++) {

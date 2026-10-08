@@ -2,7 +2,7 @@
 // run is launched detached so killing this server never kills a sim. Everything else: server-extra.mjs.
 import {
   z, execFileSync, spawn, existsSync, readFileSync, writeFileSync, statSync, path, OUT, REPO, makeServer, flags, alive, pidOf, isLive,
-  dirOf, logOf, gens, readLog, runNames, runState, reply, fail, sh, resolveName, safeName, waitFirstLine, writeLaunch,
+  dirOf, logOf, gens, readLog, runNames, runState, reply, fail, sh, resolveName, resolveStatusName, safeName, waitFirstLine, writeLaunch,
   launchDetached, guardLaunch, ensureReport, commonShape, launchViaSim, latestGen, buildStatus, processTree, configToArgv,
 } from './common.mjs';
 
@@ -20,14 +20,18 @@ function latestCheckpoint(n) {
   return JSON.parse(readFileSync(path.join(dirOf(n), `evolve-gen${g}.json`), 'utf8'));
 }
 
-tool('status_sim', 'Status of a run: top teams, speed, ETA, memory; report path when DONE.',
-  { name: z.string().optional(), top: z.number().optional() },
+tool('status_sim', 'One-call sim report; needs no name (defaults to the live run, or the most recently launched live one). Returns run header (state, gen, s/gen, ETA, memory), top candidate teams, candidate mons, opponent teams, opponent mons. Pass name only for a non-live run; DONE runs end with the report path.',
+  {
+    name: z.string().optional().describe('Omit: the live sim is picked automatically'),
+    teams: z.number().optional().describe('Rows for candidate and opponent teams (default 15)'),
+    mons: z.number().optional().describe('Rows for candidate and opponent mons (default 5)'),
+  },
   async (a) => {
-    const n = resolveName(a.name);
+    const { name: n, others } = resolveStatusName(a.name);
     const cp = latestCheckpoint(n);
     if (!cp) return fail(`no checkpoint yet for '${n}'`);
     const logText = readLog(n);
-    const s = buildStatus(cp, logText, a.top ?? 15);
+    const s = buildStatus(cp, logText, { teams: a.teams ?? 15, mons: a.mons ?? 5 });
     const pid = pidOf(n);
     let liveRssMB = null;
     if (pid && alive(pid)) liveRssMB = processTree(execFileSync('ps', ['-eo', 'pid,ppid,rss'], { encoding: 'utf8' }), pid).rssMB;
@@ -39,20 +43,23 @@ tool('status_sim', 'Status of a run: top teams, speed, ETA, memory; report path 
     const f3 = (x) => String(Math.round(Number(x) * 1000) / 1000).replace(/^0\./, '.');
     const nm = (t) => t.replace(/ \((Shadow|Alolan|Mega|Galarian|Hisuian)\)/g, (_, k) => (k === 'Shadow' ? '*' : `-${k[0]}`));
     const join = (rows, fn) => rows.map(fn).join('; ');
+    const note = (got, asked) => (got < asked ? ` (${got} of ${asked} available in this checkpoint)` : '');
+    const nT = a.teams ?? 15, nM = a.mons ?? 5;
+    const rep = (p) => `${p.species} ${Math.round(p.representation * 1000) / 10}% ${f3(p.meanFitness)}`;
     const lines = [
-      `${n} ${state}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}`,
-      `${s.speed.lastGenElapsedSec}s/gen ${s.speed.msPerBattle}ms/battle ETA ${s.speed.etaMinutes}m RSS ${liveRssMB ?? s.memory.lastLoggedRssMB}MB`,
-      `teams: ${join(s.topTeams, (t) => `${t.members.join('/')} ${f3(t.fitness)}`)}`,
-      `mons: ${join(s.topSpecies, (p) => `${p.species} ${f3(p.meanFitness)}`)}`,
-      `opp teams: ${join(s.topOpponentTeams, (o) => `${nm(o.name)} ${f3(o.fitness)}`)}`,
-      `opp mons: ${join(s.topOpponentSpecies, (p) => `${p.species} ${f3(p.meanFitness)}`)}`,
+      `${n} ${state}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}${others.length ? ` | other live: ${others.join(', ')}` : ''}`,
+      `${s.speed.lastGenElapsedSec}s/gen (last) ${s.speed.meanGenSec ?? '?'}s/gen (mean 5) ${s.speed.msPerBattle}ms/battle sim ${s.speed.battlesSimulated} cached ${s.speed.battlesCached} ETA ${s.speed.etaMinutes}m RSS ${liveRssMB ?? s.memory.lastLoggedRssMB}MB${liveRssMB === null ? ' (last logged)' : ''}`,
+      `teams${note(s.topTeams.length, nT)} [rank members(lead first) fitness win snowball consistency comeback closer]: ${join(s.topTeams, (t) => `#${t.rank} ${t.members.join('/')} ${f3(t.fitness)} ${f3(t.winRate)} ${f3(t.snowball)} ${f3(t.consistency)} ${f3(t.comeback)} ${t.closer ?? '-'}`)}`,
+      `mons${note(s.topSpecies.length, nM)} [species representation meanFitness]: ${join(s.topSpecies, rep)}`,
+      `opp teams${note(s.topOpponentTeams.length, nT)} [rank team fitness origin]: ${join(s.topOpponentTeams, (o) => `#${o.rank} ${nm(o.name)} ${f3(o.fitness)} ${o.origin}`)}`,
+      `opp mons${note(s.topOpponentSpecies.length, nM)} [species representation meanFitness]: ${join(s.topOpponentSpecies, rep)}`,
     ];
     let reportLine = '';
     if (state === 'DONE') { const r = await ensureReport(n); reportLine = r.html ? `\nreport: ${r.html}` : ''; }
     return reply(lines.join('\n') + reportLine); // compact plain text: only the model reads it
   });
 
-tool('list_runs', 'List runs with state and last log line.', {}, async () => {
+tool('list_runs', 'Only lists run names, states and last log line. Not needed before status_sim, which picks the live run itself.', {}, async () => {
   const rows = runNames().map((n) => ({
     name: n, state: runState(n), checkpointGen: latestGen(gens(n)), lastLog: readLog(n).trim().split('\n').at(-1) ?? '',
   }));

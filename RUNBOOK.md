@@ -931,7 +931,7 @@ never kills a sim.
 | tool | RUNBOOK counterpart |
 |---|---|
 | `run_standard`, `run_meta` | section 3 `scripts/sim.sh [--meta]` (`dry_run` prints the command; `extra` goes after `--`) |
-| `status_sim` (default depth 15, compact text), `list_runs`, `tail_log` | `sim.sh status`, `tail -f`, section 2. `status_sim` on a DONE run ends with `report: <abs html path>` (renders if stale) |
+| `status_sim` (no name needed: the live run, or the most recently launched of several by `launch.json.at` -> checkpoint `runStartedAt` -> dir mtime; params `teams` default 15, `mons` default 5 -> 15 candidate teams / 5 mons / 15 opponent teams / 5 opponent mons, mons by representation %, `(N of M available in this checkpoint)` when short; compact text), `list_runs`, `tail_log` | `sim.sh status`, `tail -f`, section 2. `status_sim` on a DONE run ends with `report: <abs html path>` (renders if stale) |
 | `stop_sim` (`after_generation` / `hard`), `cancel_stop` | section 4; soft stop = detached `mcp/soft-stop.mjs` (polls every 10 s, SIGTERM after the next checkpoint) |
 | `resume_sim` | section 4 resume; flags rebuilt from the checkpoint `config`, non-fingerprint flags from `out/evolve-NAME/launch.json` |
 | `check_oom` | earlyoom journal grep |

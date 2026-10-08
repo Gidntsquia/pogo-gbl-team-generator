@@ -198,23 +198,28 @@ const round = (x, n = 4) => (typeof x === 'number' ? Number(x.toFixed(n)) : x);
 
 /**
  * Build the status report body from a checkpoint object and log text.
+ * Each section holds at most the requested rows; `available` counts what the checkpoint has.
  * @param {object} cp parsed checkpoint
  * @param {string} logText
- * @param {number} top
+ * @param {{teams?: number, mons?: number}} [depth] rows per team section (default 15) and per mon section (default 5)
  */
-export function buildStatus(cp, logText, top = 15) {
+export function buildStatus(cp, logText, { teams: nTeams = 15, mons: nMons = 5 } = {}) {
   const a = cp.analytics ?? {};
-  const teams = (a.topTeams ?? []).slice(0, top).map((t) => ({
+  const allTeams = a.topTeams ?? [];
+  const teams = allTeams.slice(0, nTeams).map((t) => ({
     rank: t.rank,
     members: t.members.map((m) => m.name ?? m.speciesId ?? m),
     fitness: round(t.fitness), winRate: round(t.winRate),
-    snowball: round(t.snowballIndex), consistency: round(t.consistencyScore),
+    snowball: round(t.snowballIndex), consistency: round(t.consistencyScore), comeback: round(t.comebackIndex),
+    closer: t.designatedCloser?.name ?? null,
   }));
-  const species = [...(a.speciesStats ?? [])]
-    .sort((x, y) => y.meanFitness - x.meanFitness).slice(0, top)
-    .map((s) => ({ species: s.speciesId, meanFitness: round(s.meanFitness), representation: round(s.representation) }));
-  const oppTeams = (a.toughestOpponents ?? []).slice(0, top)
-    .map((o) => ({ name: o.name, origin: o.origin, fitness: round(o.fitness) }));
+  const byRep = (x, y) => y.representation - x.representation || y.meanFitness - x.meanFitness;
+  const allSpecies = [...(a.speciesStats ?? [])].sort(byRep);
+  const species = allSpecies.slice(0, nMons)
+    .map((s) => ({ species: s.speciesId, representation: round(s.representation), meanFitness: round(s.meanFitness) }));
+  const allOpp = a.toughestOpponents ?? [];
+  const oppTeams = allOpp.slice(0, nTeams)
+    .map((o, i) => ({ rank: i + 1, name: o.name, origin: o.origin, fitness: round(o.fitness) }));
   // opponent species: mean fitness + representation across opponentPool members
   const agg = new Map();
   (cp.opponentPool ?? []).forEach((team, i) => {
@@ -225,9 +230,11 @@ export function buildStatus(cp, logText, top = 15) {
     }
   });
   const poolSize = cp.opponentPool?.length || 1;
-  const oppSpecies = [...agg.entries()]
-    .map(([id, e]) => ({ species: id, meanFitness: round(e.sum / e.n), representation: round(e.n / poolSize) }))
-    .sort((x, y) => y.meanFitness - x.meanFitness).slice(0, top);
+  const allOppSpecies = [...agg.entries()]
+    .map(([id, e]) => ({ species: id, meanFitness: e.sum / e.n, representation: e.n / poolSize }))
+    .sort(byRep);
+  const oppSpecies = allOppSpecies.slice(0, nMons)
+    .map((p) => ({ ...p, meanFitness: round(p.meanFitness), representation: round(p.representation) }));
   const logGens = parseLog(logText);
   const last5 = logGens.slice(-5);
   const meanElapsed = last5.length ? last5.reduce((s, g) => s + g.elapsedSec, 0) / last5.length : null;
@@ -241,12 +248,14 @@ export function buildStatus(cp, logText, top = 15) {
       csv: cp.config?.csvPath, cup: cp.config?.cup, cp: cp.config?.cp, population: cp.config?.population,
       opponentsPerGen: cp.config?.opponentsPerGen, sampledOpponents: cp.config?.sampledOpponents, threads: cp.threadsUsed,
     },
+    available: { teams: allTeams.length, mons: allSpecies.length, oppTeams: allOpp.length, oppMons: allOppSpecies.length },
     topTeams: teams, topSpecies: species, topOpponentTeams: oppTeams, topOpponentSpecies: oppSpecies,
     speed: {
       lastGenElapsedSec: lastLog?.elapsedSec ?? null,
       msPerBattle: round(cp.timing?.msPerBattle, 2),
       battlesSimulated: lastLog?.simulated ?? cp.timing?.battleCount,
       battlesCached: lastLog?.cached ?? cp.timing?.cachedCount,
+      meanGenSec: meanElapsed === null ? null : round(meanElapsed, 1),
       etaMinutes: meanElapsed === null ? null : round((remaining * meanElapsed) / 60, 1),
     },
     memory: { lastLoggedRssMB: lastLog?.rssMB ?? null },

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { resolveStatusName, launchTime } from '../mcp/common.mjs';
 import {
   parseHelpFlags, flagsToArgv, simShArgv, configToArgv, softStopDecision, buildStatus, parseLog, processTree, latestGen,
 } from '../mcp/lib.mjs';
@@ -67,7 +68,7 @@ test('status from a fixture checkpoint + log', () => {
   };
   const log = 'generation 2: done -- mean fitness 1%, x, 100 battles simulated + 50 served from cache (both), 1m 30s elapsed, process RSS 2000MB\n'
     + 'generation 3: done -- mean fitness 1%, x, 120 battles simulated + 60 served from cache (both), 2m 0s elapsed, process RSS 2100MB';
-  const s = buildStatus(cp, log, 15);
+  const s = buildStatus(cp, log);
   assert.equal(s.checkpointGeneration, 3);
   assert.equal(s.topSpecies[0].species, 'b');
   assert.deepEqual(s.topOpponentSpecies[0], { species: 'q', meanFitness: 0.6, representation: 1 });
@@ -97,4 +98,43 @@ test('tool lists: pogo-sim keeps the lifecycle set, pogo-sim-extra the rest', as
   assert.equal(extra.length, 14);
   assert.ok(extra.includes('get_report'));
   assert.ok(!extra.some((n) => core.includes(n)) && extra.includes('render_report'));
+});
+
+test('status depth: teams/mons params, representation order, shortfall counts', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ rank: i + 1, members: [{ name: `T${i}` }], fitness: 1 - i / 100, winRate: 0.5 }));
+  const cp = {
+    generation: 1, config: { generations: 4 },
+    analytics: {
+      topTeams: mk(10),
+      speciesStats: [{ speciesId: 'lo', meanFitness: 0.9, representation: 0.1 }, { speciesId: 'hi', meanFitness: 0.1, representation: 0.5 }, { speciesId: 'hi2', meanFitness: 0.3, representation: 0.5 }],
+      toughestOpponents: Array.from({ length: 15 }, (_, i) => ({ name: `O${i}`, origin: 'curated', fitness: 0.5 })),
+    },
+  };
+  const s = buildStatus(cp, '', { teams: 20, mons: 2 });
+  assert.equal(s.topTeams.length, 10);
+  assert.equal(s.topOpponentTeams.length, 15);
+  assert.deepEqual(s.topSpecies.map((x) => x.species), ['hi2', 'hi']); // representation desc, ties by mean fitness
+  assert.deepEqual(s.available, { teams: 10, mons: 3, oppTeams: 15, oppMons: 0 });
+  assert.equal(buildStatus(cp, '', { teams: 3 }).topTeams.length, 3);
+  assert.equal(buildStatus(cp, '').topSpecies.length, 3);
+});
+
+test('status_sim picks the most recently launched live run', async () => {
+  const { OUT, dirOf } = await import('../mcp/common.mjs');
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const names = ['zz-mcptest-old', 'zz-mcptest-new', 'zz-mcptest-nolaunch'];
+  try {
+    for (const [i, n] of names.entries()) {
+      mkdirSync(dirOf(n), { recursive: true });
+      writeFileSync(`${OUT}/evolve-${n}.pid`, String(process.pid)); // alive
+      if (i < 2) writeFileSync(`${dirOf(n)}/launch.json`, JSON.stringify({ at: i === 0 ? '2098-01-01T00:00:00Z' : '2099-01-01T00:00:00Z' }));
+    }
+    assert.ok(launchTime('zz-mcptest-nolaunch') > Date.parse('2026-03-01')); // dir mtime fallback
+    const r2 = resolveStatusName();
+    assert.equal(r2.name, 'zz-mcptest-new');
+    assert.ok(r2.others.includes('zz-mcptest-old'));
+    assert.equal(resolveStatusName('x').name, 'x');
+  } finally {
+    for (const n of names) { rmSync(`${OUT}/evolve-${n}.pid`, { force: true }); rmSync(dirOf(n), { recursive: true, force: true }); }
+  }
 });

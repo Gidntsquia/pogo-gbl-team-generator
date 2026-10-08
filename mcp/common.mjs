@@ -76,6 +76,30 @@ export function resolveName(name) {
   throw new Error(running.length ? `several runs live (${running.join(', ')}); pass name` : `no run live; pass name (runs: ${runNames().join(', ') || 'none'})`);
 }
 
+/** Launch time (ms) of a run: launch.json `at`, else newest checkpoint `runStartedAt`, else run dir mtime. */
+export function launchTime(n) {
+  const d = dirOf(n);
+  try { const t = Date.parse(JSON.parse(readFileSync(path.join(d, 'launch.json'), 'utf8')).at); if (!Number.isNaN(t)) return t; } catch { /* fall through */ }
+  try {
+    const g = latestGen(gens(n));
+    if (g >= 0) { const t = Date.parse(JSON.parse(readFileSync(path.join(d, `evolve-gen${g}.json`), 'utf8')).runStartedAt); if (!Number.isNaN(t)) return t; }
+  } catch { /* fall through */ }
+  try { return statSync(d).mtimeMs; } catch { return 0; }
+}
+
+/**
+ * status_sim run choice: explicit name, else the live run, else (several live) the most recently launched.
+ * @returns {{name: string, others: string[]}} `others` = other live runs
+ */
+export function resolveStatusName(name) {
+  if (name) return { name: safeName(name), others: [] };
+  const running = runNames().filter(isLive).sort((a, b) => launchTime(b) - launchTime(a));
+  if (!running.length) {
+    throw new Error(`no run live; pass name (runs: ${runNames().map((n) => `${n} ${runState(n)}`).join(', ') || 'none'})`);
+  }
+  return { name: running[0], others: running.slice(1) };
+}
+
 /** Wait up to 60 s for the first generation-0/resuming line (or the process dying). */
 export async function waitFirstLine(n, pid, offset = 0) {
   for (let i = 0; i < 60; i++) {
