@@ -4,7 +4,18 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 
 **Fresh clone / start of every scheduled run:** `bash scripts/setup.sh` FIRST — `vendor/pvpoke` is gitignored and absent until it runs.
 
-**Running or resuming an evolve sim:** read `RUNBOOK.md` first (recipes, resume gotchas, flag conventions). Launch with `scripts/sim.sh <collection.csv>`; compose raw `scripts/evolve.mjs` commands only when the recipe genuinely doesn't fit. A resume must pass the exact original flag set or it silently starts fresh and overwrites the checkpoints — RUNBOOK section 4 has the checklist.
+**Running, watching or resuming an evolve sim: use the `pogo-sim` MCP tools, not Bash.** The server (`mcp/server.mjs`, registered in `.mcp.json` with `alwaysLoad`) is loaded in every session in this folder; launches are detached, so closing the session never kills a sim. Read `RUNBOOK.md` first for recipes and flag conventions; its "MCP servers" section maps each tool to its section.
+
+| need | tool |
+|---|---|
+| launch | `run_standard` (collection CSV, sim.sh recipe) / `run_meta` (meta-vs-meta); `dry_run` prints the command, `extra` flags go after `--` for you |
+| "how's the sim?" | `status_sim` — no name needed, one call. Show the header facts as a line, then candidate teams, candidate mons, opponent teams and opponent mons as four markdown tables with every column it returned; do not drop rows. A DONE run ends with the report path |
+| other runs, logs | `list_runs` (names/states only; not needed before `status_sim`), `tail_log` |
+| stop | `stop_sim` (`after_generation` soft stop, or `hard` with `confirm`); `cancel_stop` |
+| resume | `resume_sim` — rebuilds the flags from the checkpoint `config` + `launch.json` and kills the process if it starts fresh. Pass `threads: 8`: it otherwise reuses the checkpoint's `threadsUsed`, which can have drifted low |
+| died? | `check_oom` |
+
+`pogo-sim-extra` (`mcp/server-extra.mjs`: `get_report`, `preflight`, `smoke_test`, `run_raw`, report/analysis and collection-building tools) is off by default via `disabledMcpjsonServers` in `.claude/settings.json`; enable it with `/mcp` only when a task needs it. Fall back to `scripts/sim.sh` / `scripts/evolve.mjs` only when no tool fits; a hand-composed resume must pass the exact original flag set or it silently starts fresh and overwrites the checkpoints (RUNBOOK section 4 checklist).
 
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
 - `vendor/pvpoke` is a pinned read-only sparse clone (gitignored). Load/execute its code and data; never edit it, never reimplement its battle math. Need a path not checked out? `git -C vendor/pvpoke sparse-checkout add <path>`.
@@ -25,12 +36,8 @@ rank → 3v3-battle them against an evolving opponent pool (both sides run a GA)
 - **How it behaves:** the GitHub wiki. Fetch a page raw with
   `curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"`
   (pages: Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions,
-  Evolutionary-Team-Search, Shared-Collections, Development-and-Tests).
-- **MCP server** `pogo-sim` (`mcp/server.mjs`), tools listed in `RUNBOOK.md`.
-  **Relaying `status_sim`:** it needs no name and answers a "sim status" question
-  in one call; show the header facts as a line, then render candidate teams,
-  candidate mons, opponent teams and opponent mons as four markdown tables with
-  every column the tool returned; do not drop rows.
+  Evolutionary-Team-Search, Shared-Collections, Development-and-Tests,
+  MCP-Server, MCP-Server-Token-Costs).
 
 ### Invariants
 

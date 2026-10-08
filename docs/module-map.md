@@ -57,7 +57,7 @@ agent session.
 |---|---|
 | `scripts/sim.sh` | preferred evolve launcher (recipe, detached runs, `status`); see `RUNBOOK.md` |
 | `scripts/evolve.mjs` | thin entry point into `src/evolve/`; `--help` lists every flag, `--check` validates inputs only |
-| `mcp/server.mjs` | `pogo-sim` MCP server (`.mcp.json`); tool list in `RUNBOOK.md` |
+| `mcp/server.mjs`, `mcp/server-extra.mjs` | `pogo-sim` (always loaded) and `pogo-sim-extra` (off by default) MCP servers (`.mcp.json`); tool tables in `RUNBOOK.md`, soft stop in `mcp/soft-stop.mjs` |
 | `scripts/build-shared-collection.mjs` | intersects two collection CSVs into a shared-pool CSV of mons both players can build (weaker side's best specimen per base species) |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
