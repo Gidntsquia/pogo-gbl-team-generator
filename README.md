@@ -70,6 +70,9 @@ node scripts/evolve.mjs --help                        # full flag list
   collection, and its results can seed the curated opponent teams for a new
   cup or season.
 - Great League and Ultra League (`--cp 2500`), pvpoke cups (`--cup willpower`), and species bans via `--ban`.
+- An MCP server (`pogo-sim`) lets [Claude Code](https://claude.com/claude-code)
+  launch, monitor, stop, and resume runs in this folder. Resumes rebuild their
+  flags from the run's checkpoint, and runs keep going after the session closes.
 - Deterministic: the same seed gives identical results, serial or with
   `--threads N`.
 
@@ -87,6 +90,7 @@ Detailed documentation is in the
 - [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm, fitness, checkpoints
 - [Shared Collections](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Shared-Collections) — teams two players can both build
 - [Development and Tests](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Development-and-Tests) — test tiers, what to run when
+- [MCP Server](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server) — the `pogo-sim` tools and how to enable the extra set
 - [MCP Server Token Costs](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs) — what the pogo-sim MCP server saves against Bash
 
 ## License 📄
