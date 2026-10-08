@@ -792,10 +792,8 @@ does not update them.
 node --test test/<file>.test.js   # one module
 npm run test:changed              # a few files in one area
 npm test                          # fast tier, ~1 s
-TS_FULL=1 npm run test:full       # ~13 s; required before a push
+npm run test:full                 # ~13 s; required before a push
 ```
-
-A hook blocks whole-suite runs and prints the narrower command; follow it.
 
 ## 7. What the standard recipe actually does
 

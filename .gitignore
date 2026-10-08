@@ -5,8 +5,6 @@ out/
 /*.csv
 .claude/*
 !.claude/settings.json
-!.claude/test-commands.sh
-!.claude/hooks/
 wiki/
 plans/
 docs/research/

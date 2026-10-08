@@ -61,11 +61,6 @@ Only node's built-in `node:test` + `node:assert`. Tests map ~1:1 to modules
 
 - After a failure, re-run that test file, not the suite; widen only once it's green.
 - The closing `npm run test:full` before a push is yours to run and is not optional.
-- A `PreToolUse` hook blocks whole-suite commands and prints the narrow one;
-  when you see `BLOCKED:`, run what it suggests. `TS_FULL=1 npm run test:full`
-  overrides it only for the two `test:full` rows above or when the user asks.
-  The command strings live in `.claude/test-commands.sh`; edit it and this
-  table together.
 - `test/e2e.test.js` is the only file that runs real pvpoke battles (the only
   `@slow` file). A test that needs the engine to fight goes there, asserted
   against one of its existing module-scope runs — not a new run or file.
