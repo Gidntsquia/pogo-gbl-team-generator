@@ -7,8 +7,6 @@ Node ≥ 18, ESM (`"type": "module"`), plain modern JavaScript, no TypeScript, n
 **Running, watching or resuming an evolve sim: use the `pogo-sim` MCP tools, not Bash.** The server (`mcp/server.mjs`, registered in `.mcp.json` with `alwaysLoad`) is loaded in every session in this folder; launches are detached, so closing the session never kills a sim. Read `RUNBOOK.md` first for recipes and flag conventions; its "MCP servers" section maps each tool to its section.
 
 - Relaying `status_sim`: show the header facts as a line, then candidate teams, candidate mons, opponent teams and opponent mons as four markdown tables with every column it returned; do not drop rows.
-- `resume_sim`: pass `threads: 8`. It otherwise reuses the checkpoint's `threadsUsed`, which can have drifted low.
-
 `pogo-sim-extra` (`mcp/server-extra.mjs`: `get_report`, `preflight`, `smoke_test`, `run_raw`, report/analysis and collection-building tools) is off by default via `disabledMcpjsonServers` in `.claude/settings.json`; enable it with `/mcp` only when a task needs it. Fall back to `scripts/sim.sh` / `scripts/evolve.mjs` only when no tool fits; a hand-composed resume must pass the exact original flag set or it silently starts fresh and overwrites the checkpoints (RUNBOOK section 4 checklist).
 
 - Dependencies: avoid adding npm deps unless clearly necessary; record any addition and why in your report.
