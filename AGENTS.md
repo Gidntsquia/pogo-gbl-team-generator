@@ -1,6 +1,6 @@
 # AGENTS.md — pogo-gbl-team-generator
 
-Constitution for any agent working here. `CLAUDE.md` (conventions, module map, test policy)
+Constitution for any agent working here. `CLAUDE.md` (conventions, test policy; module map in `docs/module-map.md`)
 and `RUNBOOK.md` (how to run/resume evolve sims) are authoritative; this file only adds what
 they don't say.
 

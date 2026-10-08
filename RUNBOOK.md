@@ -604,6 +604,18 @@ population, generations, and any GA flags). Threads, `--hours`, and
 config makes the driver reject the checkpoints. A detached restart overwrites
 the old `.log`, so copy it first if it matters.
 
+Resume checklist:
+
+- Read `config` from the latest `out/evolve-<name>/evolve-gen*.json` first, and
+  look for flags the recipe omits (e.g. `meta-vs-meta-newseason` uses
+  `--curated-ratio 0`).
+- Extra flags with a value go after `--`
+  (`scripts/sim.sh --meta --name X -- --curated-ratio 0`); a bare
+  `--curated-ratio 0` makes sim.sh treat the `0` as a collection path.
+- Watch the log for `resuming -- N generation(s) already complete` before
+  walking away. `starting fresh` means the config didn't match and the
+  checkpoints are being overwritten -- kill it.
+
 ```bash
 cp out/evolve-RUN_NAME.log out/evolve-RUN_NAME.log.1
 scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 --mutation-floor-start 0.15 --mutation-ceil-start 0.6
