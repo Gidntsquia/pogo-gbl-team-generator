@@ -47,7 +47,9 @@ context, so more threads costs memory too). `defaultThreadCount()`
 (`src/engine/parallel.js`) caps the automatic default at 8 for this reason,
 so an omitted `--threads` is safe -- but still pass `--threads 8` explicitly,
 since it's also the measured-fastest count here, not just the safe one (see
-"Why `--threads 8`" in section 3).
+"Why `--threads 8`" in section 3). Before resuming, check `threadsUsed` in
+the latest `out/evolve-<name>/evolve-gen*.json` -- a run can have drifted
+below 8 (one was found at 3 on 2026-09-08); resume it at 8.
 
 Memory over a long run: each worker caches every built Pokemon it has seen
 (`src/engine/parallelWorker.js`), unbounded before 2026-09-07 (mutation keeps
