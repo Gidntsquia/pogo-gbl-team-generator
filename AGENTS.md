@@ -42,3 +42,8 @@ they don't say.
   round 2's `out/sampled-k-ab/results.json` is kept as the pre-fix record. The report
   (`compare-search.mjs report --dir out/sampled-k-ab`) merges both.
 
+
+## Recipe A/B chain (`scripts/recipe-ab-*.mjs|sh`)
+`scripts/recipe-ab-chain.sh [--smoke]` runs 3 evolve sims in order (old no-halving, old+halving, new standard), relaunches
+killed sims up to 3 times, scores finalists on the curated 100, writes `out/recipe-ab[-smoke].{md,html}`. Old sizes come from
+`recipes/recipe-ab-old.json`, passed as a second `--config` after `--` (last value wins). Smoke mode kills sims 1-2 once and fails sim 2 on purpose.
