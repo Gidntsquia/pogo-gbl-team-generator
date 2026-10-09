@@ -98,6 +98,25 @@ Test fixtures for dry runs without personal data: `fixtures/*.csv`.
 
 ### The recipe every recent real run used
 
+Updated 2026-10-09: `recipes/standard.json` is now the "old halving" recipe
+that won the three-way A/B in `out/recipe-ab.md` (population 300 ramping to
+120, 120 opponents per generation fought in full, Sequential Halving R=3,
+curated-ratio 0.66, opponent-meta-pool 400, archetype-beta 0.5,
+opponent-strength-gamma 1, similar-rivalry 1 / similar-floor 0.35, mutation
+hot-start 0.15-0.6, the 0.4/0.1/0.2/0.2 weights, core-rivalry 0.2). The
+previous standard (200 flat, 566 opponents with 400 sampled) scored 3.6 points
+lower on the curated 100 and took 4x the wall time; it lives on only as
+`recipes/meta.json`, which `--meta` runs still use unchanged. The full
+standard run is now just:
+
+```bash
+scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 [--cup CUP] --dry-run
+# inspect, then rerun without --dry-run
+```
+
+The older notes below describe how the recipe got here; the explicit flags in
+the longer command are now all baked in and may be omitted.
+
 Updated 2026-09-30: the raised weights (snowball 0.4, consistency 0.2) are now
 the baseline in `recipes/standard.json`, so the command below no longer repeats
 them or core-rivalry 0.2. Runs started earlier at snowball 0.2 / consistency 0.1
@@ -275,7 +294,7 @@ scripts/sim.sh --meta --name meta-vs-meta-<cup>-N [--cup <cup>] --threads 8 --dr
 | Collection | built once per run from pvpoke's rankings (`scripts/build-meta-collection.mjs` -> `out/evolve-NAME/meta-collection-[CUP-]CP.csv`), reused on resume; IVs = pvpoke defaults |
 | Pools | `--pool 400 --opponent-meta-pool 400` (`--meta-pool N`; 0 = full field) |
 | Mode | `--no-evolutions --meta-mode --random-opponent-lead` |
-| Size | population 200, 100 generations, 566 opponents per generation with each candidate fighting 400 sampled (`--sampled-opponents`), no population ramp, 15 elites (`recipes/standard.json` + `sim.sh` defaults) |
+| Size | population 200, 100 generations, 566 opponents per generation with each candidate fighting 400 sampled (`--sampled-opponents`), no population ramp, 15 elites (`recipes/meta.json` + `sim.sh --meta` defaults; unchanged by the 2026-10-09 standard-recipe switch) |
 | Fitness weights | snowball 0.4, closer 0.1, consistency 0.2, shared-weakness 0.2, on BOTH sides (`--opponent-*-weight`) |
 | Search | Sequential Halving R=3 (default), core-rivalry 0.2 |
 
@@ -454,13 +473,17 @@ Options (anything else is passed through to `evolve.mjs`):
 | `--dry-run` | print command, exit | off |
 
 The launcher always adds `--config recipes/standard.json --seed NAME
---out-dir out/evolve-NAME`. `recipes/standard.json` holds the baked
-defaults -- `opponents-per-gen 566`, `sampled-opponents 400`, `population-final-ratio 1`, `elites 15`, weights
-`snowball/closer/consistency/shared-weakness 0.2/0.1/0.1/0.2`, `core-rivalry 0.2` -- edit that
-file, not `sim.sh`, to change them for every future run. A passthrough flag
-of the same name overrides its `--config` value; a passthrough `--config
-other.json` replaces `recipes/standard.json` wholesale (evolve.mjs only
-honors one). `--pool` is left unset -- no cap, whole deduped collection --
+--out-dir out/evolve-NAME` (`recipes/meta.json` under `--meta`, with
+`--population 200`). `recipes/standard.json` holds the baked defaults (since
+2026-10-09): `opponents-per-gen 120`, `population-final-ratio 0.4`,
+`halving-rounds 3`, `elites 15`, `curated-ratio 0.66`, `opponent-meta-pool 400`,
+`archetype-beta 0.5`, `opponent-strength-gamma 1`, `similar-rivalry 1`,
+`similar-floor 0.35`, `mutation-floor-start 0.15`, `mutation-ceil-start 0.6`,
+weights `snowball/closer/consistency/shared-weakness 0.4/0.1/0.2/0.2`,
+`core-rivalry 0.2`; default `--population` is 300. Edit that file, not
+`sim.sh`, to change them for every future run. A passthrough flag of the same
+name overrides its `--config` value; a passthrough `--config other.json`
+replaces the recipe file wholesale (evolve.mjs only honors one). `--pool` is left unset -- no cap, whole deduped collection --
 unless `--meta` sets it to `--meta-pool`. A bare `node scripts/evolve.mjs`
 uses much smaller defaults (pop 100, 20 opponents, 15 gens) and is not a
 standard run.

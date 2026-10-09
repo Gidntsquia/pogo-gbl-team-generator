@@ -27,7 +27,7 @@ export function simDefs(smoke = false) {
   return [
     { n: 1, name: `${prefix}-old-nohalving`, recipe: 'recipes/recipe-ab-old.json', halving: 0, generations: gens, ...old },
     { n: 2, name: `${prefix}-old-halving`, recipe: 'recipes/recipe-ab-old.json', halving: 3, generations: gens, ...old },
-    { n: 3, name: `${prefix}-new`, recipe: 'recipes/standard.json', halving: 3, generations: gens, ...nu },
+    { n: 3, name: `${prefix}-new`, recipe: 'recipes/meta.json', halving: 3, generations: gens, ...nu },
   ];
 }
 

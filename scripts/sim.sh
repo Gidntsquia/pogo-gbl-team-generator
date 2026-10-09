@@ -33,7 +33,7 @@
 #                     opponents, foreground (implies --fg; try it on
 #                     fixtures/sample-pokegenie.csv)
 #   --generations G   generation cap                          (default 100)
-#   --population N    GA population                           (default 200)
+#   --population N    GA population                           (default 300; 200 with --meta)
 #   --hours H         wall-clock budget -> --deadline-minutes (default: none)
 #   --threads N       worker threads (default: evolve.mjs's cpus-1, capped at 8)
 #   --profile         passthrough to evolve.mjs: per-worker CPU profile +
@@ -62,12 +62,19 @@
 # Anything after `--` (or any flag not listed above) goes straight to
 # evolve.mjs. Defaults follow the established run recipe, baked into
 # recipes/standard.json (--config recipe, see evolve.mjs --help) and passed
-# as --config recipes/standard.json --seed <name>:
-#   opponents-per-gen 566, sampled-opponents 400, population-final-ratio 1, elites 15,
+# as --config recipes/standard.json --seed <name> (since 2026-10-09 this is the
+# "old halving" recipe that won out/recipe-ab.md):
+#   population 300 -> population-final-ratio 0.4, opponents-per-gen 120 (no sampled-opponents),
+#   halving-rounds 3, elites 15, curated-ratio 0.66, opponent-meta-pool 400, archetype-beta 0.5,
+#   opponent-strength-gamma 1, similar-rivalry 1, similar-floor 0.35,
+#   mutation-floor-start 0.15, mutation-ceil-start 0.6,
 #   snowball-weight 0.4, closer-weight 0.1, consistency-weight 0.2, shared-weakness-weight 0.2,
 #   core-rivalry 0.2
 #   (--pool is left unset -- evolve.mjs's own default: no cap, whole deduped collection)
-# A passthrough --config overrides recipes/standard.json entirely (evolve.mjs
+# --meta uses recipes/meta.json instead (population 200, opponents-per-gen 566,
+# sampled-opponents 400, population-final-ratio 1, same weights, no mutation hot-start),
+# so meta-vs-meta runs are unchanged by the 2026-10-09 switch.
+# A passthrough --config overrides the recipe file entirely (evolve.mjs
 # only accepts one --config), and any individual passthrough flag (e.g.
 # --snowball-weight 0) overrides that one key from the recipe file.
 # (--meta swaps the pool for --pool N --opponent-meta-pool N --no-evolutions
@@ -115,7 +122,7 @@ metapool=400
 cp=1500
 cup=all
 generations=100
-population=200
+population=""
 hours=""
 threads=""
 fg=0
@@ -205,8 +212,10 @@ if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
   exit 2
 fi
 
+recipe=standard; [ "$meta" = 1 ] && recipe=meta
+[ -z "$population" ] && { population=300; [ "$meta" = 1 ] && population=200; }
 cmd=(node scripts/evolve.mjs "$csv"
-  --config "$repo/recipes/standard.json"
+  --config "$repo/recipes/$recipe.json"
   --population "$population" --generations "$generations"
   --cp "$cp" --cup "$cup" --seed "$name" --out-dir "$outdir")
 if [ "$meta" = 1 ]; then
