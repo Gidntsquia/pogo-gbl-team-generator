@@ -11,7 +11,7 @@ pvpoke's vendored engine. The one front door is the evolutionary search:
 | Want | Run | Time |
 | --- | --- | --- |
 | Quick smoke test | `node scripts/evolve.mjs <csv> --generations 2 --population 12 --opponents-per-gen 8 --threads 2` | ~1 min |
-| Real answer, evolutionary search (the normal case) | `scripts/sim.sh <csv> --name NAME --threads 8 --mutation-floor-start 0.15 --mutation-ceil-start 0.6` | ~8 h |
+| Real answer, evolutionary search (the normal case) | `scripts/sim.sh <csv> --name NAME --threads 8` | ~8 h |
 
 Everything else in this file supports these rows. There is no 1v1 scoring: candidate
 sampling is by pvpoke rank alone (1/(rank+20) per species+shadow build; a build pvpoke
@@ -106,7 +106,8 @@ opponent-strength-gamma 1, similar-rivalry 1 / similar-floor 0.35, mutation
 hot-start 0.15-0.6, the 0.4/0.1/0.2/0.2 weights, core-rivalry 0.2). The
 previous standard (200 flat, 566 opponents with 400 sampled) scored 3.6 points
 lower on the curated 100 and took 4x the wall time; it lives on only as
-`recipes/meta.json`, which `--meta` runs still use unchanged. The full
+`recipes/meta.json`, kept for the recipe A/B scripts. `--meta` runs use
+`recipes/standard.json` too. The full
 standard run is now just:
 
 ```bash
@@ -136,7 +137,7 @@ baseline: opponent side co-evolves again (curated-ratio 0.66), candidate
 fitness blends snowball + closer + consistency, core-rivalry uses the
 similarity-aware terms, and shared-weakness-weight is on. Treat this as the
 default unless told otherwise. `sim.sh` already bakes in
-`--config recipes/standard.json` (opponents-per-gen 566, sampled-opponents 400, population-final-ratio 1, elites 15, weights
+`--config recipes/standard.json` (opponents-per-gen 120, population-final-ratio 0.4, halving-rounds 3, elites 15, weights
 snowball 0.4 / closer 0.1 / consistency 0.2 / shared-weakness 0.2, core-rivalry
 0.2 -- see `sim.sh` reference below):
 
@@ -145,16 +146,7 @@ COLLECTION="jaxon-gl-collection.csv"
 RUN_NAME="jaxon-standard-2"        # unique, shell-safe; doubles as the PRNG seed
 
 bash scripts/setup.sh
-scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
-  --mutation-floor-start 0.15 --mutation-ceil-start 0.6 \
-  --dry-run -- \
-  --curated-ratio 0.66 \
-  --opponent-meta-pool 100 \
-  --archetype-beta 0.5 \
-  --opponent-strength-gamma 1 \
-  --population-final-ratio 0.4 \
-  --similar-rivalry 1 \
-  --similar-floor 0.35                 # inspect, then rerun without --dry-run
+scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 --dry-run   # inspect, then rerun without --dry-run
 ```
 
 | Addition | Why |
@@ -162,7 +154,7 @@ scripts/sim.sh "$COLLECTION" --name "$RUN_NAME" --threads 8 \
 | `--mutation-floor-start 0.15 --mutation-ceil-start 0.6` | hot-start mutation: 15-60% at generation 0, decreasing linearly to the standard 5-40% at the last generation (`mutationRatesAt` in `scripts/evolve.mjs`, covered by a unit test); user asked for this to widen early diversity |
 | `--threads 8` | what every recent run used; ~2 GB RSS on an 8 GB machine with headroom for the user's desktop. Re-measured 2026-09-04: 8 is fastest, 12 and 15 are slower (see "Why `--threads 8`" below) |
 | `--pool` left unset | no cap -- draws candidates from the whole deduped collection instead of the top 70 by 1v1 score; user asked for the entire collection to be eligible, 2026-09-10 |
-| `--curated-ratio 0.66`, `--opponent-meta-pool 100`, `--archetype-beta 0.5` | opponent side co-evolves (no `--fixed-opponents`) -- these are the config that `evolve-shared-standard-3-fitness` (the most recent completed real run, gen 99, DONE) actually used, carried over 2026-09-12 |
+| `--curated-ratio 0.66`, `--opponent-meta-pool 400`, `--archetype-beta 0.5` | opponent side co-evolves (no `--fixed-opponents`) -- these are the config that `evolve-shared-standard-3-fitness` (the most recent completed real run, gen 99, DONE) actually used, carried over 2026-09-12 |
 | `--opponent-strength-gamma 1` | candidate fitness IS weighted by how strong the opponent it beat was (default weighting) -- reverted from the `jaxon-standard-1` recipe's `0`, per `shared-standard-3-fitness` |
 | `--population-final-ratio 0.4` | candidate population at the last generation is 40% of the starting population; per `shared-standard-3-fitness` |
 | `--snowball-weight 0.4` | candidate-only fitness weight on `snowballScore` (own fraction of decided lead exchanges won), on top of `winRate: 1`; opponent-side fitness (`src/meta/opponentPool.js`) is a separate plain win-rate calc and is never touched by this flag; raised `0.1` -> `0.2` per `shared-standard-3-fitness`, then `0.2` -> `0.4` per the user directly, 2026-09-15 |
@@ -294,7 +286,7 @@ scripts/sim.sh --meta --name meta-vs-meta-<cup>-N [--cup <cup>] --threads 8 --dr
 | Collection | built once per run from pvpoke's rankings (`scripts/build-meta-collection.mjs` -> `out/evolve-NAME/meta-collection-[CUP-]CP.csv`), reused on resume; IVs = pvpoke defaults |
 | Pools | `--pool 400 --opponent-meta-pool 400` (`--meta-pool N`; 0 = full field) |
 | Mode | `--no-evolutions --meta-mode --random-opponent-lead` |
-| Size | population 200, 100 generations, 566 opponents per generation with each candidate fighting 400 sampled (`--sampled-opponents`), no population ramp, 15 elites (`recipes/meta.json` + `sim.sh --meta` defaults; unchanged by the 2026-10-09 standard-recipe switch) |
+| Size | `recipes/standard.json` (since 2026-10-09): population 300 ramping to 120, 120 opponents per generation fought in full, 15 elites, 100 generations |
 | Fitness weights | snowball 0.4, closer 0.1, consistency 0.2, shared-weakness 0.2, on BOTH sides (`--opponent-*-weight`) |
 | Search | Sequential Halving R=3 (default), core-rivalry 0.2 |
 
@@ -473,8 +465,8 @@ Options (anything else is passed through to `evolve.mjs`):
 | `--dry-run` | print command, exit | off |
 
 The launcher always adds `--config recipes/standard.json --seed NAME
---out-dir out/evolve-NAME` (`recipes/meta.json` under `--meta`, with
-`--population 200`). `recipes/standard.json` holds the baked defaults (since
+--out-dir out/evolve-NAME` (the same file under `--meta`).
+`recipes/standard.json` holds the baked defaults (since
 2026-10-09): `opponents-per-gen 120`, `population-final-ratio 0.4`,
 `halving-rounds 3`, `elites 15`, `curated-ratio 0.66`, `opponent-meta-pool 400`,
 `archetype-beta 0.5`, `opponent-strength-gamma 1`, `similar-rivalry 1`,

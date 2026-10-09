@@ -33,7 +33,7 @@
 #                     opponents, foreground (implies --fg; try it on
 #                     fixtures/sample-pokegenie.csv)
 #   --generations G   generation cap                          (default 100)
-#   --population N    GA population                           (default 300; 200 with --meta)
+#   --population N    GA population                           (default 300)
 #   --hours H         wall-clock budget -> --deadline-minutes (default: none)
 #   --threads N       worker threads (default: evolve.mjs's cpus-1, capped at 8)
 #   --profile         passthrough to evolve.mjs: per-worker CPU profile +
@@ -71,9 +71,8 @@
 #   snowball-weight 0.4, closer-weight 0.1, consistency-weight 0.2, shared-weakness-weight 0.2,
 #   core-rivalry 0.2
 #   (--pool is left unset -- evolve.mjs's own default: no cap, whole deduped collection)
-# --meta uses recipes/meta.json instead (population 200, opponents-per-gen 566,
-# sampled-opponents 400, population-final-ratio 1, same weights, no mutation hot-start),
-# so meta-vs-meta runs are unchanged by the 2026-10-09 switch.
+# --meta uses the same recipes/standard.json (since 2026-10-09); recipes/meta.json is
+# only the old 566/400 sizing kept for the recipe A/B scripts.
 # A passthrough --config overrides the recipe file entirely (evolve.mjs
 # only accepts one --config), and any individual passthrough flag (e.g.
 # --snowball-weight 0) overrides that one key from the recipe file.
@@ -212,8 +211,8 @@ if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
   exit 2
 fi
 
-recipe=standard; [ "$meta" = 1 ] && recipe=meta
-[ -z "$population" ] && { population=300; [ "$meta" = 1 ] && population=200; }
+recipe=standard
+[ -z "$population" ] && population=300
 cmd=(node scripts/evolve.mjs "$csv"
   --config "$repo/recipes/$recipe.json"
   --population "$population" --generations "$generations"
