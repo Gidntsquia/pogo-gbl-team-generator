@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { renderEvolveReportHtml } from '../src/evolve/reportHtml.js';
 import { renderEvolveReport } from '../src/evolve/reportMd.js';
+import { readCheckpoint } from '../src/evolve/checkpoint.js';
 
 const outDir = process.argv[2];
 if (!outDir) {
@@ -22,6 +23,13 @@ if (!outDir) {
 
 const resultPath = path.join(outDir, 'evolve-result.json');
 const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+// evolve-result.json keeps only each generation's timing; the race chart also
+// needs its win rates and top teams, which live in the evolve-gen<N>.json
+// checkpoints next to it.
+result.generationRecords = result.generationRecords.map((r, g) => {
+  const cp = readCheckpoint(outDir, g);
+  return cp ? { ...r, winRateBySignature: cp.winRateBySignature, analytics: cp.analytics } : r;
+});
 
 const reportPath = result.reportPath ?? path.join(outDir, 'my-teams-evolve.md');
 writeFileSync(reportPath, renderEvolveReport(result), 'utf8');
