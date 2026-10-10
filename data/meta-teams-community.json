@@ -1,805 +1,805 @@
 {
-  "cup": "mega",
-  "source": "meta-vs-meta-mega-great-1-gen99",
+  "cup": "all",
+  "source": "meta-vs-meta-gl-2-gen99",
   "teams": [
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-1",
-      "members": [
-        "sandslash_alolan",
-        "cramorant",
-        "carbink"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-2",
-      "members": [
-        "annihilape_shadow",
-        "empoleon",
-        "blastoise"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-3",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-1",
       "members": [
         "ninetales_alolan_shadow",
-        "melmetal",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-4",
-      "members": [
-        "dusknoir_shadow",
-        "melmetal",
-        "marowak"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-5",
-      "members": [
-        "empoleon",
-        "annihilape_shadow",
-        "jumpluff"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-6",
-      "members": [
-        "cramorant",
-        "carbink",
-        "sableye"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-7",
-      "members": [
-        "annihilape",
-        "sableye_mega",
-        "carbink"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-8",
-      "members": [
-        "cramorant",
-        "tinkaton",
-        "quagsire"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-9",
-      "members": [
-        "guzzlord",
-        "cramorant",
-        "ninetales"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-10",
-      "members": [
-        "stunfisk",
-        "charjabug_shadow",
-        "thievul"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-11",
-      "members": [
-        "ninetales_alolan_shadow",
-        "turtonator",
-        "feraligatr"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-12",
-      "members": [
-        "ninetales_shadow",
-        "tinkaton",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-13",
-      "members": [
-        "mimikyu",
-        "tinkaton",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-14",
-      "members": [
-        "melmetal",
-        "ninetales_alolan",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-15",
-      "members": [
-        "guzzlord",
-        "tinkaton",
-        "corviknight"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-16",
-      "members": [
-        "melmetal",
-        "fearow",
-        "quagsire"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-17",
-      "members": [
-        "dusclops",
-        "carbink",
-        "guzzlord"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-18",
-      "members": [
-        "cramorant",
-        "sandslash_alolan",
-        "carbink"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-19",
-      "members": [
-        "annihilape_shadow",
-        "empoleon",
-        "ninetales"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-20",
-      "members": [
-        "annihilape",
-        "vigoroth",
-        "carbink"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-21",
-      "members": [
-        "thievul",
-        "charjabug_shadow",
-        "stunfisk"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-22",
-      "members": [
-        "dusknoir_shadow",
-        "melmetal",
-        "tinkaton"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-23",
-      "members": [
-        "guzzlord",
-        "carbink",
-        "dusclops"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-24",
-      "members": [
-        "quagsire",
-        "annihilape",
-        "melmetal"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-25",
-      "members": [
-        "charjabug_shadow",
-        "thievul",
-        "stunfisk"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-26",
-      "members": [
-        "tinkaton",
-        "guzzlord",
-        "corviknight"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-27",
-      "members": [
-        "sableye_mega",
-        "tinkaton",
-        "milotic_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-28",
-      "members": [
-        "ninetales_shadow",
-        "altaria",
-        "corsola_galarian"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-29",
-      "members": [
-        "cramorant",
-        "charjabug_shadow",
-        "furret"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-30",
-      "members": [
-        "sableye_mega",
-        "ninetales_alolan",
-        "melmetal"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-31",
-      "members": [
-        "ninetales_shadow",
-        "tinkaton",
-        "rillaboom"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-32",
-      "members": [
-        "araquanid",
-        "corviknight",
-        "stunfisk"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-33",
-      "members": [
-        "mimikyu",
-        "thievul",
-        "jellicent"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-34",
-      "members": [
-        "melmetal",
-        "clodsire",
-        "jumpluff_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-35",
-      "members": [
-        "annihilape",
-        "corviknight",
-        "charjabug"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-36",
-      "members": [
-        "tinkaton",
-        "guzzlord",
-        "corviknight_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-37",
-      "members": [
-        "charjabug",
-        "corviknight",
-        "annihilape"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-38",
-      "members": [
-        "cramorant",
-        "malamar_mega",
-        "corsola_galarian"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-39",
-      "members": [
-        "sableye_mega",
-        "ninetales",
-        "jumpluff"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-40",
-      "members": [
-        "muk_alolan_shadow",
-        "azumarill",
-        "charjabug_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-41",
-      "members": [
-        "ninetales_shadow",
-        "tinkaton",
-        "dedenne"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-42",
-      "members": [
-        "corsola_galarian",
-        "corviknight",
-        "thievul"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-43",
-      "members": [
-        "ninetales_alolan",
-        "turtonator",
-        "feraligatr"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-44",
-      "members": [
-        "oinkologne_female",
-        "milotic",
-        "thievul"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-45",
-      "members": [
-        "corsola_galarian",
-        "cramorant",
-        "guzzlord"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-46",
-      "members": [
-        "melmetal",
-        "latias",
-        "turtonator"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-47",
-      "members": [
-        "stunfisk",
-        "corviknight",
-        "araquanid"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-48",
-      "members": [
-        "corviknight",
-        "annihilape",
-        "charjabug"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-49",
-      "members": [
-        "ninetales_shadow",
-        "cradily",
-        "melmetal"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-candidate-50",
-      "members": [
-        "quagsire_shadow",
-        "corviknight",
-        "altaria_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-1",
-      "members": [
-        "marowak_shadow",
-        "melmetal",
-        "quagsire"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-2",
-      "members": [
-        "empoleon",
-        "clodsire",
-        "stunfisk"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-3",
-      "members": [
-        "shelgon_shadow",
-        "tinkaton",
-        "ninetales_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-4",
-      "members": [
-        "thievul",
-        "carbink",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-5",
-      "members": [
-        "marowak_shadow",
-        "melmetal",
-        "thievul"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-6",
-      "members": [
-        "shelgon_shadow",
-        "clodsire",
-        "stunfisk"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-7",
-      "members": [
-        "tinkaton",
-        "thievul",
-        "annihilape"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-8",
-      "members": [
-        "jellicent",
-        "annihilape",
-        "tinkaton"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-9",
-      "members": [
-        "fearow",
-        "tinkaton",
-        "turtonator"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-10",
-      "members": [
-        "stunfisk",
-        "charjabug_shadow",
-        "tinkaton"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-11",
-      "members": [
-        "houndoom_shadow",
-        "carbink",
-        "empoleon_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-12",
-      "members": [
-        "ninetales_alolan",
-        "stunfisk",
-        "thievul"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-13",
-      "members": [
-        "turtonator",
-        "fearow",
-        "tinkaton"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-14",
-      "members": [
-        "thievul",
-        "talonflame",
-        "annihilape"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-15",
-      "members": [
-        "melmetal",
-        "clefable",
-        "feraligatr"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-16",
-      "members": [
-        "feraligatr",
-        "clodsire",
-        "machamp_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-17",
-      "members": [
-        "guzzlord",
-        "carbink",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-18",
-      "members": [
-        "ninetales_alolan_shadow",
-        "clodsire",
-        "lapras"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-19",
-      "members": [
-        "houndoom_shadow",
-        "vigoroth",
-        "clodsire"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-20",
-      "members": [
-        "tinkaton",
-        "houndoom",
-        "sableye_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-21",
-      "members": [
-        "annihilape",
-        "empoleon_shadow",
-        "quagsire"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-22",
-      "members": [
-        "melmetal",
-        "quagsire_shadow",
-        "feraligatr"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-23",
-      "members": [
-        "cramorant",
-        "sandslash_alolan",
-        "tinkaton"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-24",
-      "members": [
-        "cramorant",
-        "charjabug_shadow",
-        "dragonair"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-25",
-      "members": [
-        "tinkaton",
-        "annihilape_shadow",
-        "feraligatr"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-26",
-      "members": [
-        "guzzlord",
-        "forretress",
-        "sableye_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-27",
-      "members": [
-        "melmetal",
-        "slurpuff",
-        "gastrodon"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-28",
-      "members": [
-        "thievul",
-        "charjabug_shadow",
-        "goodra"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-29",
-      "members": [
-        "ninetales_alolan_shadow",
-        "dunsparce",
-        "forretress_shadow"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-30",
-      "members": [
-        "ninetales_alolan_shadow",
-        "clodsire",
-        "stunfisk"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-31",
-      "members": [
-        "ninetales_alolan",
-        "regidrago",
-        "thievul"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-32",
-      "members": [
-        "altaria",
-        "morpeko_full_belly",
-        "melmetal"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-33",
-      "members": [
-        "quagsire_shadow",
-        "charjabug",
-        "ninetales_alolan"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-34",
-      "members": [
-        "altaria",
-        "ninetales_shadow",
+        "mantine",
         "quagsire_shadow"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-35",
-      "members": [
-        "talonflame_shadow",
-        "sableye_mega",
-        "clefable"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-36",
-      "members": [
-        "altaria",
-        "cradily",
-        "empoleon"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-37",
-      "members": [
-        "melmetal",
-        "slurpuff",
-        "annihilape"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-38",
-      "members": [
-        "carbink",
-        "thievul",
-        "chesnaught_mega"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-39",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-2",
       "members": [
         "guzzlord",
-        "stunfisk",
-        "mantine"
+        "ninetales",
+        "corviknight"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-40",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-3",
+      "members": [
+        "stunfisk",
+        "vigoroth",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-4",
+      "members": [
+        "annihilape_shadow",
+        "corviknight",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-5",
+      "members": [
+        "ninetales",
+        "guzzlord",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-6",
+      "members": [
+        "ninetales",
+        "thievul",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-7",
       "members": [
         "cramorant",
-        "altaria",
-        "ninetales"
+        "sableye",
+        "carbink"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-41",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-8",
       "members": [
-        "goodra",
+        "thievul",
+        "jumpluff_shadow",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-9",
+      "members": [
+        "melmetal",
+        "ninetales",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-10",
+      "members": [
+        "ninetales_alolan",
+        "annihilape",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-11",
+      "members": [
+        "ninetales",
+        "melmetal",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-12",
+      "members": [
+        "cramorant",
+        "stunfisk",
+        "umbreon"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-13",
+      "members": [
+        "thievul",
+        "vigoroth",
+        "stunfisk"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-14",
+      "members": [
+        "feraligatr",
+        "annihilape_shadow",
+        "clodsire"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-15",
+      "members": [
+        "melmetal",
+        "quagsire_shadow",
+        "fearow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-16",
+      "members": [
+        "annihilape_shadow",
+        "corviknight_shadow",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-17",
+      "members": [
+        "corsola_galarian",
         "charjabug_shadow",
         "thievul"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-42",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-18",
       "members": [
-        "muk_alolan",
-        "altaria",
-        "mantine"
+        "cramorant",
+        "guzzlord",
+        "nidoqueen"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-43",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-19",
       "members": [
+        "charjabug",
+        "corsola_galarian",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-20",
+      "members": [
+        "guzzlord",
+        "corsola_galarian",
+        "quagsire_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-21",
+      "members": [
+        "melmetal",
+        "quagsire_shadow",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-22",
+      "members": [
+        "cramorant",
+        "jumpluff",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-23",
+      "members": [
+        "corsola_galarian",
+        "charjabug",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-24",
+      "members": [
+        "ninetales",
+        "grimmsnarl",
+        "blastoise"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-25",
+      "members": [
+        "empoleon",
+        "swampert_shadow",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-26",
+      "members": [
+        "charjabug",
+        "corsola_galarian",
+        "quagsire_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-27",
+      "members": [
+        "thievul",
+        "jumpluff",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-28",
+      "members": [
+        "annihilape_shadow",
+        "feraligatr",
+        "clodsire"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-29",
+      "members": [
+        "dusclops_shadow",
+        "cramorant",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-30",
+      "members": [
+        "ninetales_alolan_shadow",
+        "mantine",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-31",
+      "members": [
+        "cramorant",
+        "stunfisk",
+        "politoed_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-32",
+      "members": [
+        "annihilape_shadow",
+        "thievul",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-33",
+      "members": [
+        "throh_shadow",
+        "cramorant",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-34",
+      "members": [
+        "ninetales_alolan_shadow",
+        "mantine",
+        "charjabug_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-35",
+      "members": [
+        "fearow",
+        "annihilape_shadow",
+        "typhlosion"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-36",
+      "members": [
+        "typhlosion_shadow",
+        "corsola_galarian",
+        "gogoat"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-37",
+      "members": [
+        "miltank",
         "tinkaton",
-        "charjabug_shadow",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-38",
+      "members": [
+        "melmetal",
+        "ninetales_alolan",
+        "milotic_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-39",
+      "members": [
+        "diggersby",
+        "tinkaton",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-40",
+      "members": [
+        "walrein_shadow",
+        "marowak",
+        "araquanid"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-41",
+      "members": [
+        "annihilape_shadow",
+        "forretress",
+        "muk_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-42",
+      "members": [
+        "melmetal",
+        "snorlax_shadow",
         "stunfisk"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-44",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-43",
+      "members": [
+        "dusclops_shadow",
+        "turtonator",
+        "hawlucha"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-44",
+      "members": [
+        "florges",
+        "charjabug_shadow",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-45",
+      "members": [
+        "lickilicky",
+        "sableye_shadow",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-46",
+      "members": [
+        "araquanid_shadow",
+        "marowak",
+        "clefable"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-candidate-47",
       "members": [
         "melmetal",
-        "milotic",
-        "kommo_o"
+        "corsola_galarian",
+        "primarina"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-45",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-48",
       "members": [
-        "ninetales",
-        "sandslash_alolan_shadow",
-        "pachirisu"
+        "feraligatr",
+        "melmetal",
+        "tinkaton"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-46",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-49",
       "members": [
-        "charjabug",
-        "marowak_shadow",
-        "altaria"
+        "clodsire",
+        "annihilape_shadow",
+        "feraligatr"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-47",
+      "id": "meta-vs-meta-gl-2-gen99-candidate-50",
+      "members": [
+        "tinkaton",
+        "vigoroth",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-1",
+      "members": [
+        "charjabug_shadow",
+        "carbink",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-2",
+      "members": [
+        "carbink",
+        "annihilape_shadow",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-3",
+      "members": [
+        "stunfisk",
+        "araquanid",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-4",
       "members": [
         "melmetal",
-        "marowak_alolan",
-        "jumpluff"
+        "dragonair",
+        "cramorant"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-48",
+      "id": "meta-vs-meta-gl-2-gen99-opponent-5",
+      "members": [
+        "mimikyu",
+        "carbink",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-6",
       "members": [
         "melmetal",
-        "forretress",
-        "vigoroth"
-      ]
-    },
-    {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-49",
-      "members": [
-        "guzzlord",
-        "corviknight",
+        "araquanid_shadow",
         "marowak_shadow"
       ]
     },
     {
-      "id": "meta-vs-meta-mega-great-1-gen99-opponent-50",
+      "id": "meta-vs-meta-gl-2-gen99-opponent-7",
       "members": [
-        "turtonator",
+        "charjabug_shadow",
+        "clefable",
+        "clodsire"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-8",
+      "members": [
+        "ninetales_shadow",
+        "quagsire",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-9",
+      "members": [
+        "charjabug_shadow",
+        "walrein",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-10",
+      "members": [
+        "charjabug_shadow",
+        "tinkaton",
+        "vigoroth"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-11",
+      "members": [
+        "doublade",
+        "altaria",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-12",
+      "members": [
+        "swampert_shadow",
+        "corsola_galarian",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-13",
+      "members": [
+        "corsola_galarian",
+        "annihilape",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-14",
+      "members": [
+        "dusclops_shadow",
+        "tinkaton",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-15",
+      "members": [
+        "skeledirge",
+        "vigoroth",
+        "annihilape"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-16",
+      "members": [
+        "thievul",
+        "tinkaton",
+        "doublade"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-17",
+      "members": [
+        "melmetal",
+        "thievul",
+        "cramorant"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-18",
+      "members": [
         "cramorant",
-        "stunfisk_galarian"
+        "mimikyu",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-19",
+      "members": [
+        "tinkaton",
+        "charjabug_shadow",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-20",
+      "members": [
+        "guzzlord",
+        "cramorant",
+        "jellicent"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-21",
+      "members": [
+        "golisopodsh",
+        "thievul",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-22",
+      "members": [
+        "melmetal",
+        "mantine",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-23",
+      "members": [
+        "cramorant",
+        "quagsire_shadow",
+        "annihilape_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-24",
+      "members": [
+        "annihilape_shadow",
+        "walrein",
+        "milotic_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-25",
+      "members": [
+        "swampert",
+        "kingdra",
+        "clodsire"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-26",
+      "members": [
+        "feraligatr",
+        "raichu",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-27",
+      "members": [
+        "mantine",
+        "melmetal",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-28",
+      "members": [
+        "thievul",
+        "kingdra_shadow",
+        "stunfisk"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-29",
+      "members": [
+        "quagsire_shadow",
+        "oinkologne_female",
+        "swanna_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-30",
+      "members": [
+        "hydreigon_shadow",
+        "feraligatr",
+        "stunfisk"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-31",
+      "members": [
+        "annihilape",
+        "sealeo",
+        "feraligatr"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-32",
+      "members": [
+        "annihilape_shadow",
+        "charjabug_shadow",
+        "thievul"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-33",
+      "members": [
+        "melmetal",
+        "altaria_shadow",
+        "corsola_galarian"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-34",
+      "members": [
+        "fearow",
+        "quagsire_shadow",
+        "swampert_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-35",
+      "members": [
+        "charjabug_shadow",
+        "blastoise",
+        "ninetales"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-36",
+      "members": [
+        "grimmsnarl",
+        "gourgeist_super",
+        "quagsire_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-37",
+      "members": [
+        "fearow",
+        "melmetal",
+        "mantine"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-38",
+      "members": [
+        "carbink",
+        "mandibuzz",
+        "quagsire_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-39",
+      "members": [
+        "melmetal",
+        "kommo_o",
+        "gligar_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-40",
+      "members": [
+        "seaking",
+        "stunfisk_galarian",
+        "ampharos_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-41",
+      "members": [
+        "stunfisk",
+        "melmetal",
+        "clefable"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-42",
+      "members": [
+        "stunfisk",
+        "florges",
+        "carbink"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-43",
+      "members": [
+        "annihilape_shadow",
+        "ninetales_shadow",
+        "togetic"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-44",
+      "members": [
+        "melmetal",
+        "araquanid",
+        "ninetales_alolan_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-45",
+      "members": [
+        "quagsire_shadow",
+        "walrein",
+        "jumpluff"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-46",
+      "members": [
+        "ninetales_alolan",
+        "wartortle",
+        "muk_alolan_shadow"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-47",
+      "members": [
+        "stunfisk",
+        "empoleon",
+        "hawlucha"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-48",
+      "members": [
+        "melmetal",
+        "araquanid_shadow",
+        "ninetales_alolan"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-49",
+      "members": [
+        "corsola_galarian",
+        "altaria_shadow",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "meta-vs-meta-gl-2-gen99-opponent-50",
+      "members": [
+        "melmetal",
+        "stunfisk",
+        "clefable"
       ]
     }
   ]
