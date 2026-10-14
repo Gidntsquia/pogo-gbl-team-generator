@@ -8,7 +8,7 @@ files.
 - `importer/` — CSV → NormalizedMon. `index.js` (Poke Genie + generic row
   mapping), `csv.js` (dep-free parser), `gamemaster.js` (species/form
   resolution against vendored gamemaster), `moves.js` (move-name →
-  moveId for `--current-moves`), `util.js` (parsing helpers).
+  moveId for current-moves mode, `--meta-mode`), `util.js` (parsing helpers).
 - `engine/` — the only code that touches pvpoke. `pvpokeLoader.js` boots
   vendor sources in a Node `vm`; `harness.js` (`buildPokemon`, 1v1
   `simBattle`); `teamBattle.js` (3v3 `battleTeams`, Training/emulate mode; its determinism/clock/AI-wrapper helpers are in `battle/`);

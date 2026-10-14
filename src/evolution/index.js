@@ -162,7 +162,7 @@ function defaultIvsFor(ctx, speciesId, shadow) {
  * Best Buddy flags, so those carry over verbatim. Two fields deliberately do
  * NOT: `cp` (recomputed by the engine from the evolved base stats, and the
  * CSV's value would be wrong for the new species) and `moves` (the evolved
- * form has a different movepool, so `--current-moves` falls back to pvpoke's
+ * form has a different movepool, so current-moves mode (`--meta-mode`) falls back to pvpoke's
  * recommended moveset for the variant, with a warning).
  *
  * One exception to "IVs carry over": a mon whose CSV row stated no IVs
