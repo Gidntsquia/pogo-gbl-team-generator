@@ -2,7 +2,7 @@
 // engine calls. Groups opponents into "archetypes" (teams built around the
 // same two-species core) so a crowded, mutation-bred core does not get to
 // count as N independent teams to beat in fitness math that sums or averages
-// over opponents; see docs/plans/2026-09-08-fitness-restructure.md.
+// over opponents;.
 
 import { baseIdOf } from './sampleTeams.js';
 

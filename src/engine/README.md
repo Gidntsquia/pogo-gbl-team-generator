@@ -76,20 +76,13 @@ across all 9 lead pairings of a top-meta team against itself the split is
 5–4. `test/e2e.test.js` therefore asserts neither side takes more than
 6 of 9 pairings (win rate inside `[2/9, 7/9]`), not a hard 50/50. A blatantly
 dominant team (3 top-meta mons vs 3 joke mons) wins **all 9** pairings.
-Across a 200x200 co-evolving population (willpower-3, 45 generations) this
-same fixed-side offset used to show up at population scale: team A
-(candidates) won ~45-47% of battles overall. Fixed 2026-09-18
-(`src/evolve/fitness.js` `FITNESS_SEMANTICS` v13, plans/WORKER_NOTES.md Item 2):
-`evaluateTeamsInOrder` now battles every pairing from both seats (candidate-
-as-A, and opponent-as-A with the result mirrored back through
-`mirrorBattleResult`), in every generation and the final elites pass, so this
-per-battle team-A/B offset averages out of the population-level fitness
-numbers instead of accumulating into one. This is a harness fix, not an
-engine change -- the underlying per-battle 5-4 mirror-match split above is
-untouched (and untouchable; vendor battle math). See RUNBOOK.md's
-meta-vs-meta fitness-symmetry section and `docs/fitness-symmetry.md` for the
-measured before/after, the noise floor T, and the population-strength gap
-this fix does not address.
+Across a co-evolving population this fixed-side offset would show up at population
+scale (team A winning ~45-47% of battles overall), so `evaluateTeamsInOrder`
+(`src/evolve/fitness.js`) battles every pairing from both seats (candidate-as-A, and
+opponent-as-A with the result mirrored back through `mirrorBattleResult`), in every generation
+and the final elites pass. The per-battle team-A/B offset then averages out of the
+population-level fitness numbers. This is a harness rule, not an engine change; the
+per-battle 5-4 mirror-match split above is untouched (vendor battle math).
 
 **Instance rules.** As with `simBattle`, `teamA` and `teamB` must be distinct
 Pokemon instances from each other (pvpoke mutates `.index`/battle state on the
@@ -109,13 +102,8 @@ boots its **own** headless pvpoke engine context exactly once
 then answers a stream of battle specs from the main thread. Results come back
 **in spec order**; `test/parallel.test.js` asserts they match a serial loop of
 `battleTeams(ctx, spec)` calls (plus edge cases at `threads=1` and
-`threads=4`) for that suite's battle plans. See **"Resolved: battle order and
-reused-instance state"** below: verification originally found exact HP
-totals could drift from a serial run when a Pokemon instance was reused
-across several battles in a different order, because pvpoke itself carried a
-subtle order-sensitivity across such reuse -- later work found and
-fixed the mechanisms behind that, and results are now bit-identical, not
-merely winner-equivalent.
+`threads=4`) for that suite's battle plans. See **"Battle order and
+reused-instance state"** below for the rules that keep threaded and serial runs identical.
 
 ### `createExecutor` vs `runBattles`
 
@@ -197,7 +185,7 @@ cursor), under which two runs of the *same* `(specs, threads)` could assign
 specs to workers differently depending on real execution timing. Since each
 worker keeps its own per-spec build cache and reuses Pokemon instances across
 the specs it personally handles, and reusing an instance across sequential
-battles has pvpoke's own order-sensitivity (see "Known limitation" below),
+battles has pvpoke's own order-sensitivity (see "Battle order and reused-instance state" below),
 availability-based dispatch meant the exact sequence of battles a given
 worker's instances saw wasn't reproducible run to run -- only each
 individual battle's winner was (each spec is self-contained: teams + seed).
@@ -333,104 +321,24 @@ now accepts an opt-in `opts.threads` (and the CLI a `--threads` flag) that
 collects every battle across every candidate into one flat spec list and runs
 it through a single `runBattles()` call.
 
-## Resolved: battle order and reused-instance state (history; was "Known limitation")
+## Battle order and reused-instance state
 
-> **Note on the test citations below.** This section was written when the suite
-> ran real battles from eleven files, and it cites `test/teamBattle.test.js`,
-> the old tournament and teams tests as the proofs for the two
-> mechanisms. Those files were removed when the suite was consolidated so that
-> `test/e2e.test.js` is the only place real battles run. The *fixes* described
-> here are still in the code and still correct — but the specific regression
-> tests that pinned them (the pre-battle-state probe, the `wrapRunScenario`
-> restore tests, and the replayed 332-battle flip) went with those files and are
-> **not** currently covered. Treat the citations as history, not as a claim about
-> what the suite checks today. Re-pinning them would mean porting those cases
-> into `test/e2e.test.js`.
+Serial and threaded execution of the same battles are bit-identical (`avgHpMargin` included;
+`test/e2e.test.js` asserts it with `assert.deepEqual` on full result objects). Two rules in
+`battleTeams()` (`teamBattle.js`) make that hold when Pokemon instances are reused across
+battles:
 
-**Status (2026-08-22): RESOLVED.** Every mechanism behind this
-section's history is fixed, INCLUDING the threaded-execution follow-up the
-"What this does NOT yet establish" paragraph below left open. Serial and
-threaded execution of the same battles are now bit-identical -- not merely
-winner-equivalent or rank-equivalent -- verified directly (`assert.deepEqual`
-on full result objects, `avgHpMargin` included, in `test/e2e.test.js`
-) and at scale (a since-removed variance study
-across several seeds/pool sizes, 0 flips throughout). **Serial is no longer
-the "reference" mode threaded execution merely approximates -- both are
-simply correct.** The rest of this section is kept as history: it explains
-the mechanisms, in the order they were found, for anyone touching
-`teamBattle.js`'s setup sequence or reused-instance handling in the future.
+- All six roster members go through `setNewPokemon()`-equivalent stamping of `.battle`/`.index`
+  before `fullReset()`, so `resetMoves()` (which picks `bestChargedMove` partly from
+  `move.dpe`, computed against `battle.getOpponent(self.index)`) never reads a stale opponent
+  slot left over from an earlier battle.
+- pvpoke's own defaults (`baitShields=1`, `farmEnergy=false`, `priority=0`, and the fourth
+  per-battle field the constructor sets) are stamped on all six members right after
+  `setRoster()`/`setTeam()`, so a mon that led one battle does not carry its state into the
+  next as a bench member.
 
-Discovered during hands-on verification (executing real battles caught this
--- verification, not code review, is what counts).
-pvpoke's `Pokemon#resetMoves()` (called by `fullReset()`, which our
-`battleTeams()` wrapper calls on every team member before every battle) picks
-`bestChargedMove` partly from `move.dpe`, which `initializeMove()` computes via
-`move.damage = DamageCalculator.damage(self, battle.getOpponent(self.index), move)`.
-`self.index` is the Pokemon's *battle slot* from whichever `Battle` it last
-participated in; our wrapper calls `fullReset()` **before**
-`battle.setNewPokemon()` reassigns indices for the *current* battle, so this
-read can see a stale/absent opponent relative to the battle about to run. The
-practical effect: a Pokemon instance's very first battle can pick a (very
-slightly) different `bestChargedMove` tie-break than its second, third, etc.
-battle -- verified directly (`buildPokemon` + `applyGroupMoveset` twice,
-identical moveset/stats/shadowType/level/cp both times, same seed, same
-opponent instances, yet different `survivorsHp`/turn counts on the first call
-only; stable from the second call onward).
-
-This is a **pre-existing pvpoke engine characteristic**, not something this
-package introduced -- it applies to *any* reuse of a Pokemon instance across
-sequential battles, which today's serial `evaluateTeamsInOrder`
-already do constantly (a candidate's `teamA` instances are built once and
-battle every meta team in a loop; a meta team's `teamB` instances are built
-once and battle every candidate). Serial execution is self-consistent only
-because its battle order never changes run to run; `runBattles`' worker pool
-distributes specs across workers in an order that generally differs from the
-serial loop's, and each worker's own build cache reuses instances in *its*
-order -- so **exact HP totals (`avgHpMargin`, `safeSwap.avgHpPct`) can drift by
-a small amount** between a serial and a threaded run of the same inputs.
-
-**CORRECTION (found by executing a larger real run than the original
-test covered):** the original claim here -- that win/loss outcomes and team
-win rates are *unaffected* by threading -- does not hold in general; it only
-held at that smaller test scale. A real evolve run at
-larger scale (4 finalists x 4 opponents x 9 pairings = 144 stage-3 battles,
-the old tournament test) hit a case where the SAME mechanism above (a
-reused instance's `bestChargedMove` tie-break depending on which battles that
-cache entry already went through) reclassified one battle's verdict, not only
-its HP margin -- a narrow win under serial execution came out a tie under
-threaded execution of the identical seed/spec. Practical impact is bounded:
-each such flip moves a team's win rate by at most one battle's weight (out of
-however many battles feed that rate), and it is rare enough that the
-smaller-scale test never tripped over it -- but "unaffected" was too strong a
-claim. the old tournament test's threaded-vs-serial test therefore checks
-win rates within a small documented tolerance rather than exact equality;
-`test/teams.test.js`'s smaller-scale threaded test still happens to pass
-exactly, which is consistent with this being rare rather than absent. The
-vendor-is-read-only rule (never reimplement battle math) means this is
-documented here as a known characteristic rather than patched; it is also
-direct evidence for the still-open "TrainingAI variance study" question,
-which a future fire could use this as a starting point for.
-
-**UPDATE (2026-08-21): one root cause of the above fixed, a second one found.** Investigation traced the paragraph above to two DISTINCT mechanisms rather than one:
-
-1. **Mechanism 1 (fixed):** `battleTeams()`'s two LEADS get `.battle`/`.index` stamped correctly before their `fullReset()` call -- via `battle.setNewPokemon(orderedA[0], 0, false)` / `(orderedB[0], 1, false)`, called earlier in the function (before the fullReset loop). The four BENCH members never went through `setNewPokemon()` at all, so their `fullReset()` -> `resetMoves()` -> `initializeMove()` read whatever `.battle`/`.index` that instance's constructor left it with -- for a mon built via `buildPokemon()`, that is `ctx.battle` (the ONE shared `Battle` instance `src/scoring/index.js`'s 1v1 matrix pass reuses across the whole scoring pipeline) at `index=0`, meaning `initializeMove()`'s `battle.getOpponent(self.index)` could return whatever opponent an entirely unrelated 1v1 scoring battle last left sitting in that shared battle's other player slot. **Fix:** stamp all 6 members the same way `Battle#setNewPokemon` itself does -- `mon.setBattle(battle); mon.index = <0|1>` -- immediately before the existing `fullReset()` loop. Zero cost (two cheap public-API calls), no battle math touched. Proven directly: `test/teamBattle.test.js`'s new pre-battle-state describe block dirties the shared `ctx.battle` with real 1v1 sims against different species in different orders, then builds a fresh probe team and asserts its pre-battle state (`.index`, `bestChargedMove`, every move's `damage`/`dpe`) is bit-identical regardless of what was left in the shared context -- fails without the fix (moves' `damage`/`dpe` differ), passes with it.
-2. **Mechanism 2 (root-caused and fixed; see the "UPDATE" below for the actual final cause, which is NOT this runScenario leak):** even with mechanism 1 fully neutralized (pre-battle state instrumented and proven bit-identical across orderings for all 6 members), a reproduced knife-edge battle from the (since-removed) variance study script STILL flips winner under reordering -- so a second, distinct order-dependent mechanism acts DURING the turn loop, not just at setup. The lead named here originally -- `vendor/pvpoke/src/js/training/TrainingAI.js`'s `runScenario` builds a throwaway `Battle` and calls `setNewPokemon` on real team/bench mons (mutating `.battle`/`.index`/`baitShields`/`farmEnergy`/`priority`), and its restore block puts back 7 fields but not `.battle`, `baitShields`, or `priority` -- was confirmed real by direct code reading and fixed: `src/engine/teamBattle.js` now exports `wrapRunScenario(ai)`, applied to both players' `TrainingAI` instances right after they're constructed, which wraps `runScenario` so every call snapshots and restores those 4 fields (via pvpoke's own public `getBattle()`/`setBattle()` -- a getter exists at `Pokemon.js:1975`, so no vendor edit was needed) on both its `pokemon` and `opponent` arguments, regardless of what the wrapped call does or throws. Every real call site of `runScenario`/`runBulkScenarios` reachable from our headless battle path (`evaluateMatchup`, `decideSwitch`, `decideShield`, and `runBulkScenarios` itself) was traced by hand and confirmed to only ever read the scenario's *return value*, never rely on the leaked mutation persisting -- so the wrap is safe. `test/teamBattle.test.js`'s `wrapRunScenario` describe block proves the wrap mechanism directly against fake stand-ins (restores all 4 fields on both args; restores even if the wrapped call throws; restores correctly across sequential calls -- the shape `evaluateMatchup`'s 4 back-to-back scenario calls actually produce).
-
-   **This is a real, proven, non-no-op fix -- but it does not close mechanism 2.** Re-running the variance study (`--candidates 5 --opponents 8 --shuffles 3`; script since removed) with the fix applied shows one candidate's CANONICAL (single fixed order) win rate shift (0.583 -> 0.597 vs the pre-fix baseline below), proving the leak was live and this wrap changes real battle outcomes. But the SPECIFIC 1-in-360 reversed-ordering flip this section's evidence names is **still present, unchanged** after the fix (still exactly 1/360, reversed ordering only, 0.069% mean, no ranking change) -- so a third, still-unidentified mechanism is responsible for at least that flip, not (solely) the leak just fixed. A future investigation should NOT re-derive the battle/baitShields/farmEnergy/priority leak (now fixed) -- worth looking at instead: `TrainingAI`'s own per-instance `scenarios`/`currentStrategy`/`previousStrategy` fields persisting across a mon's repeated `evaluateMatchup` calls within one battle in an order-sensitive way, or `chooseOption`'s random draw consuming the shared seeded RNG stream at a position that itself depends on how many scenarios were evaluated first (an accounting difference in *how much* randomness is consumed before a given draw, rather than a state-leak difference).
-
-**Net effect as of that point (superseded by the next "UPDATE" below):** mechanism 1 was a real, general bug (bench members could pick up a moveset tie-break from a completely unrelated scoring battle) and was already fixed. Mechanism 2's `.battle`/`baitShields`/`farmEnergy`/`priority` runScenario leak was also real and was fixed here, and measurably changed some outcomes -- but the specific knife-edge flip this section documents survived it, so at THIS point in the investigation the serial/threaded HP-margin and knife-edge-battle drift documented above and in the CORRECTION paragraph was still not fully explained; the serial-reference doctrine stood. Re-running the variance study (`--candidates 5 --opponents 8 --shuffles 3`; script since removed) before and after the ORIGINAL mechanism-1 fix, on that fire's repo state, had produced BIT-IDENTICAL output (same 1-flip-out-of-4-orderings result) -- consistent with mechanism 1 depending on what a completely separate earlier scoring pass leaves lying around, not on battle order within the study itself. A later fire (see the "UPDATE (2026-08-22)" paragraph immediately below) found and fixed the actual remaining cause.
-
-**UPDATE (2026-08-22): mechanism 2 root-caused and fixed.** With mechanism 1 fully neutralized (pre-battle state for all six members bit-identical across orderings, per mechanism 1's own test above), the reproduced the variance study `--candidates 5 --opponents 8 --shuffles 3 --seed <seed>` flip (`4|4|2|2`: candidate `corsola_galarian-empoleon_shadow-tinkaton` lead 2 vs opponent `tinkaton-feraligatr_shadow-gourgeist_super` lead 2) STILL flipped winner under reordering -- proving a second, distinct mechanism, as this section already anticipated. Direct instrumentation (dumping every ROSTER member's state right before `battle.start()`, not just the two active leads mechanism 1 already covered) found it: pvpoke's own `fullReset()`/`Player#setRoster()` never touch a Pokemon's `baitShields`, `farmEnergy`, or `priority` fields -- only `Battle#setNewPokemon()`/`TrainingAI#evaluateMatchup()` do, and both only ever run for whichever Pokemon is currently ACTIVE (the two leads at battle start, or whoever later switches in). A bench member that stays benched the whole battle -- or that was itself a LEAD in this same instance's immediately preceding `battleTeams()` call -- carries those three fields over from that unrelated matchup. Comparing a fresh build of the flipping matchup against the same matchup reached after 332 real prior battles (canonical order) found the bench members sitting at `baitShields=0`/`priority=1` in the contaminated run versus pvpoke's own documented `Pokemon.js` constructor defaults (`baitShields=1`, `farmEnergy=false`, `priority=0`) in the fresh run -- while the two ACTIVE leads' own pre-battle state (index, `bestChargedMove`, every move's damage/dpe) was independently confirmed bit-identical in both runs, isolating the divergence to the bench fields specifically. (An earlier, disproven hypothesis on the way to this: wrapping `TrainingAI#runScenario` to restore `.battle`/`baitShields`/`farmEnergy`/`priority` on its two parameters immediately after each call -- the ticket's originally-suspected lead -- made no difference to the reproduced flip, because the leak isn't from an incomplete restore *within* a call, it's from nothing ever initializing these fields for a Pokemon that participates in a battle without ever being explicitly activated.)
-
-**The fix:** `battleTeams()` now stamps pvpoke's own defaults (`baitShields=1`, `farmEnergy=false`, `priority=0`) on all six roster members immediately after `setRoster()`/`setTeam()`, before `setNewPokemon()` is called on the two leads -- so the lead-only `setNewPokemon` calls and `evaluateMatchup`'s own unconditional reset still correctly override these for whichever Pokemon actually leads or later switches in; this only changes behavior for a Pokemon that stays benched all battle. Same permitted-fix shape as mechanism 1's fix: a public-API-level stamp in our own harness, zero vendor edits, zero battle-math changes.
-
-**Verification.** `test/teamBattle.test.js`'s new bench-state describe blocks: (1) a direct unit test proves a mon that led one battle (deterministically finishing with `priority=1`, via `Player`'s own player-index-based priority, not AI strategy) resets to pvpoke's exact defaults when reused as a bench member of the next battle -- fails without the fix (asserted by reverting it locally), passes with it; (2) the literal reproduced `4|4|2|2` flip, replayed as an exact 332-prior-battles-then-the-flip-battle sequence, now produces a result bit-identical (winner, `survivorsHp`, turn count) to a fresh-instance run of that same matchup -- also fails without the fix. the variance study (`--candidates 5 --opponents 8 --shuffles 3`; script since removed) now reports **0/360 flips across all 4 non-baseline orderings** (down from the 1/360-in-"reversed"-only baseline this section documented above) -- re-run a second time at a different scale/seed (`--candidates 6 --opponents 10 --shuffles 3 --seed t20b-verify`, 540 battles/ordering) for a total of **0 flips across 3,600 battle-comparisons** (2 seeds/scales combined), versus flips present pre-fix. `npm test` stayed **216/216 green** (214 prior + 2 new); no existing test's expected values needed to change, same as mechanism 1's own outcome.
-
-**Follow-up closed (same day, second routine fire, 2026-08-22): the threaded-execution gap the paragraph above left open is now verified fixed, and a fourth field was found in the process.** Reviewing the bench-state fix above (`baitShields`/`farmEnergy`/`priority`) against pvpoke's own `Pokemon` constructor found a fourth field with the exact same shape: `hasActed` also defaults to a constant (`false`, `Pokemon.js:109`), and is ALSO never touched by `reset()`/`fullReset()` -- `Battle#step()`'s own per-turn `poke.hasActed = false` (`Battle.js:300`) only clears it for the two currently-ACTIVE `pokemon[]` slots, never a bench member. A stale `hasActed=true` carried in from a previous battle can make `Battle#getTurnAction`'s `! poke.hasActed` gate (`Battle.js:749`) treat a just-switched-in mon as having already acted this turn -- a real, independent gap in the fix above, not yet covered by its own reset loop. Added to the same reset (`teamBattle.js`'s existing `baitShields`/`farmEnergy`/`priority` stamp loop now also sets `hasActed = false`), proven directly (`test/teamBattle.test.js`'s new bench-`hasActed` test: a `hasActed=true` sentinel does not survive being reused as a bench member -- fails without the fix, passes with it).
-
-With that gap closed, the SPECIFIC follow-up the paragraph above asked for -- re-verifying against real threaded (worker-pool) execution, not just single-threaded list reordering -- was run: the team evaluator with `threads: 2` vs its serial equivalent on a real fixture collection now produce full-result-object-identical output (`avgHpMargin` included, not just win rates), and the old tournament test's own 144-stage-3-battle threaded-vs-serial test (the exact scale the correction above originally found its flip at) now asserts exact `winRate` AND `avgHpMargin` equality per finalist team instead of the previous `3/36` tolerance band -- and passes. the variance study re-run across 4 different seeds/pool sizes with the complete fix (all 4 fields): **0 flips out of 1341+ battles combined**, on top of the 0/3,600 the bench-state fix alone already achieved for single-threaded reordering.
-
-**Net effect: the doctrine is retired.** the old tournament and teams tests' threaded-vs-serial tests now assert bit-identity, not tolerance (`test/parallel.test.js`'s own serial-vs-parallel tests already asserted exact equality and needed no change -- its fixed battle plans apparently never happened to hit this class of bug). The "serial is the reference mode, threaded is statistically equivalent" language in the corrections above and in `README.md`'s top-level `--threads` docs is superseded -- same spec + seed → same result, full stop, regardless of execution order or thread count.
+Anyone touching the setup sequence or reused-instance handling must keep both. The vendor
+engine is read-only, so these live in the wrapper, never in pvpoke code.
 
 ## Why a `vm` sandbox instead of a browser
 
@@ -550,7 +458,7 @@ To reproduce the profiling: `node --cpu-prof --cpu-prof-dir=out
 --prof`/`--prof-process` for a text report) — bucket `callFrame.url` by
 `vendor/pvpoke` vs `src/engine` to repeat the split above.
 
-### The scenario memo (2026-09-04)
+### The scenario memo
 
 Bucketing the same profile by *what the vendor code is doing* rather than
 by file changed the conclusion above. ~95% of a 3v3 battle's samples are

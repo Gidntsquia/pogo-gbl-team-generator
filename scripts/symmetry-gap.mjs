@@ -2,7 +2,7 @@
 /**
  * Measure how far apart the candidate and opponent sides of a meta-vs-meta
  * evolve run land, on a fixed BASE config, across several seeds -- the one
- * repeatable check `plans/PLAN.md` ("fitness-symmetry" loop) is built around.
+ * repeatable symmetry check.
  *
  * `run --label L [--seeds s1,s2,...] [--population N --opponents-per-gen N]
  *   [-- extra evolve flags]`
@@ -39,7 +39,7 @@ const BASE_CSV = join(OUT_DIR, 'meta-collection-willpower-1500.csv');
 const THRESHOLD = 0.02;
 const DEFAULT_SEEDS = ['s1', 's2', 's3', 's4', 's5'];
 
-// BASE config from plans/PLAN.md, as flag pairs (population/opponents-per-gen
+// BASE config, as flag pairs (population/opponents-per-gen
 // overridable, seed always overridden per run).
 const BASE_FLAGS = [
   '--cp', '1500',

@@ -7,7 +7,7 @@
  *
  * Usage: node scripts/fitness-sides.mjs out/evolve-<name>
  *
- * Three layers per side (plans/WORKER_NOTES.md Item 1 -- same-kind numbers on
+ * Three layers per side -- same-kind numbers on
  * both sides so "equal" is checkable):
  *   raw      -- unweighted winPoints/battles off each side's own ledger
  *               (`candidateRawWinRateMean`/`opponentRawWinRateMean`).

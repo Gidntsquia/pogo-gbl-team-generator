@@ -239,7 +239,7 @@ Options:
   --closer-weight R        candidate-side fitness weight on closerScore (mean
                             role-prior closer score of the team's two back
                             members), on top of winRate=1; disabled by
-                            default (see docs/plans/2026-09-08-fitness-restructure.md)
+                            default
                                                        (default ${DEFAULT_FITNESS_WEIGHTS.closer})
   --consistency-weight R   candidate-side fitness weight on consistencyScore
                             (worst-quartile per-archetype win rate), on top of

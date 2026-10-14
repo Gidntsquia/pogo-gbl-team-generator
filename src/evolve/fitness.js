@@ -18,7 +18,7 @@ function opponentLeadIndex(opp) {
 
 /**
  * Own-lead-locked single pairing: candidate's team[0] vs. the opponent's
- * declared lead. Exported (plans/WORKER_NOTES.md Item 3) so a study script
+ * declared lead. Exported so a study script
  * can feed `evaluateTeamsInOrder` the exact same pairing generator
  * `runEvolution`'s per-generation battles use, instead of a reimplementation.
  */
@@ -29,7 +29,7 @@ export function ownLeadPairing(opp) {
 /**
  * Turn a `battleTeams` result fought with team A and team B swapped back into
  * one that reads as if the CANDIDATE had been team A all along (plans/
- * WORKER_NOTES.md Item 2 -- the fitness-symmetry fix). `winner` flips a<->b
+ * WORKER_NOTES.md Item 2). `winner` flips a<->b
  * (a tie stays a tie); `survivorsHp.{a,b,aPerMon,bPerMon}` swap; every
  * `summary` field whose name ends in `A` or `B` (both team-specific: leadA/
  * leadB, remainingA/B, throwAndGoSwitchesA/B, shieldsDeclinedA/B,
@@ -101,7 +101,7 @@ export function leadExchangeLoser(summary) {
  * ultimately closes the game out; `closer` gets the smallest share because
  * it is a SPECIES-level prior from pvpoke's own rankings, not a fact
  * about this collection's real battles the way the other two terms are.
- * `consistency` (added 2026-09-08, see docs/plans/2026-09-08-fitness-restructure.md)
+ * `consistency` (added 2026-09-08)
  * answers "how does this team do against its worst ARCHETYPE", pulling
  * fitness back for teams that only beat the majority core and fold against
  * everything else; it takes its share out of `winRate` and `snowball` rather
@@ -109,7 +109,7 @@ export function leadExchangeLoser(summary) {
  */
 /**
  * See buildRunConfig's `fitnessSemantics` comment. Bumped to v14
- * (plans/PLAN.md Item 2, fitness-symmetry loop): the candidate and opponent
+ *, fitness-symmetry loop): the candidate and opponent
  * GAs now share src/ga/core.js's churn/slot-allocation accounting (churn
  * based on live population, floored immigrant reserve, post-build immigrant
  * backfill on both sides -- previously only the opponent pool had the
@@ -216,7 +216,7 @@ export function percentile(sortedAsc, p) {
 
 /**
  * Per-team consistency score (added 2026-09-08 -- see
- * docs/plans/2026-09-08-fitness-restructure.md, section D): the 25th
+ *(design note D): the 25th
  * percentile of the team's mean win rate PER ARCHETYPE (see
  * src/meta/archetypes.js), i.e. "what does this team do against its worst
  * archetype", scale-free rather than a mean-minus-std. Fewer than 4

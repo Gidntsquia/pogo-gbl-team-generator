@@ -97,7 +97,7 @@ const DEFAULT_OPPONENT_LEAD_ROTATION_RATE = 0.3;
  * become a SHADOW-FLIP instead of a member-swap -- same mutation type,
  * same all-non-empty-combinations-equally-likely rule, as
  * src/teams/evolve.js's DEFAULT_SHADOW_FLIP_RATE (added here for mutation-
- * vocabulary parity, plans/PLAN.md Item 2: the opponent pool previously had
+ * vocabulary parity,: the opponent pool previously had
  * no shadow-flip mutation at all, so a shadow-boosted variant of an
  * opponent could only ever arise from a fresh sampled/immigrant draw, never
  * from mutating an already-successful build the way a candidate can).

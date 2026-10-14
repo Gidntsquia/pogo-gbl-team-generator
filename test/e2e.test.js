@@ -210,7 +210,7 @@ describe('battleTeams: the 3v3 driver', () => {
     assert.equal(sA.summary.seed, 42);
   });
 
-  // plans/WORKER_NOTES.md Item 5: mirrorBattleResult on a REAL battleTeams
+  //: mirrorBattleResult on a REAL battleTeams
   // result, so the unpaired-key guard sees the real summary shape (not a
   // hand-built stub that could drift from what battleTeams actually returns).
   test('mirrorBattleResult relabels a reversed-seat battle back to "candidate is A"', () => {

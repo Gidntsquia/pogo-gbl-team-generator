@@ -134,7 +134,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
   });
 
   // ---- (1) plan: TWO cache keys per pairing (forward + reversed seats), in
-  // flat battle order -- v13's fitness-symmetry fix (plans/WORKER_NOTES.md
+  // flat battle order -- v13's fitness-symmetry fix
   // Item 2). `planKeys[i]` is `{fwdKey, revKey}`; accumulate (step 3) walks
   // this same array in the same order so the two loops stay in lockstep.
   const planKeys = [];
@@ -252,7 +252,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
       // Tally ONE battle result that already reads as "candidate is team A" --
       // called once for the forward result and once for the MIRRORED reversed
       // result (mirrorBattleResult above), so both directions run through
-      // identical bookkeeping (v13 fitness-symmetry fix, plans/WORKER_NOTES.md
+      // identical bookkeeping (v13 fitness-symmetry fix,
       // Item 2). Closes over this opp-loop iteration's oppWeight/oppWinPoints/
       // etc and the team-loop's members/winPoints/etc. Counts battles (no /2):
       // a pairing now contributes 2 to `battles`/`oppBattles`, which is what
@@ -471,7 +471,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
 
     // With no opponentWeights every oppWeight is 1 and this IS winPoints/battles.
     const winRate = weightedBattles > 0 ? weightedWinPoints / weightedBattles : 0;
-    // Unweighted candidate win rate (plans/WORKER_NOTES.md Item 1): the same
+    // Unweighted candidate win rate: the same
     // ledger's `winPoints`/`battles` before any archetype/strength weighting,
     // parallel to `opponentTally[j].winRate` (also raw) below. Feeds
     // `candidateRawWinRateMean` so the two sides' raw means can be compared

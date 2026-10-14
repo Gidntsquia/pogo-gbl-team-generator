@@ -156,7 +156,7 @@ test('a team with no back line, or a weakness-free lead, scores 1', () => {
   assert.equal(computeSharedWeaknessScore([mon({}), mon({ rock: SE })]).score, 1);
 });
 
-// plans/PLAN.md Item 2's coverage-bug test: an opponent lead's build coverage
+//'s coverage-bug test: an opponent lead's build coverage
 // lookup used matrix.builtMons' per-collection-row key (`members[0].key`),
 // which opponent members never have -- so an opponent lead ALWAYS got an
 // empty coverage map (no relief) while a candidate lead with the identical

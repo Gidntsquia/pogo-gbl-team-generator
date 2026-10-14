@@ -1024,7 +1024,7 @@ test('assertCollectionMatchesCheckpoint: passes on an identical collection, name
 });
 
 // ---------------------------------------------------------------------------
-// plans/WORKER_NOTES.md Item 2/5: mirrorBattleResult + the two-direction
+//: mirrorBattleResult + the two-direction
 // tally inside evaluateTeamsInOrder (the fitness-symmetry fix).
 // ---------------------------------------------------------------------------
 
@@ -1137,7 +1137,7 @@ test('evaluateTeamsInOrder two-direction tally: candidate always wins from eithe
   assert.equal(run.opponentTally[0].winRate, 0);
 });
 
-test('evaluateTeamsInOrder raw win rates (plans/WORKER_NOTES.md Item 1): 2x2 ledger with UNEQUAL per-opponent battle counts proves opponentRawWinRateMean is read from its own tally, not 1 - candidateRawWinRateMean', async () => {
+test('evaluateTeamsInOrder raw win rates: 2x2 ledger with UNEQUAL per-opponent battle counts proves opponentRawWinRateMean is read from its own tally, not 1 - candidateRawWinRateMean', async () => {
   // teamX beats both opponents; teamY loses to oppA and beats oppB.
   // oppA gets 1 pairing (2 battles/team, both directions); oppB gets 3
   // pairings (6 battles/team) -- the unequal weight the "Fails if" clause

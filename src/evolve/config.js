@@ -263,7 +263,7 @@ export function buildRunConfig(csvPath, opts) {
     // candidateStrengthGamma was added to weight each candidate's
     // contribution to an opponent's fitness by that candidate's own raw win
     // rate -- opponentFitness values under v11 are not comparable to v12's.
-    // Bumped to v13 2026-09-18 (plans/WORKER_NOTES.md Item 2/3) when every
+    // Bumped to v13 2026-09-18 when every
     // pairing started battling BOTH directions (candidate-as-A and
     // opponent-as-A, the latter mirrored back through mirrorBattleResult and
     // tallied identically) instead of only candidate-as-A -- removes the

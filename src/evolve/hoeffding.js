@@ -45,7 +45,7 @@ const pick = (arr, idxs) => (arr ? idxs.map((i) => arr[i]) : arr);
  * value in (0,1) -- a hand-picked lookup table (this file's earlier version)
  * silently fell back to the WIDEST interval (z=1.96) for every confidence
  * below 0.9, so lowering the knob to get narrower intervals (and thus more
- * cuts) did nothing; see plans/PLAN.md round 3 diagnosis.
+ * cuts) did nothing; see diagnosis.
  *
  * @param {number} confidence - in (0, 1), e.g. 0.95
  * @returns {number}

@@ -1,8 +1,7 @@
 # Module map
 
 Where code lives. The GitHub wiki explains behavior; this page is for finding
-files. Moved out of `CLAUDE.md` on 2026-10-08 so it isn't loaded into every
-agent session.
+files.
 
 ## `src/`
 
@@ -61,8 +60,8 @@ agent session.
 | `scripts/build-shared-collection.mjs` | intersects two collection CSVs into a shared-pool CSV of mons both players can build (weaker side's best specimen per base species) |
 | `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
-| `scripts/bench.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `render-report.mjs` | one-off benchmarks/analyses and report re-rendering, not part of the pipeline |
-| `scripts/symmetry-gap.mjs` | `run --label L` / `report --label L [--minus B]`: multi-seed candidate-vs-opponent fitness gap for meta-vs-meta runs; `report` exits 0 when within 0.02 (`docs/fitness-symmetry.md`) |
+| `scripts/bench.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `render-report.mjs` | benchmarks, analyses and report re-rendering, not part of the pipeline |
+| `scripts/symmetry-gap.mjs` | `run --label L` / `report --label L [--minus B]`: multi-seed candidate-vs-opponent fitness gap for meta-vs-meta runs; `report` exits 0 when within 0.02 |
 
 ## Data
 

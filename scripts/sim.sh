@@ -63,7 +63,7 @@
 # evolve.mjs. Defaults follow the established run recipe, baked into
 # recipes/standard.json (--config recipe, see evolve.mjs --help) and passed
 # as --config recipes/standard.json --seed <name> (since 2026-10-09 this is the
-# "old halving" recipe that won out/recipe-ab.md):
+# "old halving" recipe):
 #   population 300 -> population-final-ratio 0.4, opponents-per-gen 120 (no sampled-opponents),
 #   halving-rounds 3, elites 15, curated-ratio 0.66, opponent-meta-pool 400, archetype-beta 0.5,
 #   opponent-strength-gamma 1, similar-rivalry 1, similar-floor 0.35,

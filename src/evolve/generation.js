@@ -285,7 +285,7 @@ export async function runGeneration(env, state) {
       msPerBattle: run.battleCount > 0 ? run.elapsedMs / run.battleCount : FALLBACK_MS_PER_BATTLE,
       // Only present under --hoeffding-races: per-round cut diagnosis (how many
       // teams were cut each round, and the cull-line interval width that
-      // explains why) -- see src/evolve/hoeffding.js and plans/PLAN.md round 3.
+      // explains why) -- see src/evolve/hoeffding.js and.
       hoeffding: run.hoeffding ?? null,
       // Only under --sampled-combats: the fraction (or K) and each block's teams x opponents.
       sampled: run.sampled ?? null,

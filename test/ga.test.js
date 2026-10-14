@@ -55,7 +55,7 @@ test('trailingFitnessGeneric: an entry seen only in the newest generation is sco
   assert.equal(scores[1], 0.9);
 });
 
-// plans/PLAN.md Item 2's shared-step behaviour test: evolveStep driven through
+//'s shared-step behaviour test: evolveStep driven through
 // two differently-shaped adapters (a candidate-like team = array of key
 // strings; an opponent-like entry = {members:[{speciesId}]}) with the same
 // fitness vector, rates and seed must kill, mutate and immigrate the same

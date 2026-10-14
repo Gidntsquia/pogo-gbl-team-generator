@@ -234,7 +234,7 @@ function memoizedScenario(memo, ai, original, type, pokemon, opponent) {
  * opponent, and which throwaway battle was "last" depends on the exact
  * order scenarios were evaluated in -- an order that can differ between a
  * serial and a threaded run of the same battle set (see
- * src/engine/README.md's "Known limitation").
+ * src/engine/README.md's "Battle order and reused-instance state").
  *
  * Fix shape (permitted: wrapping pvpoke's own code is allowed; editing
  * vendor files or reimplementing battle/AI logic is not): wrap runScenario

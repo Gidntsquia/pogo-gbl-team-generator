@@ -17,7 +17,7 @@ export const MAX_ATTEMPTS_MULTIPLIER = 20;
 export const MAX_ATTEMPTS_FLOOR = 50;
 
 /**
- * Shared churn/cull accounting (plans/PLAN.md Item 2/3): how many of the
+ * Shared churn/cull accounting: how many of the
  * current LIVE population die this generation, how many survive, and how
  * many slots in the NEXT generation are open for mutants/immigrants.
  *
@@ -66,7 +66,7 @@ export function computeChurn({ liveCount, contenders, targetSize, deathRate }) {
 }
 
 /**
- * Shared new-slot allocation (plans/PLAN.md Item 2/3): given `openSlots` in
+ * Shared new-slot allocation: given `openSlots` in
  * the next generation and a list of successful mutation rolls (each
  * `{percentile}`, highest-fitness-parent rolls win when oversubscribed),
  * decide how many slots are reserved for immigrants vs offered to mutation,

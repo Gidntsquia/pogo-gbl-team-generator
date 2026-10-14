@@ -178,7 +178,7 @@ function buildVendorTeams(ctx, teamsFile) {
     // preset with a member the cup doesn't allow. Under Willpower this
     // leaves the vendor "GO Battle League" pool nearly empty (it's a
     // Great-League-meta preset file) -- that is correct; see
-    // docs/plans/2026-09-17-cup-support.md step 4.
+    // the cup-support design (step 4).
     if (ctx.eligibleSpeciesIds && members.some((m) => !isEligible(ctx, m))) continue;
     const id = members.map((m) => m.speciesId).join('-');
     // Preview branches can temporarily contain the same training preset more

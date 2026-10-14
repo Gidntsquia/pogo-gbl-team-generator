@@ -112,7 +112,7 @@ import { expandBanToCandidateSpeciesIds, filterBannedCuratedTeams, filterBannedM
  * import, evolution expansion, cup eligibility, the collection build, the
  * candidate sampling pool, and the opponent side's curated/moveset pools and
  * (optional) shared-weakness context -- exactly the block `runEvolution` used
- * to inline before its generation loop. Extracted (plans/WORKER_NOTES.md
+ * to inline before its generation loop. Extracted
  * Item 3) so a study script can build the SAME gen-0 population/opponent-pool
  * inputs `runEvolution` would, via `initPopulation`/`initOpponentPool`,
  * without reimplementing any of this setup. `runEvolution` itself now just
