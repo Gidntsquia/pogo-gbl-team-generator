@@ -7,93 +7,84 @@
   </picture>
 </p>
 
-Node.js tool that finds the strongest GO Battle League teams buildable from
-your own Pokemon collection, by simulating full 3v3 battles against the
-current meta with [pvpoke](https://pvpoke.com)'s battle engine.
+Finds the strongest GO Battle League teams you can build from your own Pokemon collection. Teams are
+ranked by simulating full 3v3 battles against the current meta with [pvpoke](https://pvpoke.com)'s
+battle engine, and a genetic algorithm searches for the best ones.
+
+Version [v1.0.0](CHANGELOG.md), with [release notes](https://github.com/Gidntsquia/pogo-gbl-team-generator/releases).
 
 <p align="center">
   <img alt="Animated race chart of every team's win rate per generation" src="docs/team-race.gif">
 </p>
 
-The run above — which produced the podium at the top — covers 100 generations
-of evolutionary search over my 107-mon collection, 443,923 battles simulated.
-Each line is one team's win rate per generation; the colored lines are the
-final top 10.
+The run above, which produced the podium at the top, covers 100 generations of evolutionary search
+over my 107-mon collection, with 443,923 battles simulated. Each line is one team's win rate per
+generation; the colored lines are the final top 10.
 
 ## Quickstart 🚀
 
-1. Take a screen recording of yourself swiping through all your Pokemon with
-   the "appraise" panel open.
+Requires Node 18+.
+
+1. Record your screen while swiping through all your Pokemon with the appraisal panel open.
 2. Convert the video into a CSV with
-   [Pokemon GO Video-to-CSV](https://github.com/Gidntsquia/pokemon-go-video-to-csv)
-   (macOS only). A [Poke Genie](https://pokegenie.app) export also works
-   (Settings → Export → CSV).
-3. Run this (requires Node ≥ 18):
+   [Pokemon GO Video-to-CSV](https://github.com/Gidntsquia/pokemon-go-video-to-csv) (macOS only).
+   A [Poke Genie](https://pokegenie.app) CSV export also works.
+3. Run:
 
 ```
 git clone https://github.com/Gidntsquia/pogo-gbl-team-generator
 cd pogo-gbl-team-generator
-npm run setup                        # Downloads pvpoke's engine + data (required after every fresh clone)
-scripts/sim.sh --quick your-collection.csv     # ~minute-scale smoke run: 3 generations, prints the report path
+npm run setup                                  # Downloads pvpoke's engine + data (needed after every fresh clone)
+scripts/sim.sh --quick your-collection.csv     # 3-generation smoke run, prints the report path
 scripts/sim.sh your-collection.csv --name mine --threads 4 --hours 1
 ```
 
-`scripts/sim.sh --help` and `node scripts/evolve.mjs --help` list every flag; bad input (missing CSV, unknown flag, bad league or cup) gets a one- or two-line message saying how to fix it.
+The report is written to `out/evolve-mine/my-teams-evolve.md` and `.html`.
+`fixtures/sample-pokegenie.csv` is a small collection for trying it out.
 
-The search runs in the background; its report is written to
-`out/evolve-mine/my-teams-evolve.md` (+ `.html`). A sample collection is included for
-trying it out:
-
+Other commands:
 ```
-node scripts/evolve.mjs fixtures/sample-pokegenie.csv --generations 2 --population 12 --opponents-per-gen 8 --threads 2
+scripts/sim.sh your-collection.csv --name ultra --cp 2500   # Ultra League
+scripts/sim.sh --meta --name meta-1                         # Meta vs meta, no collection needed
 ```
 
-Other common invocations:
+## MCP Server 🤖
 
-```
-node scripts/evolve.mjs my.csv --cp 2500 --threads 4  # Ultra League, battles on 4 threads
-node scripts/evolve.mjs my.csv --deadline-minutes 30  # time-boxed search
-node scripts/evolve.mjs --help                        # full flag list
-```
+`.mcp.json` registers the `pogo-sim` server for [Claude Code](https://claude.com/claude-code)
+sessions in this folder. It can launch, watch, stop and resume runs, and a launched run keeps going
+after the session closes. Ask "Report on sim status" and it returns the run's state, generation,
+ETA and memory, plus tables of the top candidate teams, candidate mons, opponent teams and opponent
+mons. The `pogo-sim-extra` server (reports, analysis, collection builders) is off by default; turn
+it on with `/mcp`.
 
 ## Features 🔬
 
-- Rankings come from simulated 3v3 battles (switching, shields, AI), run
-  across all 9 lead matchups.
-- Genetic-algorithm search (`scripts/evolve.mjs`): candidate teams and the
-  opponent pool evolve against each other; interrupted runs resume from
-  checkpoints.
-- Mons are also evaluated as each evolution they can still become.
-- Build costs are reported per team: Stardust, Candy, and Candy XL, with
-  shadow/purified/lucky modifiers and evolution items.
-- A meta-vs-meta mode (`scripts/sim.sh --meta`) runs the search with no
-  collection, and its results can seed the curated opponent teams for a new
-  cup or season.
-- Great League and Ultra League (`--cp 2500`), pvpoke cups (`--cup willpower`), and species bans via `--ban`.
-- An MCP server (`pogo-sim`) lets [Claude Code](https://claude.com/claude-code)
-  launch, monitor, stop, and resume runs in this folder. Resumes rebuild their
-  flags from the run's checkpoint, and runs keep going after the session closes.
-- Deterministic: the same seed gives identical results, serial or with
-  `--threads N`.
+- Teams are ranked by simulated 3v3 battles with switching and shields across all 9 lead matchups.
+- The candidate teams and the opponent pool evolve against each other. Interrupted runs resume from
+  their checkpoints.
+- Mons also compete as each evolution they can still become.
+- Every ranked team has a build cost in Stardust, Candy and Candy XL, with shadow, purified and lucky
+  modifiers.
+- Meta-vs-meta mode runs without a collection; its results can seed the curated opponent teams.
+- Great and Ultra League, pvpoke cups (`--cup willpower`) and species bans (`--ban`) work.
+- The same seed gives identical results, serial or with `--threads N`.
 
 ## Documentation 📚
 
-For running evolutionary simulations, including the complete standard recipe
-and genetic settings, see the local [Runbook](RUNBOOK.md).
-
-Detailed documentation is in the
+The [Runbook](RUNBOOK.md) has the standard recipe and every run command. More details in the
 [wiki](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki):
 
-- [Running the CLI](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Running-the-CLI) — `sim.sh`, common flags, leagues, cups, Best Buddies, threads
-- [How Scoring Works](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/How-Scoring-Works) — 3v3 battles, sampling weights, role priors, curated opponent file
-- [Build Costs and Evolutions](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Build-Costs-and-Evolutions) — the Stardust/Candy math
-- [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm, fitness, checkpoints
+- [Running the CLI](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Running-the-CLI) — sim.sh, flags, leagues, cups, threads
+- [How Scoring Works](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/How-Scoring-Works) — battles, sampling weights, role priors
+- [Build Costs and Evolutions](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Build-Costs-and-Evolutions) — Stardust and Candy math
+- [Evolutionary Team Search](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Evolutionary-Team-Search) — the genetic algorithm and checkpoints
 - [Shared Collections](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Shared-Collections) — teams two players can both build
-- [Development and Tests](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Development-and-Tests) — test tiers, what to run when
-- [MCP Server](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server) — the `pogo-sim` tools and how to enable the extra set
-- [MCP Server Token Costs](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs) — what the pogo-sim MCP server saves against Bash
+- [Development and Tests](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Development-and-Tests) — test tiers
+- [MCP Server](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server) — the pogo-sim tools
+- [MCP Server Token Costs](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/MCP-Server-Token-Costs) — what the MCP server saves over Bash
+- [Research](https://github.com/Gidntsquia/pogo-gbl-team-generator/wiki/Research) — approaches tried and not adopted
 
 ## License 📄
 
-[MIT](LICENSE). The vendored battle engine ([pvpoke](https://github.com/pvpoke/pvpoke))
-is also MIT-licensed and is downloaded at setup rather than distributed here.
+[MIT](LICENSE). The vendored battle engine ([pvpoke](https://github.com/pvpoke/pvpoke)) is also
+MIT-licensed and is downloaded at setup rather than distributed here.
