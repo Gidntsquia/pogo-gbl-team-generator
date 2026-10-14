@@ -58,7 +58,7 @@ files.
 | `scripts/evolve.mjs` | thin entry point into `src/evolve/`; `--help` lists every flag, `--check` validates inputs only |
 | `mcp/server.mjs`, `mcp/server-extra.mjs` | `pogo-sim` (always loaded) and `pogo-sim-extra` (off by default) MCP servers (`.mcp.json`); tool tables in `RUNBOOK.md`, soft stop in `mcp/soft-stop.mjs` |
 | `scripts/build-shared-collection.mjs` | intersects two collection CSVs into a shared-pool CSV of mons both players can build (weaker side's best specimen per base species) |
-| `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `data/meta-usage.json` snapshot |
+| `scripts/refresh-usage.mjs` | optional: fetch live GL rankings → `meta-usage.json` snapshot in `data/` |
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
 | `scripts/bench.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `render-report.mjs` | benchmarks, analyses and report re-rendering, not part of the pipeline |
 | `scripts/symmetry-gap.mjs` | `run --label L` / `report --label L [--minus B]`: multi-seed candidate-vs-opponent fitness gap for meta-vs-meta runs; `report` exits 0 when within 0.02 |
@@ -68,6 +68,6 @@ files.
 - `data/meta-teams-community.json` — curated GL teams, `members[0]` = lead;
   absent between seasons (past seasons' pools live in `data/archive/`; the
   loader falls back to vendor presets until repopulated).
-- `data/meta-usage.json`/`meta-roles.json` — optional freshness snapshots;
+- the optional `meta-usage.json` / `meta-roles.json` files (in `data/`) — optional freshness snapshots;
   loaders fall back to vendored rankings when absent.
 - `fixtures/` — sample collections for tests.

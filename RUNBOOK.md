@@ -586,10 +586,10 @@ script's positional defaults reference old filenames; always pass both paths.
 ### Refresh usage weights (deliberate, human-triggered only)
 
 ```bash
-node scripts/refresh-usage.mjs        # writes data/meta-usage.json from live pvpoke GL rankings
+node scripts/refresh-usage.mjs        # writes meta-usage.json (in data/) from live pvpoke GL rankings
 ```
 
-Evolve runs ignore `data/meta-usage.json` (sampling is pure pvpoke rank). Currently none or `data/meta-roles.json` exists, so usage
+Evolve runs ignore `meta-usage.json` (sampling is pure pvpoke rank). Currently none or `meta-roles.json` exists in `data/`, so usage
 and role priors come from the pinned pvpoke rankings. Community-curated teams in
 `data/meta-teams-community.json` are a separate local source; changing the pin
 does not update them.
