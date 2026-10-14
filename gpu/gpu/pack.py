@@ -4,9 +4,12 @@ Layout constants must match gpu/kernels/pvp1v1.cuh (M_N, S_N, D_N)."""
 import json
 import numpy as np
 
-M_N, S_N, D_N = 25, 130, 15
+M_N, S_N, D_N = 25, 144, 17
 MOVE_CODES = {"FOCUS_BLAST": 1, "ZAP_CANNON": 2, "OBSTRUCT": 3, "SUPER_POWER": 4,
-              "SKULL_BASH": 5, "POWER_UP_PUNCH": 6, "ACID_SPRAY": 7}
+              "SKULL_BASH": 5, "POWER_UP_PUNCH": 6, "ACID_SPRAY": 7,
+              "DIVE": 8, "SURF": 9, "AURA_WHEEL_ELECTRIC": 10, "AURA_WHEEL_DARK": 11,
+              "AEGISLASH_CHARGE_AIR_SLASH": 12, "AEGISLASH_CHARGE_PSYCHO_CUT": 13, "AIR_SLASH": 14, "PSYCHO_CUT": 15,
+              "GULP_MISSILE_ARROKUDA": 20, "GULP_MISSILE_PIKACHU": 21}
 
 
 def pack_move(m):
@@ -25,7 +28,7 @@ def pack_move(m):
         r[13], r[14] = m["buffsSelf"]
     if m["buffsOpponent"]:
         r[15], r[16] = m["buffsOpponent"]
-    r[17] = m["buffApplyChance"] or 0
+    r[17] = float("nan") if m["buffApplyChance"] is None else (m["buffApplyChance"] or 0)
     r[18], r[19], r[20], r[21] = m["selfDebuffing"], m["selfBuffing"], m["selfAttackDebuffing"], m["selfDefenseDebuffing"]
     r[22] = m["instant"]
     r[23] = MOVE_CODES.get(m["id"], 0)
@@ -43,6 +46,11 @@ def pack_static(mon):
     for k in range(3):
         o = 30 + M_N * (1 + k)
         r[o:o + M_N] = pack_move(mon["charged"][k])
+    # form changers: kind, live slot, group snapshot rows, formChange code, own-fc flag, native buffs of the form
+    r[130], r[131] = mon.get("kind", 0), mon.get("slot", 0)
+    r[132:136] = mon.get("forms", [0, 0, 0, 0])
+    r[136], r[137], r[138] = mon.get("fcCode", 0), mon.get("fcOwn", 0), mon.get("hasNative", 0)
+    r[139], r[140] = mon.get("native", [0, 0])
     return r
 
 
@@ -54,6 +62,7 @@ def pack_dyn(e, with_entry=True):
     r[8], r[9], r[10], r[11], r[12] = e["priority"], e["turnsToKO"], e["baitShields"], e["farmEnergy"], e["optimizeMoveTiming"]
     if with_entry and "statBuffs" in e:
         r[13], r[14] = e["statBuffs"]
+    r[15], r[16] = e.get("startForm", 0), e.get("origForm", 0)
     return r
 
 

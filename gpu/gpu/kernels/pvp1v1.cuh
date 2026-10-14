@@ -9,15 +9,17 @@
 //   pokemon/Pokemon.js      reset 1924-1937, resetMoves 711-878, initializeMove 880-912, getStab 701-708,
 //                           applyStatBuffs 2085, getEffectiveStat 2099, getStatBuffMultiplier 2121, getBattleRating 2142
 // REAL is double for the logic-exactness build and float for the float32 build.
-// Not ported (flagged in `flags`): form-changing mons (Aegislash, Mimikyu, Cramorant, Morpeko, ...).
+// Form changers (Aegislash, Mimikyu, Cramorant, Morpeko) are ported: Pokemon.js changeForm 2473-2525, reset 1925-1937,
+// resetMoves 711-878 (Aegislash shield mutation), Battle.js useMove 1016-1650 hooks, ActionLogic clauses (see port map in
+// docs/gpu-viability.md). Per-form data (types, effectiveness, stats, moves) comes from group snapshot rows in the static table.
 
 #ifndef REAL
 #define REAL float
 #endif
 
 #define M_N 25
-#define S_N 130
-#define D_N 15
+#define S_N 144
+#define D_N 17
 #ifndef MAXQ
 #define MAXQ 1536    // DP pool / queue capacity (overflow flagged)
 #endif
@@ -43,6 +45,8 @@ struct Move {
 };
 
 struct Mon {
+  const double* tbl;   // static table base (form snapshot rows, Gulp Missile rows 0/1)
+  int kind, form, startForm, origForm, fc, forms[4];   // form changer state (kind 0 = none)
   REAL atk, def;
   int hpMax, t0, t1, shadow;
   REAL sAtk, sDef;
@@ -71,7 +75,12 @@ __device__ void loadMove(Move* m, const double* r) {
   m->stab = 1; m->dpe = 0; m->meter = 0; m->damage = 0; m->meterDefined = 0;
 }
 
-__device__ void loadMon(Mon* p, const double* s, const double* d, int index) {
+__device__ void loadMon(Mon* p, const double* s, const double* d, int index, const double* tbl) {
+  p->tbl = tbl;
+  p->kind = (int)s[130]; p->form = (int)s[131];
+  for (int i = 0; i < 4; i++) p->forms[i] = (int)s[132 + i];
+  p->fc = (int)s[136];
+  p->startForm = (int)d[15]; p->origForm = (int)d[16];
   p->atk = (REAL)s[0]; p->def = (REAL)s[1]; p->hpMax = (int)s[2]; p->t0 = (int)s[3]; p->t1 = (int)s[4];
   p->shadow = (int)s[5]; p->sAtk = (REAL)s[6]; p->sDef = (REAL)s[7];
   for (int i = 0; i < 18; i++) p->eff[i] = (REAL)s[8 + i];
@@ -108,6 +117,7 @@ __device__ int calcDamage(const Mon* a, const Mon* d, const Move* m) {
   if (m->pct) return (int)floor(((REAL)m->power / (REAL)100) * (REAL)d->hpMax) + 1;
   REAL eff = d->eff[m->type];
   REAL atk = effStat(a, 0);
+  if (a->kind == 1 && a->form == 1 && m->energy > 0) atk = (REAL)a->tbl[(long long)a->forms[0] * S_N];  // DamageCalculator.js 45-50
   REAL def = effStat(d, 1);
   REAL mega = (REAL)1;
   if (a->mega && m->megaMove) {
@@ -191,6 +201,13 @@ __device__ void resetMoves(Mon* p, const Mon* opp) {
           a0->hasBuffs = 0; a0->target = 0; a0->selfDeb = 0;
         }
       }
+      if (p->kind == 1 && p->form == 1) {   // Pokemon.js 793-799: Aegislash shield form builds energy
+        for (int x = 0; x < p->nact; x++) {
+          Move* mm = &p->ch[p->act[x]];
+          if (!mm->hasBuffs) mm->chance = (REAL)__int_as_float(0x7fc00000);   // buffApplyChance stays undefined
+          mm->hasBuffs = 1; mm->b0 = 0; mm->b1 = 0; mm->target = 0; mm->selfDeb = 1;
+        }
+      }
       a0 = &p->ch[p->act[0]]; ai = &p->ch[p->act[i]];
       if (ai->energy - a0->energy <= 10 && !ai->selfDeb) {
         if (ai->selfBuf && a0->dpe - ai->dpe < (REAL)0.3) rotateAct(p);
@@ -222,13 +239,37 @@ __device__ void resetMoves(Mon* p, const Mon* opp) {
   if (a0->code == 3 && a0->energy - b->energy <= 5 && a0->dpe / b->dpe > (REAL)0.2) p->best = p->act[0];
 }
 
-__device__ void resetMon(Mon* p, const Mon* opp) {
+// Pokemon.js changeForm 2473-2525: switch to form slot `slot` using the group's snapshot row for that form.
+__device__ void changeForm(Mon* p, const Mon* opp, int slot) {
+  const double* r = p->tbl + (long long)p->forms[slot] * S_N;
+  p->form = slot;
+  p->t0 = (int)r[3]; p->t1 = (int)r[4];
+  for (int i = 0; i < 18; i++) p->eff[i] = (REAL)r[8 + i];
+  if ((int)r[137]) p->fc = (int)r[136];                      // form.formChange, only if the form has one
+  p->atk = (REAL)r[0]; p->def = (REAL)r[1];                  // stats from getFormStats when base stats differ (same value otherwise)
+  if ((int)r[138]) { p->nsb0 = (int)r[139]; p->nsb1 = (int)r[140]; applyBuffs(p, p->nsb0, p->nsb1); }
+  if (p->kind == 4) {                                        // Morpeko: replaceMove AURA_WHEEL_*
+    int oldCode = slot == 1 ? 10 : 11;
+    for (int k = 0; k < 3; k++)
+      if (p->ch[k].present && p->ch[k].code == oldCode) { loadMove(&p->ch[k], r + 30 + M_N * (1 + k)); break; }
+  } else if (p->kind == 1) {                                 // Aegislash: replaceMove fast between the plain and CHARGE variants
+    int c = p->fast.code;
+    if (slot == 0 && (c == 12 || c == 13)) loadMove(&p->fast, r + 30);
+    if (slot == 1 && (c == 14 || c == 15)) loadMove(&p->fast, r + 30);
+  }
+  resetMoves(p, opp);
+}
+__device__ __forceinline__ bool fcResetsOnSwitch(int fc) { return fc != 3 && fc != 4; }
+
+// Pokemon.reset(isSwitch) 1925-1937
+__device__ void resetMon(Mon* p, const Mon* opp, int isSwitch = 0) {
   p->hp = p->startHp;
   p->energy = p->startEnergy;
   p->cooldown = p->startCd;
   p->shields = p->startShields;
   p->sb0 = p->ssb0; p->sb1 = p->ssb1;
   p->faintSource = 0;
+  if (p->kind && p->fc && (fcResetsOnSwitch(p->fc) || !isSwitch)) changeForm(p, opp, p->startForm);
   applyBuffs(p, p->nsb0, p->nsb1);
   resetMoves(p, opp);
 }
@@ -266,6 +307,11 @@ __device__ bool wouldShield(const Mon* attacker_c, const Mon* defender_c, Move* 
   }
   if (move->selfAtkDeb && ((REAL)move->damage / (REAL)defender->hp > (REAL)0.55)) useShield = true;
   if (attacker->bait == 2) useShield = true;
+  // ActionLogic.js 1238-1257 form-specific clauses
+  if (defender->kind == 1 && defender->form == 1 && (double)move->damage * 2 < (double)defender->hp) useShield = false;
+  if (defender->kind == 3 && defender->form >= 1 && (double)move->damage * 2.2 < (double)defender->hp) useShield = false;
+  if (attacker->kind == 3 && move->damage && (double)move->damage / (double)defender->hp < 0.33) useShield = false;
+  if (attacker->kind == 3 && move->code == 8 && move->damage > defender->hp) useShield = false;   // the SURF half is a typo upstream (moveID)
   return useShield;
 }
 
@@ -287,7 +333,7 @@ __device__ int movesOf(const BState* pool, int s, int* out) {
 }
 
 // returns charged-move index to throw, or -1 for a fast move
-__device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int queuedFastOfPoke, int* flags, int* poolMax) {
+__device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int queuedFastOfPoke, int* flags, int* poolMax, int emulate) {
   bool winsCMP = poke->atk >= opp->atk;
   int fastDamage = calcDamage(poke, opp, &poke->fast);
   int oppFastDamage = calcDamage(opp, poke, &opp->fast);
@@ -381,6 +427,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
       }
     }
   }
+  // opponent is Mimikyu or similar: throw the fastest charged move at once (ActionLogic.js 237)
+  if (opp->fc == 3 && opp->shields == 0) {
+    Move* fm = &poke->ch[poke->fastest];
+    if (poke->energy >= fm->energy && !fm->selfDeb) return poke->fastest;
+  }
   // optimize move timing
   if (poke->opt) {
     int targetCooldown = 500;
@@ -418,6 +469,18 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
       if (poke->hp <= opp->fast.damage * fastMovesInFastMove2) optimizeTiming = false;
       if (optimizeTiming) return -1;
     }
+  }
+  // Cramorant that has not changed form: use Dive / Surf as soon as possible (ActionLogic.js 366-385)
+  if (poke->kind == 3 && poke->form == 0) {
+    int gulp = -1, nonGulp = -1;
+    for (int n = 0; n < poke->nact; n++) {
+      int k = poke->act[n];
+      if (gulp < 0 && (poke->ch[k].code == 8 || poke->ch[k].code == 9)) gulp = k;
+      if (nonGulp < 0 && poke->ch[k].code != 8) nonGulp = k;   // upstream typo: SURF counts as a non-gulp move
+    }
+    if (gulp >= 0 && nonGulp >= 0 && poke->energy >= poke->ch[gulp].energy &&
+        (double)opp->hp > (double)poke->ch[nonGulp].damage * 1.3 && (double)poke->ch[nonGulp].dpe / (double)poke->ch[gulp].dpe < 1.5)
+      return gulp;
   }
   // simple selection when a KO is many cycles away
   int bestChargedDamage = calcDamage(poke, opp, &poke->ch[poke->best]);
@@ -694,7 +757,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
     if (opp->energy >= ob->energy && !wouldShield(opp, poke, ob, opp, poke) && !A0->selfBuf) return -1;
   }
   M0 = &poke->ch[moves[0]];
-  if (M0->selfDeb) {
+  if (M0->selfDeb || (opp->kind == 3 && opp->form >= 1)) {
     int targetEnergy = (100 / M0->energy) * M0->energy;
     if (poke->energy < targetEnergy) {
       int moveDamage = calcDamage(poke, opp, M0);
@@ -703,6 +766,12 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
       if (A0->selfBuf || wouldShield(poke, opp, M0, poke, opp)) moves[0] = poke->act[0];
     }
   }
-  if (poke->energy >= poke->ch[moves[0]].energy) return moves[0];
+  if (poke->energy >= poke->ch[moves[0]].energy) {
+    // Aegislash shield builds energy before changing form; the simulate-mode variant only when no KO is in reach
+    if (poke->kind == 1 && poke->form == 1 && poke->energy < 100 - poke->fast.gain / 2.0) {
+      if (emulate || poke->ch[poke->best].damage < opp->hp) return -1;
+    }
+    return moves[0];
+  }
   return -1;
 }

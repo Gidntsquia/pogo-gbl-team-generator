@@ -71,3 +71,64 @@ def load_battles(path, limit=None, tag=None):
                 dyn[i, side * 3 + k] = pack_dyn(team[j], with_entry=False)
         seeds[i] = b["seed"] & 0xFFFFFFFF
     return idx, dyn, seeds, bs
+
+
+def run_3v3_streams(static, idx, dyn, seeds, real="float", nstreams=2, chunk=0, block=32, stack=65536):
+    """Same result as run_3v3, but the batch is cut into chunks issued round-robin on `nstreams` CUDA streams:
+    pinned host staging, async host->device copies, kernel launch and async device->host copy all overlap across streams.
+    chunk = battles per launch (0: ceil(n / (nstreams * 4)))."""
+    cp = require_cuda()
+    import cupyx
+    k = get_kernel(real)
+    cp.cuda.runtime.deviceSetLimit(0x00, stack)
+    n = idx.shape[0]
+    chunk = chunk or max(1, -(-n // (nstreams * 4)))
+    h_idx = cupyx.empty_pinned(idx.shape, np.int32); h_idx[:] = idx
+    h_dyn = cupyx.empty_pinned(dyn.shape, np.float64); h_dyn[:] = dyn
+    h_seed = cupyx.empty_pinned((n,), np.uint32); h_seed[:] = seeds
+    h_out = cupyx.empty_pinned((n, B_OUT), np.int32)
+    d_st = cp.asarray(static)
+    streams = [cp.cuda.Stream(non_blocking=True) for _ in range(max(1, nstreams))]
+    d_dbg = cp.zeros((6000 * 5,), dtype=cp.int32)
+    keep = []
+    for ci, lo in enumerate(range(0, n, chunk)):
+        hi = min(n, lo + chunk)
+        s = streams[ci % len(streams)]
+        with s:
+            d_idx = cp.empty((hi - lo, 6), cp.int32); d_idx.set(h_idx[lo:hi], stream=s)
+            d_dyn = cp.empty((hi - lo, 6, D_N), cp.float64); d_dyn.set(h_dyn[lo:hi], stream=s)
+            d_seed = cp.empty((hi - lo,), cp.uint32); d_seed.set(h_seed[lo:hi], stream=s)
+            d_out = cp.zeros((hi - lo, B_OUT), dtype=cp.int32)
+            k(((hi - lo + block - 1) // block,), (block,), (d_st, d_idx, d_dyn, d_seed, d_out, np.int32(hi - lo), np.int32(-1), d_dbg))
+            d_out.get(stream=s, out=h_out[lo:hi])
+            keep.append((d_idx, d_dyn, d_seed, d_out))
+    for s in streams:
+        s.synchronize()
+    return np.array(h_out)
+
+
+def run_3v3_split(static, idx, dyn, seeds, real="float", nstreams=1, max_chunk=0, log=None):
+    """Run a batch of any size. If it does not fit in GPU memory (or exceeds max_chunk) it is split in halves
+    recursively and the split is logged (log(str), default stderr). Returns (out, number_of_launch_pieces)."""
+    cp = require_cuda()
+    import sys
+    log = log or (lambda m: sys.stderr.write(m + "\n"))
+    n = idx.shape[0]
+    if max_chunk and n > max_chunk:
+        half = n // 2
+        log(f"gpu: batch of {n} exceeds the {max_chunk}-battle limit; split into {half} + {n - half}")
+        a, pa = run_3v3_split(static, idx[:half], dyn[:half], seeds[:half], real, nstreams, max_chunk, log)
+        b, pb = run_3v3_split(static, idx[half:], dyn[half:], seeds[half:], real, nstreams, max_chunk, log)
+        return np.concatenate([a, b]), pa + pb
+    try:
+        out = run_3v3_streams(static, idx, dyn, seeds, real, nstreams) if nstreams > 1 else run_3v3(static, idx, dyn, seeds, real, chunk=max(n, 1))
+        return out, 1
+    except (cp.cuda.memory.OutOfMemoryError, cp.cuda.runtime.CUDARuntimeError) as e:
+        if n < 2:
+            raise
+        cp.get_default_memory_pool().free_all_blocks()
+        half = n // 2
+        log(f"gpu: batch of {n} did not fit ({type(e).__name__}: {str(e)[:80]}); split into {half} + {n - half}")
+        a, pa = run_3v3_split(static, idx[:half], dyn[:half], seeds[:half], real, nstreams, max_chunk, log)
+        b, pb = run_3v3_split(static, idx[half:], dyn[half:], seeds[half:], real, nstreams, max_chunk, log)
+        return np.concatenate([a, b]), pa + pb

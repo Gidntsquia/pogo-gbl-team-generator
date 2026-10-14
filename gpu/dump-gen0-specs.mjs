@@ -4,13 +4,18 @@
 // checkpoint's "species#id" keys back to concrete specs); export-matchups.mjs does not.
 //
 //   node gpu/dump-gen0-specs.mjs <evolve-gen0.json> <collection.csv> [out.json] [count] [seed]
+//   node gpu/dump-gen0-specs.mjs <evolve-gen0.json> <collection.csv> out/gpu/slice-specs.json 5000 --slice
+//     --slice: the FIRST <count> battles in the real run's plan order instead of a random sample: teams in population
+//     order x opponents in pool order, one pairing each (own lead vs the opponent's lead), forward then reversed seats
+//     (src/evolve/evaluate.js step 1), so 5000 = the first 2500 pairings.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { buildEvolveSetup } from '../src/evolve/setup.js';
 import { buildMetaMon } from '../src/scoring/index.js';
 import { mulberry32, hashSeed } from '../src/engine/battle/virtualClock.js';
 
-const [cpPath, csv, outArg, countArg, seedArg] = process.argv.slice(2);
+const sliceMode = process.argv.includes('--slice');
+const [cpPath, csv, outArg, countArg, seedArg] = process.argv.slice(2).filter((a) => a !== '--slice');
 if (!cpPath || !csv) {
   console.error('usage: node gpu/dump-gen0-specs.mjs <evolve-gen0.json> <collection.csv> [out.json] [count] [seed]');
   process.exit(1);
@@ -38,7 +43,15 @@ const opponents = cp.opponentPool.map((o) => ({
 // Random distinct (team, opponent) pairs, each fought forward AND reversed like evaluate.js does.
 const picks = new Set();
 const battles = [];
-while (picks.size < count) {
+if (sliceMode) {
+  outer: for (let t = 0; t < teams.length; t++) for (let o = 0; o < opponents.length; o++) {
+    const opp = opponents[o];
+    battles.push({ id: `${t}v${o}`, teamA: teams[t], teamB: opp.team, leadA: 0, leadB: opp.leadIndex, dir: 'fwd' });
+    battles.push({ id: `${o}v${t}`, teamA: opp.team, teamB: teams[t], leadA: opp.leadIndex, leadB: 0, dir: 'rev' });
+    if (battles.length >= count) break outer;
+  }
+}
+while (!sliceMode && picks.size < count) {
   const t = Math.floor(rng() * teams.length);
   const o = Math.floor(rng() * opponents.length);
   const k = `${t}/${o}`;

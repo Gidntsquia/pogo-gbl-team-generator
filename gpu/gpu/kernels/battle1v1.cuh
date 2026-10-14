@@ -9,15 +9,35 @@ struct Sim {
   int prevCharged;
   int turns, time, roundCMU, roundShield, usePriority;
   int draws, flags, poolMax;
+  Move gm;          // scratch for the Gulp Missile move (action value >= 100)
+  QA ins;           // charged action inserted by Gulp Missile
+  int hasIns;
 };
+
+// Action value >= 100 names a Gulp Missile move (static rows 0 = ARROKUDA, 1 = PIKACHU); else a charged slot index.
+__device__ __forceinline__ Move* chargedOf(Move* scratch, Mon* p, int value) {
+  if (value >= 100) { loadMove(scratch, p->tbl + (long long)(value - 100) * S_N + 30); return scratch; }
+  return &p->ch[value];
+}
+__device__ __forceinline__ bool fcAttackerTrigger(const Mon* a, const Move* mv) {   // Battle.js 1548-1549
+  switch (a->fc) {
+    case 5: return mv->code == 8 || mv->code == 9;
+    case 6: return mv->code == 20;
+    case 7: return mv->code == 21;
+    case 8: return true;
+  }
+  return false;
+}
 
 __device__ void useMove(Sim* s, int ai, int di, int mvIdx) {
   Mon* a = &s->m[ai];
   Mon* d = &s->m[di];
-  Move* mv = mvIdx < 0 ? &a->fast : &a->ch[mvIdx];
+  Move* mv = mvIdx < 0 ? &a->fast : chargedOf(&s->gm, a, mvIdx);
+  if (mvIdx >= 0 && a->fc == 2 && a->form != 0) changeForm(a, d, 0);   // pre-attack form change (Battle.js 1024)
   int damage = calcDamage(a, d, mv);
   mv->damage = damage;
   bool charged = mvIdx >= 0;
+  bool defenderUsedShield = false;
   if (charged) {
     a->energy -= mv->energy;
     int cmt = mv->instant ? 3000 : 10000;
@@ -42,17 +62,31 @@ __device__ void useMove(Sim* s, int ai, int di, int mvIdx) {
           if (turnsToNextCharged >= attackerTurns && a->hp <= cycleDamage) use = wouldShield(a, d, mv, a, d);
         }
       }
+      // sandbox = false: save shields for Aegislash shield / Cramorant gulping, don't shield early Dives (Battle.js 1121-1136)
+      if (d->kind == 1 && d->form == 1 && damage * 2 < d->hp) use = wouldShield(a, d, mv, a, d);
+      if (d->kind == 3 && d->form >= 1 && (double)damage * 2.2 < (double)d->hp) use = wouldShield(a, d, mv, a, d);
+      if (a->kind == 3 && (double)damage / (double)d->hp < 0.33) use = wouldShield(a, d, mv, a, d);
       if (use) {
         damage = 1;
         d->shields--;
         s->roundShield = 1;
+        defenderUsedShield = true;
+        if (d->fc == 1 && d->form != 1) changeForm(d, a, 1);
         if (s->roundCMU == 0) s->time += 10000;
       }
     }
+    if (d->fc == 3 && !defenderUsedShield && !mv->instant) {   // Mimikyu disguise (Battle.js 1274)
+      damage = 1;
+      s->roundShield = 1;
+      if (s->roundCMU == 0) s->time += 10000;
+    }
   } else {
-    a->energy += a->fast.gain;
+    int gain = a->fast.gain;
+    if (a->kind == 1 && a->form == 1) gain = 6;
+    a->energy += gain;
     if (a->energy > 100) a->energy = 100;
   }
+  if (a->kind == 1 && a->form == 1 && mv->gain > 0) damage = 1;
   d->hp = imax(0, d->hp - damage);
   if (mv->hasBuffs) {
     s->draws++;
@@ -74,6 +108,20 @@ __device__ void useMove(Sim* s, int ai, int di, int mvIdx) {
       }
     }
   }
+  // post-attack form changes (Battle.js 1548-1627)
+  if (charged && a->fc >= 5 && a->fc <= 8 && fcAttackerTrigger(a, mv)) {
+    int ns = 0;
+    if (a->fc == 5) ns = ((double)a->hp / (double)a->hpMax > 0.5) ? 1 : 2;
+    else if (a->fc == 8) ns = 1;
+    if (a->form != ns) changeForm(a, d, ns);
+  }
+  if (charged && d->kind == 3 && d->form >= 1 && !defenderUsedShield && !mv->instant) {
+    s->ins.actor = di; s->ins.type = 1; s->ins.turn = s->turns;
+    s->ins.value = d->form == 1 ? 100 : 101;
+    s->ins.prio = d->priority;
+    s->hasIns = 1;
+  }
+  if (charged && d->fc == 3 && d->form != 1 && !defenderUsedShield && !mv->instant) changeForm(d, a, 1);
   if (d->hp <= 0) d->faintSource = charged ? 2 : 1;
 }
 
@@ -102,7 +150,7 @@ __device__ void stepBattle(Sim* s) {
       p->hasActed = 1;
       int queuedFast = 0;
       for (int k = 0; k < s->nq; k++) if (s->q[k].actor == i && s->q[k].type == 0) queuedFast++;
-      int mv = decideAction(p, o, s->turns, queuedFast, &s->flags, &s->poolMax);
+      int mv = decideAction(p, o, s->turns, queuedFast, &s->flags, &s->poolMax, 0);
       QA a;
       a.actor = i; a.turn = s->turns;
       if (mv >= 0) {
@@ -120,7 +168,7 @@ __device__ void stepBattle(Sim* s) {
   }
   s->m[0].cooldown = cdSet[0];
   s->m[1].cooldown = cdSet[1];
-  QA ta[8];
+  QA ta[10];
   int nt = 0;
   for (int k = 0; k < s->nq; k++) {
     QA a = s->q[k];
@@ -138,6 +186,7 @@ __device__ void stepBattle(Sim* s) {
   int anyCharged = 0;
   for (int k = 0; k < nt; k++) {
     QA a = ta[k];
+    s->hasIns = 0;
     if (a.type == 1) anyCharged = 1;
     Mon* p = &s->m[a.actor];
     Mon* o = &s->m[1 - a.actor];
@@ -147,18 +196,23 @@ __device__ void stepBattle(Sim* s) {
       if (o->hp < 1) valid = false;
       if (p->hp < 1 && p->faintSource == 2) valid = false;
     } else {
-      Move* mv = &p->ch[a.value];
+      Move* mv = chargedOf(&s->gm, p, a.value);
       if (p->energy >= mv->energy) valid = true;
-      if (s->usePriority && p->hp <= 0 && p->faintSource == 2) valid = false;
+      if (s->usePriority && p->hp <= 0 && p->faintSource == 2 && a.value < 100) valid = false;   // Gulp Missile ignoresFaint
     }
     if (!valid) continue;
     if (a.type == 0) {
       useMove(s, a.actor, 1 - a.actor, -1);
     } else {
-      if (p->energy >= p->ch[a.value].energy) {
+      if (p->energy >= chargedOf(&s->gm, p, a.value)->energy) {
         useMove(s, a.actor, 1 - a.actor, a.value);
         s->roundCMU++;
       }
+    }
+    if (s->hasIns) {   // turnActions.splice(actionIndex, 0, action): right after the current action
+      for (int x = nt; x > k + 1; x--) ta[x] = ta[x - 1];
+      ta[k + 1] = s->ins; nt++;
+      s->hasIns = 0;
     }
   }
   s->prevCharged = anyCharged;
@@ -172,7 +226,7 @@ __device__ void stepBattle(Sim* s) {
 __device__ __noinline__ void simulate1v1(Sim* s) {
   resetMon(&s->m[0], &s->m[1]);
   resetMon(&s->m[1], &s->m[0]);
-  s->usePriority = s->m[0].atk != s->m[1].atk;
+  s->usePriority = s->m[0].atk != s->m[1].atk || (s->m[0].kind == 3 && s->m[1].kind == 3);   // Battle.js 257
   s->time = 0;
   s->turns = 1;
   s->nq = 0;
@@ -199,11 +253,9 @@ extern "C" __global__ void sim1v1_kernel(const double* st, const int* monIdx, co
   s.flags = 0; s.poolMax = 0;
   for (int i = 0; i < 2; i++) {
     const double* srow = st + (long long)monIdx[t * 2 + i] * S_N;
-    loadMon(&s.m[i], srow, dyn + ((long long)t * 2 + i) * D_N, i);
-    if (s.m[i].formChange || s.m[i].special == 3) s.flags |= F_UNSUPPORTED;
+    loadMon(&s.m[i], srow, dyn + ((long long)t * 2 + i) * D_N, i, st);
   }
   int* o = out + (long long)t * OUT_N;
-  if (s.flags & F_UNSUPPORTED) { for (int i = 0; i < OUT_N; i++) o[i] = 0; o[16] = s.flags; return; }
   simulate1v1(&s);
   o[0] = battleRating(&s.m[0], &s.m[1]);
   o[1] = battleRating(&s.m[1], &s.m[0]);

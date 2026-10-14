@@ -1,157 +1,201 @@
-# GPU viability: porting the 3v3 battle to CUDA
+# GPU viability: porting the 3v3 battle to CUDA (round 2)
 
 ## Verdict
 
-**Viable, but the 5× target is only reached conditionally.**
+**Go for the whole-battle path (b); no-go for the inner-sim batching path (a).** Nothing is wired into the CLI; you decide integration.
 
-- A CUDA port of the whole 3v3 battle (`Battle.js` + `TrainingAI`) exists in `gpu/` and reproduces pvpoke
-  exactly where it is supported: 0 winner / HP / turn mismatches over 1,206 real gen-0 battles and 18 fixtures (double
-  build); the float32 build has 0 winner mismatches and 5 HP/turn mismatches in 1,206 battles.
-- The kernel runs 284 battles/s against 3.30 battles/s for pvpoke serial (86×; 65× against serial with the scenario memo on).
-  Through a JSON-lines sidecar it still does 141 battles/s (43×).
-- **(a) Inner sims only on GPU:** 86% of worker time is inner `simulate()` work, so Amdahl caps the run at 7.2×; 5× needs
-  an effective inner-sim speedup of ≥10.6× with the latency of per-decision round trips hidden. **Not demonstrated** here; a
-  per-sim round trip through the sidecar (1,502 sims/s) is slower than one CPU thread (2,657 sims/s). Verdict: **no for
-  a naive offload, ceiling 7.2× on paper.**
-- **(b) Whole battle on GPU:** 5.1× when the 19.6% of battles the kernel cannot do (form-changing mons) run on CPU
-  concurrently; 3.9× when they run one after the other; about 12× once form changers are ported. Verdict: **borderline
-  pass (≈5×) as built, clear pass after porting Cramorant / Mimikyu / Morpeko**.
-- Not done: a `--gpu` flag, routing, or seeded-report check (see "Seeded report" below). You decide next.
+| the three numbers | value | measured how |
+|---|---|---|
+| Slice speedup, GPU + 8 CPU workers overlapped vs CPU only | **×31.7** (333.7 s → 10.5 s for 5,000 battles) | `node gpu/slice-e2e.mjs`, first 5,000 gen-0 battles of `out/evolve-gpu-profile/`, memo on, `out/gpu/slice-5000.json` |
+| Projected full run | **≈0.25 h instead of 8 h** (≈0.36 h if the GPU only matches the profile run's warmer 21.5 battles/s CPU rate instead of this slice's cold 15.0) | 8 h × (GA share + (1 − GA share) / 31.7); GA/non-battle share measured at 0.1% (below) |
+| Form-changer agreement (float32) | **100.00%** winner agreement on the 435 previously-unsupported 3v3 battles that the kernel finished, win-rate delta +0.00 pp; whole 5,000-battle slice 99.78% (4,989/5,000) | `gpu.verify_3v3`, `slice-e2e.mjs` |
+
+- Form changers (Cramorant, Mimikyu, Morpeko, Aegislash) are ported; the "unsupported" flag no longer exists (0 flagged).
+  PASS on both bars, float32: winner agreement ≥ 99% and win rate within ±1 pp.
+- **Path (a) fails:** with 16–64 battles in flight and every lookahead sim batched, the effective inner-sim rate is
+  2,445–3,129 sims/s against 4,895 for the 8 CPU threads, so S = 0.50–0.64 against the 10.6 needed. Not viable (details below).
+- Open items for integration: 0.8% of battles (19 of 2,400) overflow the kernel's lookahead pool (flag `POOL_OVERFLOW`) and need the CPU
+  as fallback; multi-stream overlap does not help (×0.55); results are float32 and not bit-identical (9 survivor-HP / 10 turn-count
+  differences in 2,381 compared battles, never a winner).
+- Not done: a `--gpu` flag, routing, or a seeded-report diff (see "Not done").
+
+## Why the numbers differ
+
+Every row is the same GPU. They differ in what the timer includes. "vs serial" is pvpoke `battleTeams` on one thread, memo off
+(3.30 battles/s). "vs 8 threads" is the 8-worker pool: 21.5 battles/s in the profile run, 14.98 on the 5,000-battle slice (the pool starts cold, memo hit rate 33.8%).
+
+| row | what is timed | battles/s | vs serial 1 thread | vs 8 threads | transfer | packing | CPU fallback | GA time | memo |
+|---|---|---|---|---|---|---|---|---|---|
+| kernel per battle ×N (1,000 battles) | one launch, host↔device copies | 160 | ×48.6 | ×10.7 (vs 14.98) | yes | no (arrays pre-packed in a file) | no | no | none |
+| kernel at 5,000 / 36,000 battles | same, bigger launch | 521 / 947 | ×158 / ×287 | ×35 / ×63 | yes | no | no | no | none |
+| sidecar, JSON lines (1,000) | Python process, JSON text both ways | 89 | ×27 | ×5.9 | yes | no | no | no | none |
+| sidecar, binary (1,000) | same, packed binary frames | 102 | ×31 | ×6.8 | yes | no | no | no | none |
+| inner-sim batched (path a) | CPU battles block on GPU 1v1 batches | 4.7–5.9 | ×1.4–1.8 | ×0.50–0.65 | yes | describe per sim | no | no | local per fiber |
+| GPU-only slice (5,000) | node describe + pack + binary batch + kernel | 497 | ×151 | ×33 | yes | yes (0.17 s) | no | no | none |
+| overlapped slice (5,000) | GPU 98.5% + CPU workers 1.5% at once, later finisher | 475 | ×144 | **×31.7** | yes | yes | yes (the CPU share) | no | CPU share only |
+| projected full run | 8 h × (0.001 + 0.999 / 31.7) | — | — | **≈0.25 h** | yes | yes | yes | 0.1% | CPU share only |
+
+Why the 1,000-battle rows (100–160 b/s) are far below the 5,000-battle slice (≈500 b/s): the kernel's time is set by its slowest
+battle in a launch, and a launch of 1,000 battles has a long tail with nothing to hide it. 5,000 battles per launch amortize
+it. JSON vs binary: 89 vs 102 b/s on the same 1,000-battle batch (×1.15); once the kernel dominates, transfer format barely matters.
+Earlier round numbers (284 b/s kernel, 141 b/s sidecar) were measured on a smaller, less form-heavy set before the form changers
+were in the kernel; they are not comparable with this table.
+
+## Why "no CUDA device" and GPU results both exist
+
+Both are true on this machine, and both were observed this session.
+
+- This is a WSL2 box with an RTX 3080 (10 GB, about 4.5 GB in use by other programs). Normal runs of every command in this report
+  see the card and produce the GPU numbers above.
+- Every `gpu/` entry point first calls `gpu/gpu/cuda_guard.py` (`require_cuda()`). Under `CUDA_VISIBLE_DEVICES=""` it finds no device
+  and exits 1 with one line: `gpu: no CUDA device (CUDARuntimeError: cudaErrorNoDevice: no CUDA-capable device is detected)`.
+  That is how you check what a machine without a GPU does (a fresh clone on a CI box, say). Observed with it set, all exit 1 with that single line:
+  `uv run python -m gpu.bench`, `gpu.verify_1v1`, `gpu.verify_3v3`, `gpu.sidecar`, `gpu.sidecar --binary`, `node gpu/client.mjs`,
+  `node gpu/client.mjs --transport json`, `node gpu/slice-e2e.mjs`, `node gpu/scheduler-driver.mjs`.
+- The unit test `gpu.test_scheduler` uses a stub for the GPU and needs no device.
+- Oversized batches: a batch that exceeds the configured limit or does not fit in GPU memory is split in halves and the split is logged
+  (`gpu: batch of 2000 exceeds the 700-battle limit; split into 1000 + 1000`); the split result is identical to the unsplit one.
 
 ## Prototype
 
-`gpu/` (Python via `uv`, cupy `RawKernel`, NVRTC; no nvcc needed). Machine: RTX 3080 10 GB, i7-10700KF, WSL2.
+`gpu/` (Python via `uv`, cupy `RawKernel`, NVRTC; no nvcc needed). Machine: RTX 3080 10 GB, i7-10700KF, 11 GB RAM, WSL2.
 
 | piece | command |
 |---|---|
-| kernel compiles | `cd gpu && uv run python -c "import cupy; cupy.RawKernel(...)"` |
-| export pvpoke ground truth | `node gpu/export-matchups.mjs` (imports only `src/engine/`, `src/scoring/`) |
-| 1v1 verification | `uv run python -m gpu.verify_1v1` |
-| 3v3 verification | `uv run python -m gpu.verify_3v3` |
-| benchmark | `node gpu/serial-baseline.mjs --battles 1000 [--memo]`, then `uv run python -m gpu.bench` |
-| sidecar / client | `gpu/sidecar.py`, `node gpu/client.mjs` |
+| export pvpoke ground truth (≈15 min, 5.5 GB heap, writes an 800 MB `sims.json`) | `node --max-old-space-size=5500 gpu/export-matchups.mjs --fixtures --rankings 40` |
+| 1v1 / 3v3 verification | `uv run python -m gpu.verify_1v1 [--real double]`, `uv run python -m gpu.verify_3v3` (from `gpu/`) |
+| benchmark (serial side first) | `node gpu/serial-baseline.mjs --battles 1000 [--memo]`, then `uv run python -m gpu.bench [--skip-1v1]` |
+| slice specs | `node gpu/dump-gen0-specs.mjs out/evolve-gpu-profile/evolve-gen0.json jaxon-gl-collection.csv out/gpu/slice-specs.json 5000 --slice` |
+| end-to-end slice | `node gpu/slice-e2e.mjs` (needs the GPU; uses all 8 cores for about 6 min) |
+| scheduler experiment | `node gpu/scheduler-driver.mjs --battles 256 --fibers 16,32,64`; unit test `uv run python -m unittest gpu.test_scheduler` |
+| transports | `node gpu/client.mjs --transport binary\|json` (frame format in `gpu/gpu/wire.py`) |
 
-Every entry point exits 1 with one line (`gpu: no CUDA device (...)`) under `CUDA_VISIBLE_DEVICES=""` (observed for
-verify_1v1, verify_3v3, bench, sidecar and client).
+## Measured: batch size, memory, streams (`out/gpu/bench.json`)
 
-## Profile of a real generation (R2)
+| batch | seconds | battles/s | GPU memory in use (whole card) |
+|---|---|---|---|
+| 1,000 | 9.7 | 103 | 8,175 MB (+578 MB over idle) |
+| 5,000 | 9.6 | 521 | 8,221 MB (+624 MB) |
+| 36,000 (one whole generation) | 38.0 | 947 | 8,142 MB (+545 MB) |
 
-Run `gpu-profile` (8 workers, population as in a normal run; `out/evolve-gpu-profile/profile-summary.json` and
-`worker-N.cpuprofile`): gen 0 simulated 36,000 battles in 27 m 53 s (21.5 battles/s); gen 1 simulated 24,452 and served
-11,548 from cache in 21 m 07 s.
+The 36,000 batch is the gen-0 export tiled up (about 1,500 distinct battles repeat); cost per battle is unaffected by repetition. One launch
+of 36,000 fit without a split. Streams: 1 stream 504 b/s, 2 streams 277 (×0.55), 4 streams 160 (×0.32) on the same
+5,000 battles with `chunk = n / streams`. The kernel already fills the GPU and chunking exposes the slowest-battle tail in each chunk, so overlap
+only hurts; the `--streams` option stays at 1 in the sidecar.
 
-- Inner sims per battle: 27.77 M memo misses over 60,452 simulated battles = **≈459 real `simulate()` per battle**
-  (memo hit rate 31%: 12.58 M hits, 27.77 M misses). With the memo off, the export saw ≈730 per battle (767,463 distinct
-  over 1,518 battles).
-- ms/battle: 8 threads → 372 ms per worker-battle (23,528 s sampled CPU / 60,452 ≈ 0.39 core-s); serial 1 thread, memo off
-  303 ms, memo on 229 ms (`out/gpu-serial*.log`).
-- ms per inner sim ≈ 0.73 ms in the run (0.86 × 23,528 s ÷ 27.77 M); isolated serial `simulate()` = 0.38 ms
-  (2,657 sims/s).
-- GPU-absorbable share: inclusive time under `MemoBattle.b.simulate` = **86.2%** (`node gpu/profile-inclusive.mjs`). Self-time top:
-  decideAction 22.5%, damage 18.7%, simulate 9.9%, applyStatBuffs 8.9%, Battle.step 7.4%, useMove 6.2%, resetMoves 3.6%.
+## Inner-sim batching, path (a) (`gpu/gpu/scheduler.py`, `gpu/scheduler-driver.mjs`)
+
+`InnerSimScheduler` (interface in its docstring, tested in `gpu/gpu/test_scheduler.py`) collects 1v1 requests from many suspended battles,
+dedupes identical states, cuts batches at `max_batch`, runs one kernel call and hands results back. The driver runs each CPU battle in a worker
+thread that blocks (Atomics.wait) while its lookahead sim is outstanding, and flushes one batch once every running battle is waiting.
+Same 256 battles, 8-thread CPU reference: 28.2 s, 118,960 sims → inner-sim capacity 4,895 sims/s (86.2% of time in `simulate`).
+
+| fibers | mean batch | wall | effective sims/s | S vs 10.6 needed | winner agreement with exact CPU | RSS |
+|---|---|---|---|---|---|---|
+| 16 | 15.3 | 54.8 s | 2,445 | 0.50 | 84.4% | 1.9 GB |
+| 32 | 29.7 | 43.2 s | 3,129 | 0.64 | 86.3% | 1.2 GB |
+| 64 | 53.3 | 45.0 s | 3,005 | 0.61 | 85.5% | 2.2 GB |
+
+**Path (a) is not viable here.** A batch can never exceed the number of battles in flight (each blocks until its own answer), the batch stays
+tiny, every step pays a round trip, and each fiber needs a full engine context (process RSS 1.2–2.2 GB at 16–64 fibers), so memory caps the fibers on 11 GB. Fidelity
+is also lower than 100% because the 1v1 kernel does not hand back every field the CPU memo restores (cooldown, damage window, faint source).
+Reaching S ≥ 10.6 would need hundreds of battles in flight. Path (b) does not have this problem.
+
+## Profile of a real generation
+
+Run `gpu-profile` (8 workers; `out/evolve-gpu-profile/`): gen 0 simulated 36,000 battles in 27 m 53 s (21.5 battles/s); gen 1 simulated 24,452 and
+served 11,548 from cache in 21 m 07 s.
+
+- Whole run 49 m 01 s (2,942 s, from `launch.json` `at` to `evolve-DONE`). The two generations' battle phases sum to 2,939 s (1,672.6 + 1,266.8), so
+  GA and all other non-battle work is **≈3 s = 0.1%** of the run. Projections below therefore treat the run as all battles.
+- ≈459 real `simulate()` per battle in the run (memo hit rate 31%); inclusive time under `MemoBattle.b.simulate` = **86.2%** of worker time
+  (`node gpu/profile-inclusive.mjs`).
+- Serial isolated `simulate()` = 0.38 ms (2,657 sims/s).
 
 ## Time model
 
-Baseline: ≈8 h at 8 threads = ≈21.5 battles/s ≈ 620k simulated battles.
+Baseline: ≈8 h at 8 threads ≈ 620k battles at 21.5 battles/s.
 
-**(a) Inner sims on GPU, battle logic on CPU.** Run time = 0.138 + 0.862 / S (S = effective inner-sim speedup).
-S → ∞ gives 7.2×; 5× needs S ≥ 10.6. The kernel does 711k sims/s (267× one CPU thread) for large batches including transfer
-(10,000 sims, 7–14 ms), but the AI's lookahead sims are sequentially dependent inside a battle, so a batch only
-forms by running many battles at once. A request per sim through the sidecar costs ~0.67 ms (1,502 sims/s for 10,000 sims
-incl. JSON), i.e. no gain. **5×: not met by a straightforward offload; possible only with a batching scheduler
-that hides the latency.** Not built.
+**(a) inner sims on GPU:** run time = 0.138 + 0.862 / S. Ceiling 7.2×; 5× needs S ≥ 10.6. Measured S ≤ 0.64 (table above) → no.
 
-**(b) Whole battle on GPU.** CPU rate 21.5 battles/s (8 threads). Kernel 284 b/s (sidecar 141 b/s). 19.6% of gen-0
-battles contain a form changer and must stay on CPU (Cramorant 244, Mimikyu 40, Morpeko 26 of 282 affected battles).
-Per battle: CPU leftover 0.196 × 46.5 ms = 9.1 ms; GPU 0.804 / 284 = 2.8 ms (5.7 ms via sidecar).
+**(b) whole battle on GPU, overlapped with the CPU workers (measured):** slice wall 10.52 s vs 333.7 s CPU only. Projected full run
+= 8 h × (0.001 + 0.999 × 10.52 / 333.7) = **0.25 h**. With the CPU baseline taken from the profile run (21.5 b/s) and the GPU's 475 b/s
+unchanged the ratio is ×22 → 0.36 h. Either way a run is dominated by the fixed costs this model leaves out: GA and report time are 0.1% only
+while battles are slow; at 15 minutes of battles they are still seconds. Also not modeled: the 0.8% POOL_OVERFLOW battles that need the CPU
+(≈40 per 5,000, a few seconds on 8 workers, hidden by the overlap), and that the GPU path has no scenario memo, which the CPU path uses for 31–34% of sims.
 
-| scenario | per-battle time | speedup | 8 h becomes |
-|---|---|---|---|
-| fallback overlapped with GPU | 9.1 ms | **5.1×** | ≈1.6 h |
-| fallback sequential | 11.9 ms | 3.9× | ≈2.1 h |
-| sidecar, overlapped | 9.1 ms | 5.1× | ≈1.6 h |
-| sidecar, sequential | 14.8 ms | 3.1× | ≈2.6 h |
-| form changers ported (GPU only, kernel) | 3.5 ms | ≈13× | ≈0.6 h |
-| form changers ported (sidecar) | 7.1 ms | ≈6.6× | ≈1.2 h |
-
-Caveats: GA, caching and CSV/report work outside battles are not modeled (profile says battles dominate); each battle
-currently needs a packed input, and the sidecar copies results back as JSON (94 ms per 1,000 battles measured by
-`node gpu/client.mjs`, round trip 7.3 s for 1,000). Only gen-0-style battles were benchmarked; GPU memory limits batch size
-(local stack 64 KB × threads). **Verdict (b): borderline ≥5× as built, clearly ≥5× after porting the three form changers.**
+The overlapped result was balanced in two runs: run a (GPU share 97.1%) finished GPU first at 8.3 s with CPU at 15.9 s; run b (98.5%) finished at 10.5 s with
+the CPU at 9.2 s. The CPU workers slow down while node packs and feeds the sidecar, so the best split moved from the naive rate-ratio.
 
 ## Port map (vendor line ranges)
 
-Ported (verified 0 mismatches against pvpoke):
+Ported:
 
 - `Battle.js`: `setNewPokemon` 82-120, `start` 215-274, `step` 278-605, `getTurnAction` 720-788, `queueAction` 793-837,
   `processAction` 842-1012, `useMove` 1016-1650 (damage, buffs, charged-move and fast-move ordering, CMP ties).
 - `TrainingAI.js`: `evaluateMatchup` 633-813, `runScenario` 815-957, `chooseOption` 971-990, `processStrategy` 992-1020,
   `decideAction` 1030-1129, `decideSwitch` 1131-1179, `decideShield` 1181-1378.
-- Engine wrappers: `aiWrappers.js` throw-and-go (140), shield banking (325), switch cost (415); `clockWrappers.js` (40);
-  `teamBattle.js` 3v3 driver.
-- 1v1 `simulate()` kernel (separate, with the simulate-mode ActionLogic).
+- Engine wrappers: `aiWrappers.js` throw-and-go (140), shield banking (325), switch cost (415); `clockWrappers.js` (40); `teamBattle.js` 3v3 driver.
+- **New in round 2, form changers:** `Pokemon.js` `changeForm` 2471-2590 (move replacement for Morpeko 2505-2511, Aegislash 2513-2520, stat/type
+  swaps 2538-2560) and `resetState` 1933-1934; `Battle.js` reset-on-switch 995-997, `activate_charged` trigger 1024-1031, `activate_shield` 1198-1204,
+  Mimikyu disguise (`charged_move_damage`) 1273-1290, Aegislash shield-form energy rules 1325/1354/1514, `charged_move` trigger incl.
+  Cramorant Gulping/Gorging 1548-1572, Gulp Missile damage and form reset after 1583, Aegislash/Cramorant shield-saving rules 1121-1134;
+  `Pokemon.js` Aegislash energy behavior 792-794 and 1569. Static form fields in `pack.py` (S_N 144, rows 130-140) and per-battle form state in dyn rows 15-16.
+- 1v1 `simulate()` kernel (separate, simulate-mode ActionLogic).
 
-Not yet ported (flagged by the kernel, never approximated; those battles fall back to CPU):
+Not ported (named, not approximated):
 
-- Form changers: Aegislash, Mimikyu, Cramorant, Morpeko (Full Belly / Hangry).
-- AI difficulty other than the level 3 the evolve search uses.
-- Simulate-mode ActionLogic inside the 3v3 path (only used by the 1v1 kernel).
+- AI difficulty other than the level 3 the evolve search uses; simulate-mode ActionLogic inside the 3v3 path.
+- Animations and decision logging (`pushAnimation`, `logDecision`): no effect on results.
+- Residual differences (226 of 89,355 form-changer 1v1 scenarios, mostly `turnsToKO`; 4 of 18 form-changer fixture pairings): not traced to a vendor line.
+  Suspects, unconfirmed: the Surf-vs-Dive test at `Battle.js` 1133-1134 and Aegislash move replacement (`Pokemon.js` 2513-2520) persisting across a switch.
 
-Hard parts (these decided the port's difficulty):
-
-- **RNG draw order.** `rng` advances by `draws × 0x6d2b79f5` per lookahead sim; `chooseOption` always consumes one draw;
-  buff-roll draws in `useMove`; an extra draw on WAIT_CLOCK; the `decideShield` estimatedEnergy draw; the OVERFARM draw. Any
-  order change moves every later random outcome. The kernel reproduces pvpoke's sequence exactly; this is where a port
-  diverges first if wrong.
-- Virtual-timer ordering and queue sort (CMP ties).
-- Baiting, throw-and-go and shield decisions (large branchy functions).
-- Buff roll sequencing; form changes mid-battle.
+Hard parts: RNG draw order (`rng` advances per lookahead sim; `chooseOption`, buff rolls, WAIT_CLOCK, `decideShield` and OVERFARM draws), virtual-timer queue ordering,
+branchy bait/throw-and-go/shield logic, and now mid-battle form changes. A divergence in any one of them moves every later random outcome.
 
 ## Verification (mismatch counts)
 
-**1v1** (`out/gpu-verify1v1.log`, 758,101 gen-0 inner sims, 703,829 supported, 54,272 flagged as unsupported =
-Cramorant):
+Export: 2,436 battles, 1,202,849 distinct 1v1 inner sims; the previously flagged set is now every scenario or battle containing a form changer
+(it is larger than the earlier 294 battles / 54,272 sims because the new export has more gen-0 battles and added form-changer fixtures; the set is
+defined by the species, not by the old flag counts).
 
-- double build: 0 mismatching rows on every field.
-- float32 build: 40 rows mismatch (0.0057%): rating 37, hp 25, energy 33/28, defBuff 8/23, turns 34, rngDraws 37.
-- rankings-1500 leads: 247 pairs, 183 supported, 0 rating and 0 any-field mismatches (both builds).
+**1v1** (`gpu.verify_1v1`, gen-0 inner sims 1,193,336; 0 flagged unsupported):
 
-**3v3** (`out/gpu-verify3v3.log`): 18 fixtures plus 1,500 real gen-0 battles; 294 flagged unsupported (19.6%), 1,206 compared.
+| set | build | scenarios | rows with a mismatch | notes |
+|---|---|---|---|---|
+| previously flagged (form changers) | double | 89,355 | 226 (0.25%) | rating 25, hp 18/12, energy 13/15, turnsToKO 124/87, rngDraws 7 |
+| previously flagged (form changers) | float32 | 89,355 | 226 (0.25%) | same counts |
+| rest | double | 1,103,981 | **0** | |
+| rest | float32 | 1,103,981 | 195 (0.018%) | rating 182 |
 
-| build | winner mismatches | survivorsHp | turn count | team-A win rate | per-matchup agreement |
+rankings-1500 leads: 398 pairs, 0 rating and 0 any-field mismatches (both builds).
+
+**3v3** (`gpu.verify_3v3`): 36 fixtures plus 2,400 real gen-0 battles (436 with a form changer).
+
+| set (float32) | battles | flagged invalid | winner mismatches | survivorsHp | turn count |
 |---|---|---|---|---|---|
-| double | 0 | 0 | 0 | 48.47% vs 48.47% | 100.00% |
-| float32 | 0 | 5 | 5 | 48.47% vs 48.47% | 100.00% |
+| previously flagged (form changers) | 436 | 1 | 0 | 1 | 2 |
+| rest | 1,964 | 18 | 0 | 8 | 8 |
+| fixtures (incl. 18 form-changer lead pairings) | 36 | 0 | 1 | 4 | 5 |
 
-Found and fixed by trace: the first kernel gave 46 winner and 151 HP mismatches (96.11% agreement, failing). Tracing
-one battle (`gpu/trace-battle.mjs`, `gpu/gpu/trace_cmp.py`) showed `Battle.js` line 415 does `action.priority -= 40` on a property
-the sort never reads, so it is dead code; the port had applied it. Removing it gave 0 mismatches.
+Double build: previously flagged 0/0/0 winner/HP/turn mismatches (435 compared), rest 0/0/0 (1,946 compared), fixtures 1/4/5; no pass bar applied to double.
+Float32: team-A win rate pvpoke 50.04% vs kernel 50.04% (+0.00 pp) → PASS; per-matchup winner agreement 100.00% → PASS; previously-flagged subset alone 435 battles, 100.00%, +0.00 pp.
+The fixture mismatches are all in form-changer lead pairings (`forms-02`, `forms-11`, `forms-21`, `forms-mirror-21`; one winner flips in `forms-02`). Flagged invalid
+= `POOL_OVERFLOW` (the lookahead pool capacity of the 3v3 kernel), reported in the "flagged invalid" count, distinct from the removed "unsupported" flag.
 
-The 5 float32 HP/turn differences are rounding in damage; no winner changed.
+Earlier-round fix kept for reference: `Battle.js` line 415 `action.priority -= 40` is dead code; the first kernel applied it and gave 96.11% agreement.
 
 ## Other evidence
 
-- **Dawn / WebGPU:** `webgpu@0.6.2` (Dawn) runs a compute shader in WSL2 (`result [0,2,4,6]`) but its adapter is llvmpipe
-  (Mesa 26.0.3 software), not the RTX 3080; `DAWN_BACKEND=vulkan` gives the same. D3D12 not tried. No Dawn speed numbers.
-- **Benchmark** (`out/gpu-bench.log`, float32): 1v1: 10,000 sims in 14 ms incl. transfer = 710,858 sims/s (earlier run
-  7 ms, 1.47 M/s); via sidecar 6.7 s round trip (26 ms kernel; the rest is JSON and file handling), 1,502 sims/s;
-  pvpoke serial 2,657 sims/s. 3v3: 1,000 battles in 3.52 s = 284.4 battles/s (592 inner sims/battle, 168,258 inner sims/s);
-  sidecar 7.09 s = 141.0 battles/s; pvpoke `battleTeams` serial 3.30 battles/s (memo off), 4.36 (memo on).
-  1v1 sims are tiled to 10,000 from distinct non-flagged sims.
-- **Seeded report check (R14):** not observable here: no `--gpu` flag exists, as asked, and the production search
-  calls `battleTeams`. Wiring needed: a batching shim at `src/engine/teamBattle.js` that sends supported battles to the sidecar,
-  an unsupported-fallback path, and a seeded-report diff run. The float32 kernel reproduces pvpoke's RNG draws in
-  all but 5 of 1,206 battles, so exact seeded report equality is not guaranteed.
-- **Invariant:** the port reimplements battle math, which `CLAUDE.md` forbids for `src/`. It is contained in `gpu/` and
-  guarded by exact comparison against pvpoke on every change.
+- **Dawn / WebGPU:** `webgpu@0.6.2` (Dawn) runs a compute shader in WSL2 (`result [0,2,4,6]`) but its adapter is llvmpipe (Mesa 26.0.3 software), not the RTX 3080;
+  `DAWN_BACKEND=vulkan` gives the same. D3D12 not tried. No Dawn speed numbers.
+- **1v1 kernel:** 10,000 sims in 10 ms including transfer ≈ 998k sims/s (pvpoke serial 2,657 sims/s). The 1v1 JSON sidecar figure in `gpu.bench` (130 sims/s) was
+  dominated by two 800 MB `sims.json` loads fighting for 11 GB of RAM and is not a transport measurement; the 3v3 rows above are.
+- **Invariant:** the port reimplements battle math, which `CLAUDE.md` forbids for `src/`. It is contained in `gpu/` and guarded by exact comparison against pvpoke.
 
-## Where RNG draw order diverges
+## Not done
 
-Float32 only: rating, energy and rngDraws mismatches in 37 of 703,829 1v1 sims (0.0053%) and 5 of 1,206 3v3 battles come
-from rounding changing a branch (a damage value or a threshold) that then shifts later draws. The double build never
-diverges. No divergence found in the order itself.
-
-## Next steps (your call)
-
-Port the form changers (largest gain, 5.1× → ≈13×); build the batching scheduler for the sim-level option; then wire a `--gpu`
-flag behind the shim above.
+- No `--gpu` flag, no routing in `src/`, no seeded-report diff: the production search calls `battleTeams`, and the float32 kernel is not bit-identical
+  (see counts), so a seeded report would not be byte-equal. Wiring needed: a batching shim at `src/engine/teamBattle.js` that sends battles to the sidecar in
+  ≥5,000-battle launches, a CPU fallback for `POOL_OVERFLOW` battles, and a seeded-report comparison.
+- GPU memory: the card is shared with other programs; 36,000-battle launches ran at ≈8.1 GB total in use.

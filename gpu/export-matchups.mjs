@@ -13,11 +13,12 @@
 //                       and `battleTeams`' result (winner, survivorsHp, summary)
 // Battle specs come from gpu/dump-gen0-specs.mjs (real gen-0 candidates vs opponents) and,
 // with --fixtures, the test/e2e.test.js mirror / dominant-team fixtures.
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs';
 import path from 'node:path';
 import { initEngine, buildPokemon, simBattle } from '../src/engine/harness.js';
 import { battleTeams, initTeamBattle } from '../src/engine/teamBattle.js';
 import { applyGroupMoveset } from '../src/scoring/index.js';
+import { makeDescriber } from './describe.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -31,97 +32,13 @@ const withFixtures = args.includes('--fixtures');
 const fixturesOnly = args.includes('--fixtures-only');
 const rankingsN = Number(opt('rankings', 0)); // top-N rankings-1500 species, all ordered pairs (shields 1/1)
 
-// ---------------------------------------------------------------- descriptors
-
-const TYPES = ['bug', 'dark', 'dragon', 'electric', 'fairy', 'fighting', 'fire', 'flying', 'ghost', 'grass', 'ground', 'ice', 'normal', 'poison', 'psychic', 'rock', 'steel', 'water'];
-const typeId = (t) => (t ? TYPES.indexOf(String(t).toLowerCase()) : -1);
-const BUFF_TARGET = { none: 0, self: 1, opponent: 2, both: 3 };
-
-function describeMove(m) {
-  if (!m) return null;
-  return {
-    id: m.moveId,
-    type: typeId(m.type),
-    power: m.power,
-    energy: m.energy,
-    energyGain: m.energyGain,
-    cooldown: m.cooldown,
-    turns: m.turns,
-    percentHp: m.damageMethod === 'percentMaxHP' ? 1 : 0,
-    megaMove: m.isMegaMove ? 1 : 0,
-    buffs: m.buffs ? [m.buffs[0], m.buffs[1]] : null,
-    buffTarget: BUFF_TARGET[m.buffTarget] ?? 0,
-    buffsSelf: m.buffsSelf ? [m.buffsSelf[0], m.buffsSelf[1]] : null,
-    buffsOpponent: m.buffsOpponent ? [m.buffsOpponent[0], m.buffsOpponent[1]] : null,
-    buffApplyChance: m.buffs ? m.buffApplyChance : 0,
-    selfDebuffing: m.selfDebuffing ? 1 : 0,
-    selfBuffing: m.selfBuffing ? 1 : 0,
-    selfAttackDebuffing: m.selfAttackDebuffing ? 1 : 0,
-    selfDefenseDebuffing: m.selfDefenseDebuffing ? 1 : 0,
-    instant: m.tags && m.tags.includes('instant') ? 1 : 0,
-    ignoresFaint: m.tags && m.tags.includes('ignoresFaint') ? 1 : 0,
-    formChange: m.formChange ? 1 : 0,
-  };
-}
-
-const monTable = [];
-const monIndex = new Map();
-function internMon(st) {
-  const key = JSON.stringify(st);
-  let i = monIndex.get(key);
-  if (i === undefined) {
-    i = monTable.length;
-    monTable.push(st);
-    monIndex.set(key, i);
-  }
-  return i;
-}
-
-/** Everything a battle reads off one Pokemon, as plain numbers. `entry` adds the live state at the call. */
-function describeMon(p, entry) {
-  const st = {
-    species: p.speciesId,
-    atk: p.stats.atk,
-    def: p.stats.def,
-    hpMax: p.stats.hp,
-    types: [typeId(p.types[0]), typeId(p.types[1] === 'none' ? null : p.types[1])],
-    shadow: p.shadowType === 'shadow' ? 1 : 0,
-    shadowAtk: p.shadowAtkMult,
-    shadowDef: p.shadowDefMult,
-    // defensive effectiveness vs each attacking type, in TYPES order
-    eff: TYPES.map((t) => p.typeEffectiveness[t]),
-    // form changers (Mimikyu, Cramorant, Aegislash, ...) are not ported: flagged so the kernel can skip them
-    formChange: p.formChange ? 1 : 0,
-    megaLevel: p.megaLevel,
-    mega: typeof p.hasTag === 'function' && p.hasTag('mega') ? 1 : 0,
-    // ActionLogic hard-codes Melmetal vs Cresselia (1/2); Cramorant (3) is a form changer
-    special: p.speciesName === 'Melmetal' ? 1 : p.speciesName === 'Cresselia' ? 2 : p.speciesId === 'cramorant' ? 3 : 0,
-    fast: describeMove(p.fastMove),
-    charged: [0, 1, 2].map((i) => describeMove(p.chargedMoves[i])),
-    name: p.speciesName,
-  };
-  const d = {
-    mon: internMon(st),
-    startHp: p.startHp,
-    startEnergy: p.startEnergy,
-    startCooldown: p.startCooldown,
-    startingShields: p.startingShields,
-    startStatBuffs: [p.startStatBuffs[0], p.startStatBuffs[1]],
-    nativeStatBuffs: [p.nativeStatBuffs[0], p.nativeStatBuffs[1]],
-    priority: p.priority,
-    turnsToKO: p.turnsToKO,
-    baitShields: p.baitShields,
-    farmEnergy: p.farmEnergy ? 1 : 0,
-    optimizeMoveTiming: p.optimizeMoveTiming ? 1 : 0,
-  };
-  if (entry) d.statBuffs = [p.statBuffs[0], p.statBuffs[1]];
-  return d;
-}
+// ---------------------------------------------------------------- descriptors (gpu/describe.mjs)
 
 // ----------------------------------------------------------------- rebuilding
 
 const ctx = await initEngine();
 initTeamBattle(ctx);
+const { describeMon, monTable } = makeDescriber(ctx);
 
 function build(spec) {
   const p = buildPokemon(ctx, { speciesId: spec.speciesId, ivs: spec.ivs, shadow: !!spec.shadow, bestBuddy: !!spec.bestBuddy });
@@ -214,6 +131,12 @@ if (withFixtures || fixturesOnly) {
   for (const [name, A, B] of [['dominant', STRONG, WEAK], ['mirror', STRONG, STRONG]]) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) list.push({ id: `${name}-${i}${j}`, teamA: A, teamB: B, leadA: i, leadB: j, tag: name });
   }
+  // form changers (Aegislash is not in the user's collections): every lead pairing of two mixed teams
+  const FORMS_A = mk(['aegislash_shield', 'morpeko_full_belly', 'mimikyu']);
+  const FORMS_B = mk(['cramorant', 'aegislash_blade', 'azumarill']);
+  for (const [name, A, B] of [['forms', FORMS_A, FORMS_B], ['forms-mirror', FORMS_A, FORMS_A]]) {
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) list.push({ id: `${name}-${i}${j}`, teamA: A, teamB: B, leadA: i, leadB: j, tag: name });
+  }
 }
 
 // ------------------------------------------------------------------------ run
@@ -272,7 +195,13 @@ const wall = (Date.now() - t0) / 1000;
 mkdirSync(outDir, { recursive: true });
 writeFileSync(path.join(outDir, 'rankings.json'), JSON.stringify(rankingChecks));
 writeFileSync(path.join(outDir, 'mons.json'), JSON.stringify(monTable));
-writeFileSync(path.join(outDir, 'sims.json'), JSON.stringify(sims));
+{ // streamed: the array is past V8's ~512 MB string limit as one JSON.stringify
+  const fd = openSync(path.join(outDir, 'sims.json'), 'w');
+  writeSync(fd, '[');
+  for (let i = 0; i < sims.length; i += 2000) writeSync(fd, (i ? ',' : '') + sims.slice(i, i + 2000).map((x) => JSON.stringify(x)).join(','));
+  writeSync(fd, ']');
+  closeSync(fd);
+}
 writeFileSync(path.join(outDir, 'battles.json'), JSON.stringify(battles));
 console.log(`exported ${battles.length} battles, ${rawSimCount} inner sims (${sims.length} distinct) in ${wall.toFixed(1)}s -> ${outDir}/{mons,sims,battles}.json`);
 process.exit(0);

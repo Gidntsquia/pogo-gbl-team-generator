@@ -19,12 +19,15 @@ from .kernel1v1 import run_1v1  # noqa: E402
 from .pack import FIELDS, load_sims, load_static  # noqa: E402
 
 
+INVALID = 0x6F  # POOL/STACK/MOVES overflow etc.; F_TIMEOUT (16) is a real outcome, compared like any other
+
+
 def table(name, out, exp):
-    ok = out[:, 16] == 0  # flag 0 = supported and finished cleanly
+    ok = (out[:, 16] & INVALID) == 0  # nothing flagged invalid
     n, nsup = len(out), int(ok.sum())
     bad = (out[:, :16] != exp[:, :16]) & ok[:, None]
     rows = bad.any(1)
-    print(f"\n[{name}] scenarios={n} supported={nsup} unported(flagged)={n - nsup} rows-with-mismatch={int(rows.sum())}")
+    print(f"\n[{name}] scenarios={n} compared={nsup} flagged-unsupported={n - nsup} rows-with-mismatch={int(rows.sum())}")
     print(f"  {'field':<12}{'mismatches':>11}{'rate':>9}")
     for i, f in enumerate(FIELDS):
         print(f"  {f:<12}{int(bad[:, i].sum()):>11}{bad[:, i].sum() / max(nsup, 1):>9.4%}")
@@ -47,15 +50,20 @@ def main():
     fails = 0
     for real in (["double", "float"] if a.real == "both" else [a.real]):
         out = run_1v1(st, idx, dyn, real, block=32)
-        r, _ = table(f"{real} / gen-0 inner sims", out[gen0], exp[gen0])
-        fails += r if real == "double" else 0  # float32 mismatches are reported, not fatal
+        # the form changers (Aegislash, Mimikyu, Cramorant, Morpeko) used to be flagged and skipped: their own rows
+        fm = (st[idx[:, 0], 130] > 0) | (st[idx[:, 1], 130] > 0)
+        print(f"\n[{real}] previously-unsupported set: {int((fm & gen0).sum())} gen-0 scenarios involve a form changer "
+              f"(whole export: {int(fm.sum())} of {len(fm)})")
+        r1, _ = table(f"{real} / gen-0 inner sims, previously flagged (form changers)", out[gen0 & fm], exp[gen0 & fm])
+        r2, _ = table(f"{real} / gen-0 inner sims, rest", out[gen0 & ~fm], exp[gen0 & ~fm])
+        fails += (r1 + r2) if real == "double" else 0  # float32 mismatches are reported, not fatal
         rk_path = os.path.join(a.data, "rankings.json")
         if os.path.exists(rk_path):
             rk = json.load(open(rk_path))
             sel = np.array([c["sim"] for c in rk])
             o = out[sel]
             e = np.array([[c["expected"]] for c in rk])
-            sup = o[:, 16] == 0
+            sup = (o[:, 16] & INVALID) == 0
             m1 = (o[:, 0] != e[:, 0]) & sup
             # the recorded rating is rating1 (mon a); mon b's is 1000-ish and checked via the sim row itself
             both = (o[:, :16] != exp[sel][:, :16]) & sup[:, None]

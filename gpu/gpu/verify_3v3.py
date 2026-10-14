@@ -17,7 +17,7 @@ from .kernel3v3 import load_battles, run_3v3, OUT_FIELDS
 from .pack import load_static
 
 WIN = {"a": 0, "b": 1, "tie": 2}
-INVALID = 0x6F  # F_UNSUPPORTED|POOL_OVERFLOW|STACK_OVERFLOW|MOVES_OVERFLOW|GUARD|BADSTATE (TIMEOUT=16 is a real outcome)
+INVALID = 0x6E  # POOL_OVERFLOW|STACK_OVERFLOW|MOVES_OVERFLOW|GUARD|BADSTATE (TIMEOUT=16 is a real outcome); nothing is flagged unsupported any more
 
 
 def compare(bs, out):
@@ -43,7 +43,7 @@ def report(label, rows):
     wm = sum(not r["winner_ok"] for r in sup)
     hm = sum(not r["hp_ok"] for r in sup)
     tm = sum(not r["turns_ok"] for r in sup)
-    print(f"  {label}: {len(rows)} battles, {uns} unsupported (flagged), {len(sup)} compared | "
+    print(f"  {label}: {len(rows)} battles, {uns} flagged, {len(sup)} compared | "
           f"winner mismatches {wm}, survivorsHp mismatches {hm}, turn-count mismatches {tm}")
     return sup
 
@@ -64,7 +64,9 @@ def main():
     idx, dyn, seeds, bs = load_battles(f"{a.data}/battles.json", limit=a.limit or None)
     fx = [i for i, b in enumerate(bs) if b["tag"] != "gen0"]
     real_idx = [i for i, b in enumerate(bs) if b["tag"] == "gen0"]
-    print(f"{len(fx)} fixture battles, {len(real_idx)} real gen-0 battles")
+    fm = ((st[idx.reshape(-1), 130] > 0).reshape(-1, 6)).any(1)   # a form changer on either team: the previously-flagged set
+    print(f"{len(fx)} fixture battles, {len(real_idx)} real gen-0 battles "
+          f"({sum(bool(fm[i]) for i in real_idx)} of them have a form changer, the previously flagged set)")
     ok = True
     for real in (["double", "float"] if a.real == "both" else [a.real]):
         t = time.time()
@@ -72,7 +74,10 @@ def main():
         print(f"[{real}] kernel time {time.time() - t:.1f}s")
         rows = compare(bs, out)
         report("fixtures", [rows[i] for i in fx])
-        sup = report("real gen-0", [rows[i] for i in real_idx])
+        report("real gen-0, previously flagged (form changers)", [rows[i] for i in real_idx if fm[i]])
+        report("real gen-0, rest", [rows[i] for i in real_idx if not fm[i]])
+        sup = report("real gen-0, all", [rows[i] for i in real_idx])
+        print(f"  flagged invalid in total: {sum(1 for r in rows if r['flags'] & INVALID)}")
         sel = [i for i in real_idx if not (rows[i]["flags"] & INVALID)]
         jsw = [rows[i]["js"] for i in sel]
         gw = [rows[i]["gpu"] for i in sel]
@@ -84,6 +89,11 @@ def main():
         bad = [r for r in rows if not (r["flags"] & INVALID) and not (r["winner_ok"] and r["hp_ok"])]
         for r in bad[:8]:
             print(f"    mismatch {r['id']}: winner js={r['js']} gpu={r['gpu']} hp_ok={r['hp_ok']}")
+        pf = [i for i in sel if fm[i]]
+        if pf:
+            pa = 100.0 * np.mean([rows[i]["js"] == rows[i]["gpu"] for i in pf])
+            pd = team_a_rate([rows[i]["gpu"] for i in pf]) - team_a_rate([rows[i]["js"] for i in pf])
+            print(f"  previously-flagged subset alone: {len(pf)} battles, winner agreement {pa:.2f}%, win-rate delta {pd:+.2f} pp")
         ok = ok and abs(d) <= 1 and agree >= 99
     sys.exit(0 if ok else 2)
 

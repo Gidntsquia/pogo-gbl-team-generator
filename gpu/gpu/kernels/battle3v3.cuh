@@ -12,7 +12,7 @@
 // Engine wrappers re-implemented: wrapThrowAndGo (aiWrappers.js 140), wrapShieldBanking (325), wrapSwitchCost (415),
 //   wrapBattleClock (clockWrappers.js 40), p0.decrementSwitchTimer override and battle.forceSwitch override (teamBattle.js 288-340).
 // AI decision arithmetic runs in double in both builds; only the battle simulation uses REAL.
-// Not ported (battle flagged F_UNSUPPORTED): form-changing mons (Aegislash, Mimikyu, Cramorant, Morpeko, ...), difficulty != 3.
+// Form changers (Aegislash, Mimikyu, Cramorant, Morpeko) are ported; difficulty != 3 is not (the engine only uses Champion).
 
 #define F_GUARD 32          // turn loop guard tripped
 #define F_BADSTATE 64       // internal consistency check failed
@@ -69,6 +69,8 @@ struct B3 {
   int chargedUsed, lastChargedTurn, roundCharged, roundShield, playerUseShield;
   int flags, innerSims, draws, poolMax, simDraws;
   Sim sc;                        // scratch 1v1 battle for runScenario
+  int curAi;                     // Battle.js actionIndex: index of the action after the one being processed
+  Move gm;                       // scratch Gulp Missile move
   int* dbg; int ndbg;            // optional event trace (verification aid), null in production
 };
 
@@ -141,6 +143,7 @@ __device__ __noinline__ double runScenario(B3* b, int type, int gi, int gj) {
   A->startHp = A->hp; A->startEnergy = A->energy; A->ssb0 = A->sb0; A->ssb1 = A->sb1; A->startCd = A->cooldown; A->startShields = A->shields;
   O->startHp = O->hp; O->startEnergy = O->energy; O->ssb0 = O->sb0; O->ssb1 = O->sb1; O->startCd = O->cooldown; O->startShields = O->shields;
   int sh0 = A->startShields, sh1 = O->startShields;
+  A->startForm = A->form; O->startForm = O->form;   // TrainingAI.js 831, 838
   switch (type) {
     case SC_BOTH_BAIT: A->bait = 1; A->farm = 0; O->bait = 1; O->farm = 0; break;
     case SC_NEITHER_BAIT: A->bait = 0; A->farm = 0; O->bait = 0; O->farm = 0; break;
@@ -174,6 +177,7 @@ __device__ __noinline__ double runScenario(B3* b, int type, int gi, int gj) {
   s->m[1].startHp = O->startHp; s->m[1].startEnergy = O->startEnergy; s->m[1].startCd = O->startCd;
   resetMon(&s->m[0], &s->m[1]);   // pokemon.reset(), then opponent.reset(): the first sees the other's stale end-of-sim buffs
   resetMon(&s->m[1], &s->m[0]);
+  s->m[0].startForm = s->m[0].origForm; s->m[1].startForm = s->m[1].origForm;   // TrainingAI.js 940, 948
   *A = s->m[0]; *O = s->m[1];
   A->index = idx0; O->index = idx1;
   A->bait = sbait0; A->farm = sfarm0; A->priority = sprio0;   // wrapRunScenario restores these
@@ -491,7 +495,7 @@ __device__ __noinline__ Act aiDecide(B3* b, int p, int turn) {
   if (!have) {
     int queuedFast = 0;
     for (int k = 0; k < b->nqa; k++) if (b->qa[k].actor == p && b->qa[k].type == A_FAST) queuedFast++;
-    int mv = decideAction(poke, opp, b->turns, queuedFast, &b->flags, &b->poolMax);
+    int mv = decideAction(poke, opp, b->turns, queuedFast, &b->flags, &b->poolMax, 1);
     if (mv >= 0) { act.type = A_CHARGED; act.value = mv; }
     else { act.type = A_FAST; act.value = 0; }
   }
@@ -503,7 +507,7 @@ __device__ __noinline__ Act aiDecide(B3* b, int p, int turn) {
 __device__ __noinline__ void setNewPokemon(B3* b, int g, int idx) {
   Mon* pk = &b->mon[g];
   pk->csi = 0;   // wrapThrowAndGo
-  if (b->turns > 1) resetMon(pk, &b->mon[b->act[1 - idx]]);   // poke.reset(true): opponent = pokemon[other index]
+  if (b->turns > 1) resetMon(pk, &b->mon[b->act[1 - idx]], 1);   // poke.reset(true): opponent = pokemon[other index]
   pk->index = idx;
   b->act[idx] = g;
   pk->shields = b->pl[idx].shields;
@@ -564,10 +568,12 @@ __device__ __noinline__ void forceSwitch(B3* b) {
 __device__ __noinline__ void useMove3(B3* b, int ai, int di, int mvIdx, int forceShield) {
   Mon* a = &b->mon[ai];
   Mon* d = &b->mon[di];
-  Move* mv = mvIdx < 0 ? &a->fast : &a->ch[mvIdx];
+  Move* mv = mvIdx < 0 ? &a->fast : chargedOf(&b->gm, a, mvIdx);
+  if (mvIdx >= 0 && a->fc == 2 && a->form != 0) changeForm(a, d, 0);   // pre-attack form change (Battle.js 1024)
   int damage = calcDamage(a, d, mv);
   mv->damage = damage;
   bool charged = mvIdx >= 0;
+  bool defenderUsedShield = false;
   if (mv->energy > 0) b->chargedUsed++;   // wrapBattleClock
   if (charged) {
     a->energy -= mv->energy;
@@ -578,12 +584,18 @@ __device__ __noinline__ void useMove3(B3* b, int ai, int di, int mvIdx, int forc
       b->roundShield = 1;
       b->pl[d->index].shields--;
       d->shUsed++;
+      defenderUsedShield = true;
+      if (d->fc == 1 && d->form != 1) changeForm(d, a, 1);
     }
+    if (d->fc == 3 && !defenderUsedShield && !mv->instant) { damage = 1; b->roundShield = 1; }   // Mimikyu disguise
     if (d->hp <= 0) { b->nta = 0; b->nqa = 0; }
   } else {
-    a->energy += a->fast.gain;
+    int gain = a->fast.gain;
+    if (a->kind == 1 && a->form == 1) gain = 6;
+    a->energy += gain;
     if (a->energy > 100) a->energy = 100;
   }
+  if (a->kind == 1 && a->form == 1 && mv->gain > 0) damage = 1;
   d->hp = imax(0, d->hp - damage);
   if (mv->hasBuffs) {
     double roll = rnd(b);   // Math.random() + buffChanceModifier(0) + shieldBuffModifier(0)
@@ -598,6 +610,24 @@ __device__ __noinline__ void useMove3(B3* b, int ai, int di, int mvIdx, int forc
       }
     }
   }
+  // post-attack form changes (Battle.js 1548-1627)
+  if (charged && a->fc >= 5 && a->fc <= 8 && fcAttackerTrigger(a, mv)) {
+    int ns = 0;
+    if (a->fc == 5) ns = ((double)a->hp / (double)a->hpMax > 0.5) ? 1 : 2;
+    else if (a->fc == 8) ns = 1;
+    if (a->form != ns) changeForm(a, d, ns);
+  }
+  if (charged && d->kind == 3 && d->form >= 1 && !defenderUsedShield && !mv->instant) {
+    Act g; g.actor = d->index; g.type = A_CHARGED; g.turn = b->turns; g.value = d->form == 1 ? 100 : 101;
+    g.prio = b->pl[d->index].priority; g.processed = 0; g.valid = 0;
+    if (b->nta < MAXACT) {
+      int pos = imin(b->curAi, b->nta);
+      for (int x = b->nta; x > pos; x--) b->ta[x] = b->ta[x - 1];
+      b->ta[pos] = g; b->nta++;
+    } else b->flags |= F_BADSTATE;
+    b->turns--;   // emulate mode
+  }
+  if (charged && d->fc == 3 && d->form != 1 && !defenderUsedShield && !mv->instant) changeForm(d, a, 1);
   if (d->hp <= 0) { d->faintSource = charged ? 2 : 1; b->nqa = 0; }
   if (b->dbg && b->ndbg < 6000) { int* e = b->dbg + b->ndbg * 5; e[0] = b->turns; e[1] = ai; e[2] = mvIdx; e[3] = d->hp; e[4] = ai * 8 + di; b->ndbg++; }
   if (mv->energy > 0) {
@@ -645,7 +675,7 @@ __device__ __noinline__ void processAction(B3* b, int k) {
   if (a.type == A_FAST) {
     useMove3(b, pg, oppG, -1, 0);
   } else if (a.type == A_CHARGED) {
-    Move* mv = &poke->ch[a.value];
+    Move* mv = chargedOf(&b->gm, poke, a.value);
     if (poke->energy >= mv->energy) {
       if (b->phase != P_SUSPEND_CHARGED) {
         bool same = false;
@@ -677,6 +707,10 @@ __device__ __noinline__ void processAction(B3* b, int k) {
       poke->sb0 = 0; poke->sb1 = 0; poke->ssb0 = 0; poke->ssb1 = 0;
       poke->startHp = imin(poke->hp, poke->hpMax);
       poke->startEnergy = poke->energy ? imin(poke->energy, 100) : 0;
+      if (poke->fc && poke->form != poke->origForm && fcResetsOnSwitch(poke->fc)) {   // Battle.js 995
+        poke->startForm = poke->origForm;
+        changeForm(poke, &b->mon[b->act[1 - p]], poke->origForm);
+      }
     } else {
       b->mon[b->act[1 - p]].cooldown = 500;
     }
@@ -773,6 +807,7 @@ __device__ __noinline__ void step3(B3* b) {
   while (ai < b->nta) {
     if (b->phase != P_NEUTRAL) return;
     int k = ai++;
+    b->curAi = ai;
     Act* a = &b->ta[k];
     Mon* poke = &b->mon[b->act[a->actor]];
     Mon* opp = &b->mon[b->act[1 - a->actor]];
@@ -781,9 +816,9 @@ __device__ __noinline__ void step3(B3* b) {
       if (opp->hp < 1) a->valid = 0;
       if (poke->hp < 1 && poke->faintSource == 2) a->valid = 0;
     } else if (a->type == A_CHARGED) {
-      Move* mv = &poke->ch[a->value];
+      Move* mv = chargedOf(&b->gm, poke, a->value);
       if (poke->energy >= mv->energy) a->valid = 1;
-      if (b->usePriority && poke->hp <= 0 && poke->faintSource == 2) a->valid = 0;
+      if (b->usePriority && poke->hp <= 0 && poke->faintSource == 2 && a->value < 100) a->valid = 0;   // Gulp Missile ignoresFaint
     } else if (a->type == A_SWITCH) {
       if ((poke->cooldown == 0 && b->pl[poke->index].switchTimer == 0) || poke->hp < 1) a->valid = 1;
     }
@@ -834,8 +869,8 @@ __device__ __noinline__ void step3(B3* b) {
 
 #define B_OUT 24
 
-__device__ void freshMon(Mon* m, const double* srow, const double* drow, int player) {
-  loadMon(m, srow, drow, player);
+__device__ void freshMon(Mon* m, const double* srow, const double* drow, int player, const double* st) {
+  loadMon(m, srow, drow, player, st);
   m->startHp = m->hpMax; m->startEnergy = 0; m->startCd = 0; m->startShields = 2;
   m->ssb0 = 0; m->ssb1 = 0; m->nsb0 = 0; m->nsb1 = 0;
   m->priority = 0; m->bait = 1; m->farm = 0;
@@ -851,14 +886,12 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
   int* o = out + (long long)t * B_OUT;
   for (int i = 0; i < 6; i++) {
     const double* srow = st + (long long)monIdx[t * 6 + i] * S_N;
-    freshMon(&b.mon[i], srow, dyn + ((long long)t * 6 + i) * D_N, i / 3);
-    if (b.mon[i].formChange || b.mon[i].special == 3) b.flags |= F_UNSUPPORTED;
+    freshMon(&b.mon[i], srow, dyn + ((long long)t * 6 + i) * D_N, i / 3, st);
   }
-  if (b.flags & F_UNSUPPORTED) { for (int i = 0; i < B_OUT; i++) o[i] = 0; o[10] = b.flags; return; }
   b.sc.flags = 0; b.sc.poolMax = 0;
   b.rng = seeds[t];
   b.ntm = 0; b.nextId = 1; b.clock = 0; b.phaseTimeout = 0; b.nPh = 0;
-  b.nta = b.nqa = b.nac = 0; b.prevCharged = 0; b.chargedUsed = 0; b.lastChargedTurn = -1;
+  b.nta = b.nqa = b.nac = 0; b.curAi = 0; b.prevCharged = 0; b.chargedUsed = 0; b.lastChargedTurn = -1;
   b.roundCharged = b.roundShield = b.playerUseShield = 0;
   for (int p = 0; p < 2; p++) {
     b.pl[p].shields = 2; b.pl[p].switchTimer = 0; b.pl[p].priority = p;
@@ -875,11 +908,12 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
     Mon* m = &b.mon[i];
     m->index = i / 3;
     m->startHp = m->hpMax; m->startEnergy = 0; m->startCd = 0; m->ssb0 = 0; m->ssb1 = 0; m->nsb0 = 0; m->nsb1 = 0;
+    m->startForm = m->origForm;   // fullReset
     resetMon(m, &b.mon[b.act[1 - i / 3]]);
   }
   // battle.start()
   for (int i = 0; i < 2; i++) resetMon(&b.mon[b.act[i]], &b.mon[b.act[1 - i]]);
-  b.usePriority = b.mon[b.act[0]].atk != b.mon[b.act[1]].atk;
+  b.usePriority = b.mon[b.act[0]].atk != b.mon[b.act[1]].atk || (b.mon[b.act[0]].kind == 3 && b.mon[b.act[1]].kind == 3);
   b.turns = 1; b.lastProcessed = 0; b.nqa = 0; b.nta = 0; b.prevCharged = 0;
   // second matchup evaluation, player 0 then player 1
   evalMatchup(&b, 0);
