@@ -11,16 +11,21 @@ Requests (op):
     4 BATCH1   arg as above; payload = idx i32[n*2] | dyn f64[n*2*D_N]
     5 (unused; a file-pair transport was tried and dropped)
     6 STREAMS  arg = number of CUDA streams for later BATCH3 requests (default 1)
+    7 BATCH3T  tagged, asynchronous BATCH3 (plans round 6, R2): a = tag, arg / payload as BATCH3. The sidecar starts the launch on
+               its own CUDA stream and keeps reading, so several are in flight at once; each reply comes when its launch ends
+               (any order) with status TAGGED_OK / TAGGED_ERR and b = tag
     9 QUIT
 Responses: op = status (0 ok, 1 error: payload is the UTF-8 message), n = rows, arg = kernel-side microseconds,
     a = columns per row, b = launch pieces (> 1 means the batch was split), payload = i32[n*a] row-major.
+    Replies to BATCH3T: status 16 ok / 17 error, b = the request's tag (no split: pieces = 1).
 D_N = 17 doubles per mon (pack.py); the output rows are kernel3v3.B_OUT = 24 / kernel1v1.OUT_N = 18 int32 columns.
 """
 import struct
 
 MAGIC = 0x31504247
 HDR = struct.Struct("<6I")
-PING, STATIC, BATCH3, BATCH1, FILE, STREAMS, QUIT = 1, 2, 3, 4, 5, 6, 9
+PING, STATIC, BATCH3, BATCH1, FILE, STREAMS, BATCH3T, QUIT = 1, 2, 3, 4, 5, 6, 7, 9
+TAGGED_OK, TAGGED_ERR = 16, 17
 
 
 def read_exact(f, k):
@@ -49,7 +54,7 @@ def unpack_header(raw):
 
 def request_payload_size(op, n, arg):
     from .pack import D_N
-    if op == BATCH3:
+    if op in (BATCH3, BATCH3T):
         return n * 6 * 4 + n * 6 * D_N * 8 + n * 4
     if op == BATCH1:
         return n * 2 * 4 + n * 2 * D_N * 8

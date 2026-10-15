@@ -17,8 +17,11 @@ import { UserError } from '../util/userError.js';
 import { makeDescriber } from '../../gpu/describe.mjs';
 import { GpuSidecar, packBattles } from '../../gpu/client.mjs';
 
-/** Default `--gpu-cpu-share`: size each step's CPU share from the measured rates below (GPU_RATE_MODEL). */
-export const DEFAULT_GPU_CPU_SHARE = 'auto';
+/**
+ * Default `--gpu-cpu-share`: 0, the GPU runs every battle and the CPU workers only re-run flagged rows (plans round 6, R5).
+ * The `auto` share below (sized from GPU_RATE_MODEL) is kept but disabled: pass `--gpu-cpu-share auto` to use it.
+ */
+export const DEFAULT_GPU_CPU_SHARE = 0;
 /**
  * Measured rates the `auto` share balances (plans/PLAN.md round 4, R8; `node gpu/fit-share.mjs --gpu out/evolve-gpu2-p1b
  * --cpu out/evolve-gpu2-p1s --cpu out/evolve-gpu2-p1c`, 5-gen runs of the recipe-ab command, docs/gpu-viability.md
@@ -30,6 +33,12 @@ export const DEFAULT_GPU_CPU_SHARE = 'auto';
 export const GPU_RATE_MODEL = { gpuFixedS: 3.87, gpuPerBattleS: 0, cpuFixedS: 0.05, cpuBps: 24.9 };
 /** Battles per sidecar message (the sidecar also splits on its own if GPU memory runs out). */
 export const GPU_BATCH_LIMIT = 36000;
+/**
+ * EXPERIMENTAL (plans round 6, R2), off by default: POGO_GPU_STREAMS=N cuts each step's GPU share into N launches that are in
+ * flight on the sidecar together (tagged BATCH3T, one CUDA stream each), so one launch's tail overlaps the others' work.
+ * The split is a function of the step size only; rows are reduced in index order, so results do not depend on timing.
+ */
+export const GPU_STREAMS = Math.max(1, Number.parseInt(process.env.POGO_GPU_STREAMS ?? '1', 10) || 1);
 const INVALID = 0x6e; // POOL_OVERFLOW|STACK_OVERFLOW|MOVES_OVERFLOW|GUARD|BADSTATE (see gpu/gpu/verify_3v3.py)
 const WINNER = ['a', 'b', 'tie'];
 const DEFAULT_DIFFICULTY = 3;
@@ -81,11 +90,12 @@ export function rowToResult(out, o) {
 const monKey = (m) => `${m.speciesId}|${m.ivs.atk},${m.ivs.def},${m.ivs.hp}|${m.shadow ? 1 : 0}|${m.bestBuddy ? 1 : 0}|${m.fastMove ? `${m.fastMove}/${(m.chargedMoves || []).join(',')}` : ''}`;
 
 /**
- * @param {{ctx: object, cpuExecutor: object, cpuShare?: number, log?: (m:string)=>void, sidecar?: object, profile?: object}} opts
+ * @param {{ctx: object, cpuExecutor: object, cpuShare?: number, log?: (m:string)=>void, sidecar?: object, profile?: object, streams?: number}} opts
  *   `profile` (optional): src/evolve/gpuProfile.js sink; each run() adds one timed step record.
- *   `sidecar` (tests): object with setStatic(table) and batch3(packed) -> {out, cols, kernelUs, pieces}.
+ *   `sidecar` (tests): object with setStatic(table) and batch3(packed) -> {out, cols, kernelUs, pieces} (and batch3Async, same shape).
+ *   `streams`: launches in flight per step (default GPU_STREAMS, i.e. POGO_GPU_STREAMS; 1 = one launch at a time).
  */
-export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_GPU_CPU_SHARE, log = () => {}, sidecar = null, profile = null }) {
+export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_GPU_CPU_SHARE, log = () => {}, sidecar = null, profile = null, streams = GPU_STREAMS }) {
   let memoHitsNext = 0; // memo hits of the step about to run (set by evaluateTeamsInOrder via noteMemoHits)
   if (cpuShare !== 'auto' && !(cpuShare >= 0 && cpuShare <= 1)) throw new UserError(`--gpu-cpu-share must be in [0,1] or auto, got ${cpuShare}`, 'omit it for the measured default (auto)');
   let sc = sidecar;
@@ -126,9 +136,7 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
     const launches = [];
     let mapMs = 0;
     const t0 = performance.now();
-    for (let lo = 0; lo < specs.length; lo += GPU_BATCH_LIMIT) {
-      const tp = performance.now();
-      const part = specs.slice(lo, lo + GPU_BATCH_LIMIT);
+    const pack = (part) => {
       const battles = part.map((s) => {
         const diff = s.difficulty ?? DEFAULT_DIFFICULTY;
         if (diff !== DEFAULT_DIFFICULTY) throw new UserError(`gpu: kernel supports difficulty ${DEFAULT_DIFFICULTY} only, got ${diff}`, 'run without --gpu', 1);
@@ -137,13 +145,9 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       });
       const packed = packBattles(battles);
       if (dumpDir) dumpBatch(dumpDir, dumpK++, packed, monTable);
-      const packMs = performance.now() - tp;
-      const tst = performance.now();
-      if (monTable.length !== sentStatic) { await sc.setStatic(monTable); sentStatic = monTable.length; }
-      const staticMs = performance.now() - tst;
-      const ts = performance.now();
-      const r = await sc.batch3(packed);
-      const sidecarMs = performance.now() - ts;
+      return packed;
+    };
+    const take = (lo, part, r, rec) => {
       const tm = performance.now();
       const mine = [];
       part.forEach((_, i) => {
@@ -153,7 +157,35 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       if (mine.length) { flaggedIdx.push(...mine); reruns.push(rerun(mine)); }
       const timing = kernelTiming(r.out, r.cols, part.length);
       mapMs += performance.now() - tm;
-      launches.push({ n: part.length, flagged: mine.length, packMs, staticMs, sidecarMs, kernelUs: r.kernelUs, pieces: r.pieces, ...timing });
+      launches.push({ n: part.length, flagged: mine.length, ...rec, kernelUs: r.kernelUs, pieces: r.pieces, ...timing });
+    };
+    const tst = performance.now();
+    for (const s of specs) { s.teamA.forEach(descFor); s.teamB.forEach(descFor); } // every mon of the step in the table first
+    if (specs.length && monTable.length !== sentStatic) { await sc.setStatic(monTable); sentStatic = monTable.length; }
+    const staticMs = performance.now() - tst;
+    if (streams > 1 && sc.batch3Async) {
+      // EXPERIMENTAL (round 6, R2): the step cut into GPU_STREAMS launches in flight together; results reduced by index
+      const size = Math.min(GPU_BATCH_LIMIT, Math.max(1, Math.ceil(specs.length / streams)));
+      const pending = [];
+      for (let lo = 0; lo < specs.length; lo += size) {
+        const tp = performance.now();
+        const part = specs.slice(lo, lo + size);
+        const packed = pack(part);
+        const packMs = performance.now() - tp;
+        const ts = performance.now();
+        pending.push(sc.batch3Async(packed).then((r) => ({ lo, part, r, rec: { packMs, staticMs: lo ? 0 : staticMs, sidecarMs: performance.now() - ts, stream: pending.length } })));
+      }
+      for (const { lo, part, r, rec } of (await Promise.all(pending)).sort((x, y) => x.lo - y.lo)) take(lo, part, r, rec);
+      return { results, flaggedIdx, reruns, launches, mapMs, ms: performance.now() - t0 };
+    }
+    for (let lo = 0; lo < specs.length; lo += GPU_BATCH_LIMIT) {
+      const tp = performance.now();
+      const part = specs.slice(lo, lo + GPU_BATCH_LIMIT);
+      const packed = pack(part);
+      const packMs = performance.now() - tp;
+      const ts = performance.now();
+      const r = await sc.batch3(packed);
+      take(lo, part, r, { packMs, staticMs: lo ? 0 : staticMs, sidecarMs: performance.now() - ts });
     }
     return { results, flaggedIdx, reruns, launches, mapMs, ms: performance.now() - t0 };
   }

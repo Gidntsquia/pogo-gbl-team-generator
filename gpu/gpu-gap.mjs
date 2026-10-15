@@ -191,6 +191,23 @@ for (const g of goes.filter((x) => x.go)) {
   else proj.push([g.name, n0(N / (W - warpSave)), n1(W - warpSave), '']);
 }
 
+// ---------------------------------------------------------------- §6 (round 6, R13): warp-per-battle in plain words + 5k vs 36k with repeated launches
+// out/gpu/sched/r13-warp.json: `uv run python -m gpu.sched_bench bench --name r13-warp --cfg '{"kernel":"warp"}'` -- every warp launch
+// is paired with a v2 launch run right before it, 5 pairs per slice, so the other GPU load on this desktop hits both alike.
+const r13 = rd('out/gpu/sched/r13-warp.json');
+const WARPS = RESIDENT / 32;
+const spread5 = (xs) => `${n2(median(xs))} <small>(${n2(Math.min(...xs))}–${n2(Math.max(...xs))})</small>`;
+const r13rows = (r13?.slices ?? []).map((sl) => {
+  const v = sl.launches.map((l) => l.v2_span_s), w = sl.launches.map((l) => l.span_s), q = sl.launches.map((l) => l.v2_span_s / l.span_s);
+  return { size: sl.size, v, w, q, n: sl.launches.length, same: sl.same_results };
+});
+const r13by = (size) => r13rows.find((r) => r.size === size);
+const r13html = r13rows.length ? table(['Slice', 'Launch pairs', 'v2 span (s), median (min–max)', 'Warp-per-battle span (s)', 'Speed-up v2 ÷ warp, per pair', 'Rows equal v2'],
+  r13rows.map((r) => [`${r.size.toLocaleString()} battles`, r.n, spread5(r.v), spread5(r.w), `×${n2(median(r.q))} <small>(×${n2(Math.min(...r.q))}–×${n2(Math.max(...r.q))}; each: ${r.q.map((x) => n2(x)).join(', ')})</small>`, r.same ? 'yes' : '<b>no</b>'])) : '<p class="na">pending: <code>out/gpu/sched/r13-warp.json</code></p>';
+const r5k = r13by(5000), r36k = r13by(36000);
+const r13para = r5k && r36k ? `<p><b>Why the 5k gain is absent at 36k.</b> Over ${r5k.n} launch pairs on each slice, warp-per-battle ran the 5k slice ×${n2(median(r5k.q))} faster than v2 (pairs ranged ×${n2(Math.min(...r5k.q))}–×${n2(Math.max(...r5k.q))}) and the 36k slice ×${n2(median(r36k.q))} (×${n2(Math.min(...r36k.q))}–×${n2(Math.max(...r36k.q))}). (Round 5's ×1.28 at 5k came from 3 launches on another day; it sits just below this range, which is the size of the day-to-day noise.) The 5k and 36k ranges ${Math.min(...r5k.q) > Math.max(...r36k.q) ? 'do not overlap, so the difference is not noise' : 'overlap, so on this machine the difference is within the noise'}. The reason is how many warps each layout keeps busy. The GPU holds ${n0(WARPS)} warps at once (68 SMs × 8). In v2, the 5,000 battles fill only ${n0(Math.ceil(5000 / 32))} warps, 32 battles each, and a warp runs its 32 different battles mostly one after another (they take different branches, so the lanes wait for each other); the other ${n0(WARPS - Math.ceil(5000 / 32))} warps have nothing to do. Warp-per-battle spreads the same 5,000 battles over all ${n0(WARPS)} warps, about ${n0(5000 / WARPS)} battles per warp in turn instead of 32, so the busiest warp finishes sooner. At 36k there is no empty warp left to spread into: v2 already gives every warp about ${n0(36000 / WARPS)} battles, and warp-per-battle gives every warp about ${n0(36000 / WARPS)} battles too, but one at a time with 31 of the 32 lanes repeating the same work, while v2's lanes still overlap part of their work. The two effects roughly cancel, which is what the 36k pairs show (around ×1, against ×0.86 in round 4's single 36k measurement): the 5k gain came from filling empty warps, and at 36k there are none to fill. Two smaller effects add noise to both slices: other programs using the GPU (this desktop ran a game during these measurements) and which SM happens to run the few very long battles; the 5k slice's slowest battle takes about 3.8 s even alone (round 6, <a href="gpu-sched.html">gpu-sched</a>).</p>` : '';
+const r13box = `<div class="box"><b>What “warp-per-battle” means.</b> A GPU runs threads in groups of 32 called <i>warps</i>; the 32 threads of a warp execute the same instruction at the same time. Today (v2) <b>one thread simulates one whole battle</b>, so one warp carries 32 different battles. When those battles take different branches (different moves, different shield choices), the warp has to run each branch in turn while the other threads wait, so a warp of 32 battles takes far longer than one battle alone. <b>Warp-per-battle</b> gives each battle a whole warp: all 32 threads run the same battle, so they never wait for each other, but 31 of them only repeat the work, so each battle uses 32 times as much hardware. <b>Who it helps:</b> small launches (a few thousand battles), where most warps of the GPU would otherwise sit empty, so the spare hardware is free. <b>Why it hurts big launches:</b> when there are more battles than warps, there is no spare hardware: every repeated thread is a thread that could have run another battle.</div>`;
+
 // ---------------------------------------------------------------- page
 const best = ideas[0];
 const conclusion = `The dominant cause is the kernel tail: ${n0(tail)} of the ${n0(W)} step-wall seconds (${n1((tail / W) * 100)}%) go to waiting for the longest battles after the median battle has finished; the launch span equals the longest battle, so it cannot be shortened by scheduling alone. 1,500 b/s is reachable on paper: an ideal kernel that ends each launch at its median battle would run ${n0(N / bi)} b/s, and with every launch at the ≥ 5k rate and no outside-kernel time ${n0(N / biii)} b/s. The idea with the largest predicted gain is “${best.name}” (${n0(best.pred)} b/s predicted); `
@@ -202,11 +219,12 @@ const css = `:root{--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f
 body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1100px;padding:16px}
 h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:4px}
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:.6rem 0}th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}th{background:var(--card)}
-.pass{color:var(--ok);font-weight:700}.fail{color:var(--bad);font-weight:700}.na{color:var(--mut)}small,.mut{color:var(--mut)}pre{background:var(--card);padding:8px;overflow-x:auto}blockquote{margin:0;color:var(--mut)}`;
+.pass{color:var(--ok);font-weight:700}.fail{color:var(--bad);font-weight:700}.na{color:var(--mut)}small,.mut{color:var(--mut)}pre{background:var(--card);padding:8px;overflow-x:auto}blockquote{margin:0;color:var(--mut)}
+.box{background:var(--card);border-left:4px solid var(--ok);padding:10px 14px;margin:1rem 0}`;
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU Gap Analysis</title><style>${css}</style></head><body>
 <h1>Why 724 b/s and not 1,500</h1>
-<p class="mut">GPU-v2 run <code>${V2}</code>: ${n0(N)} battles in ${n1(W)} s of step wall = <b>${n0(bps)} b/s</b> (A/B page: 724; GPU-side 745). Bar: 1,500 b/s → ${n1(Tt)} s, a gap of <b>${n1(gap)} s</b>. Verdict on the bar: ${tag(false)} until a run meets it. Built by <code>gpu/gpu-gap.mjs</code>. See also <a href="gpu-profile.html">speed profile</a> and <a href="recipe-ab-gpu.html">A/B page</a>.</p>
+<p class="mut">GPU-v2 run <code>${V2}</code>: ${n0(N)} battles in ${n1(W)} s of step wall = <b>${n0(bps)} b/s</b> (A/B page: 724; GPU-side 745). Bar: 1,500 b/s → ${n1(Tt)} s, a gap of <b>${n1(gap)} s</b>. Verdict on the bar: ${tag(false)} until a run meets it. Built by <code>gpu/gpu-gap.mjs</code>. See also <a href="gpu-profile.html">speed profile</a>, <a href="recipe-ab-gpu.html">A/B page</a> and <a href="gpu-sched.html">round 6 scheduler</a>.</p>
 <p><b>Conclusion.</b> ${conclusion}</p>
 
 <h2 id="s1">1. Where the ${n1(gap)} s go</h2>
@@ -233,6 +251,12 @@ ${table(['Idea', 'Predicted b/s on v2 run', 'Arithmetic', 'Literature', 'Status'
 <p class="mut">The two largest predictions are prototyped. Result-identical ideas win ties; none tied.</p>
 
 <h2 id="s6">6. Prototype results</h2>
+${r13box}
+<h3 id="s6-5k36k">5k vs 36k, repeated launches</h3>
+${r13html}
+${r13para}
+<p class="mut">Round 6 builds on this: <a href="gpu-sched.html">GPU scheduler round 6</a> (time-sliced queue, spreading small launches over all warps).</p>
+<h3>Round 5 prototype table</h3>
 ${slices ? table(['Prototype', 'Kernel b/s on the 5k slice (v2 → prototype, median of 3)', '36k slice', 'Verdict'], protoRows) : '<p class="na">pending: run <code>uv run python -m gpu.gap_proto</code></p>'}
 ${slices ? `<p><b>Smoke measurement of the untested work-queue kernel</b> (<code>POGO_GPU_KERNEL=queue</code>, 3 launches, not verified, status stays “untested”): 5k ${n0(vrow('queue', 5000)?.bps)} b/s vs v2 ${n0(vrow('v2', 5000)?.bps)}; 36k ${n0(vrow('queue', 36000)?.bps)} vs ${n0(vrow('v2', 36000)?.bps)}; rows equal v2: ${vrow('queue', 5000)?.same_results && vrow('queue', 36000)?.same_results ? 'yes' : 'no'}.</p>` : ''}
 <h3>Verification of the kernel change (warp layout under 5k)</h3>

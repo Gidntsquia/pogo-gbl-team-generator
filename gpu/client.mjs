@@ -11,7 +11,8 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 
 const MAGIC = 0x31504247, HDR = 24, D_N = 17;
-export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, QUIT: 9 };
+export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, BATCH3T: 7, QUIT: 9 };
+const TAGGED_OK = 16, TAGGED_ERR = 17;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const header = (op, n = 0, arg = 0, a = 0, b = 0) => { const h = Buffer.alloc(HDR); [MAGIC, op, n, arg, a, b].forEach((v, i) => h.writeUInt32LE(v >>> 0, i * 4)); return h; };
 
@@ -53,22 +54,29 @@ export class GpuSidecar {
     if (streams > 1) await c.#call(header(OP.STREAMS, 0, streams));
     return c;
   }
-  #booting = false; #child; #buf = Buffer.alloc(0); #waiters = []; #dead = null; #chain = Promise.resolve();
+  #booting = false; #child; #buf = Buffer.alloc(0); #waiters = []; #tagged = new Map(); #nextTag = 1; #dead = null; #chain = Promise.resolve();
   constructor(child) {
     this.#child = child;
     child.stdout.on('data', (d) => { this.#buf = Buffer.concat([this.#buf, d]); this.#pump(); });
-    child.on('exit', (code) => { if (this.#booting) process.exit(1); /* sidecar already printed its one-line reason (no CUDA device, cupy missing) */ this.#dead = new Error(`sidecar exited (${code})`); this.#waiters.splice(0).forEach((w) => w.reject(this.#dead)); });
+    child.on('exit', (code) => { if (this.#booting) process.exit(1); /* sidecar already printed its one-line reason (no CUDA device, cupy missing) */ this.#dead = new Error(`sidecar exited (${code})`); this.#waiters.splice(0).forEach((w) => w.reject(this.#dead)); for (const w of this.#tagged.values()) w.reject(this.#dead); this.#tagged.clear(); });
   }
   #pump() {
-    while (this.#waiters.length) {
+    while (this.#waiters.length || this.#tagged.size) {
       if (this.#buf.length < HDR) return;
       const [magic, op, n, arg, a, b] = [0, 1, 2, 3, 4, 5].map((i) => this.#buf.readUInt32LE(i * 4));
-      if (magic !== MAGIC) { this.#waiters.shift().reject(new Error('bad frame magic')); return; }
-      const len = op === 1 ? n : n * a * 4;
+      if (magic !== MAGIC) { (this.#waiters.shift() ?? this.#tagged.values().next().value)?.reject(new Error('bad frame magic')); return; }
+      const len = op === 1 || op === TAGGED_ERR ? n : n * a * 4;
       if (this.#buf.length < HDR + len) return;
       const payload = this.#buf.subarray(HDR, HDR + len);
       this.#buf = this.#buf.subarray(HDR + len);
-      this.#waiters.shift().resolve({ status: op, n, kernelUs: arg, cols: a, pieces: b, payload });
+      if (op === TAGGED_OK || op === TAGGED_ERR) { // reply to a tagged BATCH3T, any order: b = tag
+        const w = this.#tagged.get(b);
+        this.#tagged.delete(b);
+        if (op === TAGGED_ERR) w?.reject(new Error(`sidecar: ${payload.toString()}`));
+        else w?.resolve({ status: 0, n, kernelUs: arg, cols: a, pieces: 1, payload });
+        continue;
+      }
+      this.#waiters.shift()?.resolve({ status: op, n, kernelUs: arg, cols: a, pieces: b, payload });
     }
   }
   #frame() { return new Promise((resolve, reject) => { if (this.#dead) return reject(this.#dead); this.#waiters.push({ resolve, reject }); this.#pump(); }); }
@@ -85,6 +93,20 @@ export class GpuSidecar {
     const body = [idx, dyn, seeds].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength));
     const r = await this.#call(header(OP.BATCH3, n, real === 'double' ? 1 : 0), ...body);
     return { out: new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length)), cols: r.cols, kernelUs: r.kernelUs, pieces: r.pieces };
+  }
+  /**
+   * Tagged, asynchronous 3v3 batch (round 6, R2): written at once, not queued behind earlier calls, so several launches are in
+   * flight on the sidecar's CUDA streams together. Resolves like batch3 when this batch's launch ends (pieces = 1).
+   */
+  async batch3Async({ idx, dyn, seeds }, { real = 'float' } = {}) {
+    if (this.#dead) throw this.#dead;
+    const n = seeds.length, tag = this.#nextTag++;
+    const body = [idx, dyn, seeds].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength));
+    const p = new Promise((resolve, reject) => this.#tagged.set(tag, { resolve, reject }));
+    await this.#chain.catch(() => {}); // after any untagged call already written (its reply stays FIFO)
+    this.#child.stdin.write(Buffer.concat([header(OP.BATCH3T, n, real === 'double' ? 1 : 0, tag), ...body]));
+    const r = await p;
+    return { out: new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length)), cols: r.cols, kernelUs: r.kernelUs, pieces: 1 };
   }
   /** One packed 1v1 batch: idx Int32Array(n*2), dyn Float64Array(n*2*17) -> {out: Int32Array(n*18), cols}. */
   async batch1({ idx, dyn }, { real = 'float' } = {}) {

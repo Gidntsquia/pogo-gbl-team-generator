@@ -262,3 +262,19 @@ prototype results). Prototype benchmark: `cd gpu && uv run python -m gpu.gap_pro
   search effect is judged by the 5-gen run in the report. Queue kernel: smoke only, no gain.
 - Experimental flags (default off): `POGO_GPU_KERNEL=warp|queue`, `POGO_GPU_WARP_BELOW` (default 5000).
 - The verdict against 1,500 b/s stays FAIL until a run meets it.
+
+## Round 6: scheduler (time-sliced queue, load balancing)
+
+Report: `node gpu/gpu-sched.mjs` → `out/gpu-sched.html` (iteration table, per-launch occupancy timelines, predictor,
+move-ahead log, determinism). Bench: `gpu/gpu/sched_bench.py`; 5-gen runs `out/gpu/sched/run5.sh`.
+
+- **Conclusion.** Best config `POGO_GPU_KERNEL=slice` (requeue, T=64, small launches spread over all warps), CPU share 0:
+  971 b/s on the 5-gen run vs 795 for v2 at share 0 (×1.22). Clears ×10 over CPU, misses 1,500 b/s: FAIL.
+- **Iterations (5-gen b/s):** v2 795; slice requeue + spread 971 (kept); + binning 942 (−3%); spread off 793 (−18%).
+  Streams, move-ahead, handoff + spread, and bin + streams + ahead raised idle on both slices and were dropped.
+  Stop rule met (two consecutive iterations under +5%).
+- **Idle left:** ~92% of threads on a 5k launch (too small to fill the GPU), ~39% on 36k (tail of longest series).
+- **Flags (experimental, off by default):** `POGO_GPU_KERNEL=slice`, `POGO_GPU_SLICE_TURNS`, `POGO_GPU_SERIES`,
+  `POGO_GPU_SLICE_MODE=handoff|requeue`, `POGO_GPU_SPREAD=off`, `POGO_GPU_BIN=on`, `POGO_GPU_STREAMS=N`,
+  `POGO_GPU_AHEAD=on`. `--gpu` runs at CPU share 0 this round; re-add the share once GPU speed stabilises.
+- **Next:** bigger launches (round 5's 1,280 b/s idea) on top of the slice kernel.

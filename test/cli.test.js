@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { ACCEPTED_FLAGS, HELP, checkEnvironment, parseEvolveArgs } from '../src/evolve/cli.js';
 import { UserError } from '../src/util/userError.js';
+import { buildRunConfig } from '../src/evolve/config.js';
 
 test('--help documents every flag the parser accepts', () => {
   const missing = ACCEPTED_FLAGS.filter((flag) => !HELP.includes(`--${flag}`));
@@ -26,4 +27,11 @@ test('checkEnvironment rejects a missing collection and an unsupported cp', () =
   assert.throws(() => checkEnvironment('no-such.csv', { cp: 1500, cup: 'all' }), /collection file not found/);
   assert.throws(() => checkEnvironment('fixtures/sample-pokegenie.csv', { cp: 999, cup: 'all' }), (e) => e instanceof UserError);
   checkEnvironment('fixtures/sample-pokegenie.csv', { cp: 1500, cup: 'all' });
+});
+
+test('--gpu runs at CPU share 0 unless --gpu-cpu-share is given (auto stays selectable)', () => {
+  const share = (...extra) => buildRunConfig('fixtures/sample-pokegenie.csv', parseEvolveArgs(['fixtures/sample-pokegenie.csv', '--gpu', ...extra]).opts).gpuCpuShare;
+  assert.equal(share(), 0);
+  assert.equal(share('--gpu-cpu-share', 'auto'), 'auto');
+  assert.equal(share('--gpu-cpu-share', '0.2'), 0.2);
 });

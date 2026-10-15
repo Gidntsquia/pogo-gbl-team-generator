@@ -51,3 +51,40 @@ test('run splits GPU/CPU deterministically, re-runs flagged rows on CPU, fails w
   const bad = await createGpuExecutor({ ctx, cpuExecutor: cpu, cpuShare: 0, sidecar: { setStatic: async () => {}, batch3: async () => { throw new Error('sidecar exited (1)'); } } });
   await assert.rejects(bad.run([spec(0)]), (e) => e.message === 'gpu: sidecar exited (1)' && e.gpuFatal === true);
 });
+
+test('concurrent launches (streams > 1) reduce rows by index whatever order the launches finish in', async () => {
+  const ctx = await initEngine();
+  const cpu = { run: async (specs) => specs.map(() => ({ ok: true, value: { winner: 'cpu' } })), stats: async () => [], close: async () => [] };
+  // winner = lead mon's table index (lead-first packing), so a row put back in the wrong place changes the result; later launches finish first
+  const rows = (seeds, idx) => { const n = seeds.length, out = new Int32Array(n * 24); for (let i = 0; i < n; i++) out[i * 24] = idx[i * 6] % 3; return { out, cols: 24, kernelUs: 1, pieces: 1 }; };
+  let launches = 0;
+  const sidecar = {
+    setStatic: async () => {},
+    batch3: async ({ seeds, idx }) => rows(seeds, idx),
+    batch3Async: async ({ seeds, idx }) => { const k = launches++; await new Promise((r) => setTimeout(r, 30 - 10 * k)); return rows(seeds, idx); },
+  };
+  const specs = Array.from({ length: 9 }, (_, i) => ({ ...spec(0), leadA: Math.floor(i / 3) })); // launch k leads with mon k
+  const one = await (await createGpuExecutor({ ctx, cpuExecutor: cpu, sidecar, streams: 1 })).run(specs);
+  const three = await (await createGpuExecutor({ ctx, cpuExecutor: cpu, sidecar, streams: 3 })).run(specs);
+  assert.equal(launches, 3);
+  const w = one.map((x) => x.value.winner);
+  assert.deepEqual([w.slice(0, 3), w.slice(3, 6), w.slice(6)].map((g) => new Set(g).size), [1, 1, 1]);
+  assert.equal(new Set(w).size, 3); // the three launches' rows are distinguishable
+  assert.deepEqual(three, one);
+});
+
+test('a later step with new mons resends the static table before its batch (every packed index < table size)', async () => {
+  const ctx = await initEngine();
+  const cpu = { run: async (specs) => specs.map(() => ({ ok: true, value: { winner: 'cpu' } })), stats: async () => [], close: async () => [] };
+  let size = 0;
+  const sidecar = {
+    setStatic: async (table) => { size = table.length; },
+    batch3: async ({ seeds, idx }) => {
+      assert.ok(Math.max(...idx) < size, `index ${Math.max(...idx)} >= table size ${size}`);
+      return { out: new Int32Array(seeds.length * 24), cols: 24, kernelUs: 1, pieces: 1 };
+    },
+  };
+  const ex = await createGpuExecutor({ ctx, cpuExecutor: cpu, sidecar });
+  await ex.run([spec(0)]);
+  await ex.run([{ ...spec(0), teamB: team(['medicham', 'swampert', 'skarmory']) }]);
+});

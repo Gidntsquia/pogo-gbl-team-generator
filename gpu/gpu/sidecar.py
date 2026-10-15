@@ -22,18 +22,43 @@ from .cuda_guard import require_cuda
 
 
 def serve_binary():
-    """Frame loop over stdin/stdout (see gpu/wire.py for the layout). Replies: header + int32 rows."""
+    """Frame loop over stdin/stdout (see gpu/wire.py for the layout). Replies: header + int32 rows.
+    A reader thread pulls frames off stdin so tagged BATCH3T launches (round 6, R2) stay in flight on their own CUDA streams
+    while later requests arrive; finished ones are answered as they complete. Only this loop writes to stdout."""
+    import queue
+    import threading
     import numpy as np
     from . import wire
     from .pack import D_N, pack_static
-    from .kernel1v1 import run_1v1
-    from .kernel3v3 import run_3v3, run_3v3_streams, run_3v3_split, B_OUT
+    from . import kernel3v3 as K
     fin, fout = sys.stdin.buffer, sys.stdout.buffer
     state = {"static": None, "streams": 1}
+    inbox = queue.Queue()
 
-    def reply(f, status, n=0, arg=0, a=0, b=0, payload=b""):
-        f.write(wire.pack_header(status, n, arg, a, b) + payload)
-        f.flush()
+    def reader():
+        try:
+            while True:
+                raw = wire.read_exact(fin, wire.HDR.size)
+                if raw is None:
+                    inbox.put(None)
+                    return
+                op, n, arg, a, b = wire.unpack_header(raw)
+                size = wire.request_payload_size(op, n, arg) if op not in (wire.QUIT, wire.PING) else 0
+                inbox.put((op, n, arg, a, b, wire.read_exact(fin, size) if size else b""))
+        except Exception as e:  # noqa: BLE001
+            inbox.put(("broken", e))
+
+    def reply(status, n=0, arg=0, a=0, b=0, payload=b""):
+        fout.write(wire.pack_header(status, n, arg, a, b) + payload)
+        fout.flush()
+
+    def batch3_arrays(n, body):
+        o1 = n * 6 * 4
+        o2 = o1 + n * 6 * D_N * 8
+        idx = np.frombuffer(body, "<i4", n * 6, 0).reshape(n, 6)
+        if n and int(idx.max()) >= state["static"].shape[0]:  # a stale table would be read out of bounds by the kernel
+            raise RuntimeError(f"mon index {int(idx.max())} >= static table size {state['static'].shape[0]}: send STATIC first")
+        return idx, np.frombuffer(body, "<f8", n * 6 * D_N, o1).reshape(n, 6, D_N), np.frombuffer(body, "<u4", n, o2)
 
     def handle(op, n, arg, body):
         """-> (n_rows, kernel_us, cols, pieces, int32 bytes)"""
@@ -49,13 +74,14 @@ def serve_binary():
             raise RuntimeError("no static table: send STATIC first")
         t = time.perf_counter()
         if op == wire.BATCH3:
-            o1 = n * 6 * 4
-            o2 = o1 + n * 6 * D_N * 8
-            idx = np.frombuffer(body, "<i4", n * 6, 0).reshape(n, 6)
-            dyn = np.frombuffer(body, "<f8", n * 6 * D_N, o1).reshape(n, 6, D_N)
-            seeds = np.frombuffer(body, "<u4", n, o2)
-            out, pieces = run_3v3_split(state["static"], idx, dyn, seeds, real, nstreams=state["streams"])
-            cols = B_OUT
+            idx, dyn, seeds = batch3_arrays(n, body)
+            if K.AHEAD and K.PROTO == "slice" and n >= 2:
+                out, rec = K.run_3v3_ahead(state["static"], idx, dyn, seeds, real)
+                K.write_ahead_log(rec)
+                pieces = 2
+            else:
+                out, pieces = K.run_3v3_split(state["static"], idx, dyn, seeds, real, nstreams=state["streams"])
+            cols = K.B_OUT
         elif op == wire.BATCH1:
             idx = np.frombuffer(body, "<i4", n * 2, 0).reshape(n, 2)
             dyn = np.frombuffer(body, "<f8", n * 2 * D_N, n * 2 * 4).reshape(n, 2, D_N)
@@ -69,26 +95,63 @@ def serve_binary():
             raise RuntimeError(f"unknown op {op}")
         return n, int((time.perf_counter() - t) * 1e6), cols, pieces, np.ascontiguousarray(out, "<i4").tobytes()
 
-    sys.stdout.write("")  # keep the text layer quiet; the first frame is the ready ping
-    reply(fout, 0, 0, 0, 0, 0, b"")
+    def err_bytes(e):
+        return f"{type(e).__name__}: {e}".encode()
+
+    inflight = []  # (tag, handle, t0)
+
+    def poll(block=False):
+        for item in list(inflight):
+            tag, h, t0 = item
+            if block or K.launch_done(h):
+                inflight.remove(item)
+                try:
+                    out = K.launch_collect(h)
+                    reply(wire.TAGGED_OK, out.shape[0], int((time.perf_counter() - t0) * 1e6), K.B_OUT, tag, np.ascontiguousarray(out, "<i4").tobytes())
+                except Exception as e:  # noqa: BLE001
+                    m = err_bytes(e)
+                    reply(wire.TAGGED_ERR, len(m), 0, 0, tag, m)
+
+    threading.Thread(target=reader, daemon=True).start()
+    reply(0, 0, 0, 0, 0, b"")  # ready
     while True:
-        raw = wire.read_exact(fin, wire.HDR.size)
-        if raw is None:
+        try:
+            item = inbox.get(timeout=0.0005) if inflight else inbox.get()
+        except queue.Empty:
+            item = False
+        if item is None:
+            poll(block=True)
             return
-        op, n, arg, a, b = wire.unpack_header(raw)
+        if item is False:
+            poll()
+            continue
+        if item[0] == "broken":
+            raise item[1]
+        op, n, arg, a, b, body = item
         try:
             if op == wire.QUIT:
-                reply(fout, 0)
+                poll(block=True)
+                reply(0)
                 os._exit(0)
             if op == wire.PING:
-                reply(fout, 0)
-                continue
-            body = wire.read_exact(fin, wire.request_payload_size(op, n, arg)) if wire.request_payload_size(op, n, arg) else b""
-            rn, us, cols, pieces, out = handle(op, n, arg, body)
-            reply(fout, 0, rn, us, cols, pieces, out)
+                reply(0)
+            elif op == wire.BATCH3T:
+                if state["static"] is None:
+                    raise RuntimeError("no static table: send STATIC first")
+                import cupy as cp
+                idx, dyn, seeds = batch3_arrays(n, body)
+                inflight.append((a, K.launch_async(state["static"], idx, dyn, seeds, "double" if arg else "float",
+                                                   stream=cp.cuda.Stream(non_blocking=True), share=state["streams"]), time.perf_counter()))
+            else:
+                rn, us, cols, pieces, out = handle(op, n, arg, body)
+                reply(0, rn, us, cols, pieces, out)
         except Exception as e:  # noqa: BLE001
-            msg = f"{type(e).__name__}: {e}".encode()
-            reply(fout, 1, n=len(msg), payload=msg)
+            m = err_bytes(e)
+            if op == wire.BATCH3T:
+                reply(wire.TAGGED_ERR, len(m), 0, 0, a, m)
+            else:
+                reply(1, n=len(m), payload=m)
+        poll()
 
 
 def main():

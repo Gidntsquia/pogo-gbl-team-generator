@@ -881,18 +881,24 @@ __device__ void freshMon(Mon* m, const double* srow, const double* drow, int pla
 #ifndef LANES
 #define LANES 1  // threads per battle: 32 = one warp per battle, every lane runs the same battle (no divergence)
 #endif
-// One battle -> one output row. Shared by the thread-per-battle kernel and the work-queue kernel (QUEUE).
 #ifdef QUEUE
 #define BATTLE_INLINE __noinline__
 #else
 #define BATTLE_INLINE __forceinline__
 #endif
-static __device__ BATTLE_INLINE void battle_one(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int t, bool writer, int dbgThread, int* dbg) {
-  unsigned long long tStart;  // profiling only: %globaltimer ns at thread start/end -> out cols 20..23 (no effect on the battle)
-  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(tStart));
-  B3 b;
-  b.flags = 0; b.poolMax = 0; b.innerSims = 0; b.draws = 0; b.dbg = (t == dbgThread && writer) ? dbg : 0; b.ndbg = 0;
-  int* o = out + (long long)t * B_OUT;
+
+// Loop state that lives outside B3 (the time-sliced kernel saves it together with B3).
+struct Run { unsigned long long tStart; int guard, leadFaintA, leadFaintB; };
+
+static __device__ __forceinline__ unsigned long long gtimer() {
+  unsigned long long t;
+  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+  return t;
+}
+
+// teamBattle.js battleTeams up to the first turn: load the six mons, setNewPokemon x2, resets, battle.start(), evaluations.
+static __device__ __forceinline__ void battle_init(B3& b, Run& r, const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int t, int* dbgp) {
+  b.flags = 0; b.poolMax = 0; b.innerSims = 0; b.draws = 0; b.dbg = dbgp; b.ndbg = 0;
   for (int i = 0; i < 6; i++) {
     const double* srow = st + (long long)monIdx[t * 6 + i] * S_N;
     freshMon(&b.mon[i], srow, dyn + ((long long)t * 6 + i) * D_N, i / 3, st);
@@ -927,42 +933,66 @@ static __device__ BATTLE_INLINE void battle_one(const double* st, const int* mon
   // second matchup evaluation, player 0 then player 1
   evalMatchup(&b, 0);
   evalMatchup(&b, 1);
-  int guard = 0;
-  int leadFaintA = -1, leadFaintB = -1;   // teamBattle.js leadFaintTurnA/B: first turn the designated lead (slot 0 / 3) is at 0 hp
-  while (remaining(&b, 0) > 0 && remaining(&b, 1) > 0 && (b.turns - 1) * 500 + b.chargedUsed * 9500 <= 240000) {
-    if (guard++ > 5000) { b.flags |= F_GUARD; break; }
+  r.guard = 0;
+  r.leadFaintA = -1; r.leadFaintB = -1;   // teamBattle.js leadFaintTurnA/B: first turn the designated lead (slot 0 / 3) is at 0 hp
+}
+
+static __device__ __forceinline__ bool battle_live(const B3& b) {
+  return remaining(&b, 0) > 0 && remaining(&b, 1) > 0 && (b.turns - 1) * 500 + b.chargedUsed * 9500 <= 240000;
+}
+
+// Up to maxSteps iterations of the battle loop (one step3 + timer drain each). Returns true once the battle is over.
+static __device__ __forceinline__ bool battle_steps(B3& b, Run& r, int maxSteps) {
+  for (int k = 0; k < maxSteps; k++) {
+    if (!battle_live(b)) return true;
+    if (r.guard++ > 5000) { b.flags |= F_GUARD; return true; }
 #ifdef EXIT_ON_INVALID
-    if (b.flags & F_INVALID_MASK) break;  // the row is discarded and re-run on the CPU anyway
+    if (b.flags & F_INVALID_MASK) return true;  // the row is discarded and re-run on the CPU anyway
 #endif
     step3(&b);
     drain(&b);
-    if (leadFaintA < 0 && b.mon[0].hp <= 0) leadFaintA = b.turns - 1;
-    if (leadFaintB < 0 && b.mon[3].hp <= 0) leadFaintB = b.turns - 1;
+    if (r.leadFaintA < 0 && b.mon[0].hp <= 0) r.leadFaintA = b.turns - 1;
+    if (r.leadFaintB < 0 && b.mon[3].hp <= 0) r.leadFaintB = b.turns - 1;
   }
+  return !battle_live(b);
+}
+
+// Output row t (cols 20..23 = %globaltimer at the battle's first start / its end; profiling only, no effect on the battle).
+static __device__ __forceinline__ void battle_write(const B3& b, const Run& r, int* out, int t) {
   int remA = remaining(&b, 0), remB = remaining(&b, 1);
   int hpA = 0, hpB = 0;
   for (int i = 0; i < 3; i++) { hpA += imax(0, b.mon[i].hp); hpB += imax(0, b.mon[3 + i].hp); }
   int winner;
   if (remA > remB) winner = 0; else if (remB > remA) winner = 1;
   else if (hpA > hpB) winner = 0; else if (hpB > hpA) winner = 1; else winner = 2;
-  if (!writer) return;
+  int* o = out + (long long)t * B_OUT;
   o[0] = winner; o[1] = remA; o[2] = remB;
   for (int i = 0; i < 6; i++) o[3 + i] = imax(0, b.mon[i].hp);
   o[9] = b.turns - 1; o[10] = b.flags; o[11] = b.innerSims; o[12] = b.draws; o[13] = b.poolMax;
-  o[14] = b.chargedUsed; o[15] = hpA; o[16] = hpB; o[17] = b.ndbg; o[18] = leadFaintA; o[19] = leadFaintB;
-  unsigned long long tEnd;
-  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(tEnd));
-  o[20] = (int)(tStart & 0xffffffffull); o[21] = (int)(tStart >> 32); o[22] = (int)(tEnd & 0xffffffffull); o[23] = (int)(tEnd >> 32);
+  o[14] = b.chargedUsed; o[15] = hpA; o[16] = hpB; o[17] = b.ndbg; o[18] = r.leadFaintA; o[19] = r.leadFaintB;
+  unsigned long long tEnd = gtimer();
+  o[20] = (int)(r.tStart & 0xffffffffull); o[21] = (int)(r.tStart >> 32); o[22] = (int)(tEnd & 0xffffffffull); o[23] = (int)(tEnd >> 32);
 }
 
-#ifndef QUEUE
+// One battle -> one output row. Shared by the thread-per-battle kernel and the work-queue kernel (QUEUE).
+static __device__ BATTLE_INLINE void battle_one(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int t, bool writer, int dbgThread, int* dbg) {
+  B3 b;
+  Run r;
+  r.tStart = gtimer();
+  battle_init(b, r, st, monIdx, dyn, seeds, t, (t == dbgThread && writer) ? dbg : 0);
+  battle_steps(b, r, 0x7fffffff);
+  if (!writer) return;
+  battle_write(b, r, out, t);
+}
+
+#if !defined(QUEUE) && !defined(SLICE)
 extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int n, int dbgThread, int* dbg) {
   int g = blockIdx.x * blockDim.x + threadIdx.x;
   int t = g / LANES;
   if (t >= n) return;
   battle_one(st, monIdx, dyn, seeds, out, t, (g % LANES) == 0, dbgThread, dbg);
 }
-#else
+#elif defined(QUEUE)
 // Work-queue (persistent-threads) variant, experimental (POGO_GPU_KERNEL=queue): a small resident grid; each thread takes the next
 // battle from an atomic counter when its battle ends, and the launch ends when the queue drains. Battle math is untouched.
 __device__ unsigned int g_queue;
@@ -971,6 +1001,282 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
     unsigned t = atomicAdd(&g_queue, 1u);
     if (t >= (unsigned)n) return;
     battle_one(st, monIdx, dyn, seeds, out, (int)t, true, dbgThread, dbg);
+  }
+}
+#endif
+
+#ifdef SLICE
+// ------------------------------------------------------------------ time-sliced series queue (plans round 6, POGO_GPU_KERNEL=slice)
+// EXPERIMENTAL, off by default. A persistent grid works through a queue of SERIES (runs of consecutive battles in queue order).
+// A thread pops a series and runs its current battle for at most T loop iterations at a time (battle_steps; the battle math is
+// the same code as above). Two ways to use a slice boundary:
+//   mode 0 "requeue": save the battle state to global memory and push the series to the back of a ring queue, pop the next item
+//                      (a battle that ends inside the slice moves on to the series' next battle with the rest of the budget);
+//   mode 1 "handoff": keep running; once the unfinished battles of the launch drop to W or fewer, save the state and push the
+//                      series to a warp queue. A warp whose 32 lanes have all left thread mode pops that queue and runs one series
+//                      in all 32 lanes in lockstep (no divergence: the long tail battles run at their solo speed, ~6x faster).
+// Optional ahead pool (R4): battles of the NEXT launch, fully specified, sorted by predicted length. A lane that finds the main
+// queue empty takes one only if now + its predicted length is before the predicted finish of the slowest started main battle.
+// Ahead battles run to completion in thread mode (never handed off, never discarded); results are flagged in `adone`.
+// Everything that depends on timing is WHERE a battle runs; each battle's own computation is identical, so rows equal v2's.
+#define C_HEAD 0      // static mode: next series ticket; ring mode: ring head ticket
+#define C_TAIL 1      // ring mode: next ring position to push (host sets it to nSeries)
+#define C_LIVE 2      // main battles not finished
+#define C_WHEAD 3     // warp-queue tickets
+#define C_WTAIL 4     // warp-queue pushes
+#define C_SEG 5       // segment records written
+#define C_AHEAD 6     // ahead tickets
+#define C_ACLOSED 7   // set once an ahead battle did not fit (the list is sorted, so nothing later fits either)
+#define C_HANDOFF 8   // handoffs (thread -> warp queue) or requeues made
+#define C_INFL 9      // mode 1: thread-mode lanes holding (or about to pop) a main series; 0 + empty queue = no more handoffs
+#define C_DEADLINE 10 // u64 (words 10,11): max over started main battles of start + predicted length (globaltimer ns)
+#define C_ALIVE 12    // ring mode: lanes still in the loop (host sets it to the grid size); an idle lane leaves while alive > live
+#define C_SPREAD 13   // lanes per warp that run battles in thread mode (host: ceil(series / warps) clamped to 1..32, or 32 when off).
+                      // Fewer distinct battles per warp when the launch is smaller than the grid: a warp runs its lanes' different
+                      // battles one after another (divergence), so 5,000 battles packed 32 to a warp leave 2/3 of the warps empty.
+#define C_NCTL 16
+
+#define SEG_W 6       // segment record: lane-or-warp id | mode<<30, battle, t0 lo/hi, t1 lo/hi
+
+static __device__ __forceinline__ unsigned vload(const unsigned* p) { return *(const volatile unsigned*)p; }
+
+static __device__ __forceinline__ void save_state(unsigned long long* slot, const B3& b, const Run& r) {
+  const unsigned long long* pb = reinterpret_cast<const unsigned long long*>(&b);
+  for (int i = 0; i < (int)(sizeof(B3) / 8); i++) __stcg(slot + i, pb[i]);
+  const unsigned long long* pr = reinterpret_cast<const unsigned long long*>(&r);
+  for (int i = 0; i < (int)(sizeof(Run) / 8); i++) __stcg(slot + sizeof(B3) / 8 + i, pr[i]);
+  __threadfence();
+}
+static __device__ __forceinline__ void load_state(const unsigned long long* slot, B3& b, Run& r) {
+  unsigned long long* pb = reinterpret_cast<unsigned long long*>(&b);
+  for (int i = 0; i < (int)(sizeof(B3) / 8); i++) pb[i] = __ldcg(slot + i);
+  unsigned long long* pr = reinterpret_cast<unsigned long long*>(&r);
+  for (int i = 0; i < (int)(sizeof(Run) / 8); i++) pr[i] = __ldcg(slot + sizeof(B3) / 8 + i);
+}
+#define SLOT_WORDS ((int)((sizeof(B3) + sizeof(Run)) / 8))
+
+static __device__ __forceinline__ void seg_rec(unsigned* ctl, unsigned* segs, int segCap, int who, int mode, int battle, unsigned long long t0, unsigned long long t1) {
+  unsigned k = atomicAdd(&ctl[C_SEG], 1u);
+  if ((int)k >= segCap) return;
+  unsigned* s = segs + (long long)k * SEG_W;
+  s[0] = (unsigned)who | ((unsigned)mode << 30); s[1] = (unsigned)battle;
+  s[2] = (unsigned)(t0 & 0xffffffffull); s[3] = (unsigned)(t0 >> 32); s[4] = (unsigned)(t1 & 0xffffffffull); s[5] = (unsigned)(t1 >> 32);
+}
+
+static __device__ __forceinline__ void note_deadline(unsigned* ctl, unsigned long long t) {
+  atomicMax(reinterpret_cast<unsigned long long*>(ctl + C_DEADLINE), t);
+}
+
+// R4 move-ahead: one battle of the next launch (its inputs are fixed), shortest predicted first, taken only while it is predicted
+// to end before the slowest started main battle (ctl[C_DEADLINE]). Run to the end in one go and written straight to its row.
+// Returns false once the list is closed (a battle did not fit; the list is sorted, so none after it fits) or used up.
+static __device__ bool ahead_one(B3& b, Run& r, const double* st, const int* monIdx, const double* dyn, const unsigned* seeds,
+                                 unsigned* ctl, unsigned* segs, int segCap, int gtid, const float* predNs, const int* ahead,
+                                 int nAhead, int* adone, unsigned long long* alog, int* out) {
+  if (vload(&ctl[C_ACLOSED])) return false;
+  unsigned a = atomicAdd(&ctl[C_AHEAD], 1u);
+  if (a >= (unsigned)nAhead) return false;
+  int bi = ahead[a];
+  unsigned long long now = gtimer();
+  unsigned long long dl = *(volatile unsigned long long*)(ctl + C_DEADLINE);
+  unsigned long long pf = now + (unsigned long long)predNs[bi];
+  if (vload(&ctl[C_LIVE]) == 0u || pf > dl) { atomicExch(&ctl[C_ACLOSED], 1u); return false; }
+  r.tStart = now;
+  battle_init(b, r, st, monIdx, dyn, seeds, bi, 0);
+  battle_steps(b, r, 0x7fffffff);
+  battle_write(b, r, out, bi);
+  unsigned long long t1 = gtimer();
+  seg_rec(ctl, segs, segCap, gtid, 2, bi, now, t1);
+  adone[a] = 1;
+  unsigned long long* lg = alog + (long long)a * 4;
+  lg[0] = now; lg[1] = pf; lg[2] = t1; lg[3] = dl;
+  return true;
+}
+
+extern "C" __global__ void slice_sizes(int* o) { o[0] = SLOT_WORDS; o[1] = (int)sizeof(B3); o[2] = (int)sizeof(Run); }
+
+extern "C" __global__ void battle3v3_slice(
+    const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out,
+    const int* order, const int* serStart, int nSeries,          // series s = battles order[serStart[s] .. serStart[s+1])
+    int T, int mode, int W,                                      // slice turns, 0 requeue / 1 handoff, handoff threshold
+    unsigned* ctl, int* spos, int* sstate, unsigned long long* save,
+    unsigned long long* ring, unsigned ringCap, int* wq,
+    unsigned* segs, int segCap,
+    const float* predNs, const int* ahead, int nAhead, int* adone, unsigned long long* alog) {
+  const int lane = threadIdx.x & 31;
+  const int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+  const int gwarp = gtid >> 5;
+  B3 b;
+  Run r;
+  const bool spare = lane >= (int)ctl[C_SPREAD];
+  if (mode == 0) {
+    // ---------------- ring requeue, thread mode only
+    if (spare) { atomicSub(&ctl[C_ALIVE], 1u); return; }
+    for (;;) {
+      // nothing queued and more lanes than unfinished battles: this lane can never be needed, leave (idle lanes spinning in a
+      // warp slow the lanes of that warp that run battles). Checked before taking a ticket, so no pushed series is orphaned.
+      if (vload(&ctl[C_HEAD]) >= vload(&ctl[C_TAIL])) {
+        if (nAhead > 0 && ahead_one(b, r, st, monIdx, dyn, seeds, ctl, segs, segCap, gtid, predNs, ahead, nAhead, adone, alog, out)) continue;
+        unsigned a = vload(&ctl[C_ALIVE]);
+        bool left = false;
+        while (a > vload(&ctl[C_LIVE])) {
+          unsigned old = atomicCAS(&ctl[C_ALIVE], a, a - 1u);
+          if (old == a) { left = true; break; }
+          a = old;
+        }
+        if (left) return;
+      }
+      // take a ticket only when a series is queued (h < tail); otherwise wait here holding none, so this lane can still leave
+      // later and its block can retire (a lane spinning on a ticket past the tail stayed until the launch ended, which kept its
+      // block resident and stopped a launch on another stream from starting; plans round 6 R2)
+      unsigned h = vload(&ctl[C_HEAD]);
+      if (h >= vload(&ctl[C_TAIL])) {
+        if (vload(&ctl[C_LIVE]) == 0u) return;
+        __nanosleep(500);
+        continue;
+      }
+      if (atomicCAS(&ctl[C_HEAD], h, h + 1u) != h) continue;
+      unsigned long long v;
+      bool quit = false;
+      for (;;) {
+        v = *(volatile unsigned long long*)(ring + (h % ringCap));
+        if ((unsigned)(v >> 32) == h + 1u && (unsigned)v != 0xffffffffu) break;
+        if (vload(&ctl[C_LIVE]) == 0u) { quit = true; break; }
+        __nanosleep(500);
+      }
+      if (quit) return;
+      *(volatile unsigned long long*)(ring + (h % ringCap)) = ((unsigned long long)(h + 1u) << 32) | 0xffffffffull;  // consumed
+      int s = (int)(v & 0xffffffffull);
+      int budget = T;
+      bool more = true;
+      while (budget > 0) {
+        int pos = spos[s];
+        int bi = order[serStart[s] + pos];
+        unsigned long long t0 = gtimer();
+        if (sstate[s]) load_state(save + (long long)s * SLOT_WORDS, b, r);
+        else { r.tStart = t0; note_deadline(ctl, t0 + (unsigned long long)predNs[bi]); battle_init(b, r, st, monIdx, dyn, seeds, bi, 0); }
+        int before = r.guard;
+        bool done = battle_steps(b, r, budget);
+        budget -= imax(1, r.guard - before);
+        if (done) {
+          battle_write(b, r, out, bi);
+          seg_rec(ctl, segs, segCap, gtid, 0, bi, t0, gtimer());
+          sstate[s] = 0;
+          spos[s] = pos + 1;
+          atomicSub(&ctl[C_LIVE], 1u);
+          if (pos + 1 >= serStart[s + 1] - serStart[s]) { more = false; break; }
+        } else {
+          save_state(save + (long long)s * SLOT_WORDS, b, r);
+          seg_rec(ctl, segs, segCap, gtid, 0, bi, t0, gtimer());
+          sstate[s] = 1;
+          break;
+        }
+      }
+      if (!more) continue;
+      // requeue the series at the back of the ring
+      __threadfence();
+      unsigned p = atomicAdd(&ctl[C_TAIL], 1u);
+      atomicAdd(&ctl[C_HANDOFF], 1u);
+      unsigned long long* slot = ring + (p % ringCap);
+      if (p >= ringCap) {
+        unsigned long long want = ((unsigned long long)(p - ringCap + 1u) << 32) | 0xffffffffull;
+        while (*(volatile unsigned long long*)slot != want) __nanosleep(200);
+      }
+      *(volatile unsigned long long*)slot = ((unsigned long long)(p + 1u) << 32) | (unsigned)s;
+    }
+  }
+  // ---------------- mode 1: thread mode with handoff, then warp mode
+  bool handed = false;
+  for (;;) {
+    if (spare) break;
+    if (W > 0 && (int)vload(&ctl[C_LIVE]) <= W) break;
+    atomicAdd(&ctl[C_INFL], 1u);  // before the pop, so a waiter that sees 0 here and an empty queue knows no push can follow
+    unsigned s = atomicAdd(&ctl[C_HEAD], 1u);
+    if (s >= (unsigned)nSeries) {
+      atomicSub(&ctl[C_INFL], 1u);
+      // main queue empty: ahead work that fits before the slowest started main battle is predicted to end
+      if (nAhead > 0)
+        while (ahead_one(b, r, st, monIdx, dyn, seeds, ctl, segs, segCap, gtid, predNs, ahead, nAhead, adone, alog, out)) {}
+      break;
+    }
+    int len = serStart[s + 1] - serStart[s];
+    for (int pos = 0; pos < len && !handed; pos++) {
+      int bi = order[serStart[s] + pos];
+      unsigned long long t0 = gtimer();
+      r.tStart = t0;
+      note_deadline(ctl, t0 + (unsigned long long)predNs[bi]);
+      battle_init(b, r, st, monIdx, dyn, seeds, bi, 0);
+      for (;;) {
+        if (battle_steps(b, r, T)) {
+          battle_write(b, r, out, bi);
+          seg_rec(ctl, segs, segCap, gtid, 0, bi, t0, gtimer());
+          atomicSub(&ctl[C_LIVE], 1u);
+          break;
+        }
+        if (W > 0 && (int)vload(&ctl[C_LIVE]) <= W) {
+          save_state(save + (long long)s * SLOT_WORDS, b, r);
+          seg_rec(ctl, segs, segCap, gtid, 0, bi, t0, gtimer());
+          spos[s] = pos;
+          sstate[s] = 1;
+          __threadfence();
+          unsigned w = atomicAdd(&ctl[C_WTAIL], 1u);
+          atomicAdd(&ctl[C_HANDOFF], 1u);
+          *(volatile int*)(wq + w) = (int)s;
+          __threadfence();
+          handed = true;
+          break;
+        }
+      }
+    }
+    atomicSub(&ctl[C_INFL], 1u);
+    if (handed) break;
+  }
+  if (W <= 0) return;
+  __syncwarp();
+  // ---------------- warp mode: one series per warp, all 32 lanes in lockstep, lane 0 writes
+  for (;;) {
+    int s = -1, quit = 0;
+    if (lane == 0) {
+      if (vload(&ctl[C_HEAD]) < (unsigned)nSeries) {
+        unsigned u = atomicAdd(&ctl[C_HEAD], 1u);
+        if (u < (unsigned)nSeries) { s = (int)u; spos[s] = 0; sstate[s] = 0; }
+      }
+      if (s < 0) {
+        unsigned w = atomicAdd(&ctl[C_WHEAD], 1u);
+        for (;;) {
+          int v = *(volatile int*)(wq + w);
+          if (v >= 0) { s = v; break; }
+          if (vload(&ctl[C_LIVE]) == 0u) { quit = 1; break; }
+          if (vload(&ctl[C_HEAD]) >= (unsigned)nSeries && vload(&ctl[C_INFL]) == 0u) {  // nothing can be pushed any more
+            __threadfence();
+            v = *(volatile int*)(wq + w);
+            if (v >= 0) { s = v; break; }
+            quit = 1;
+            break;
+          }
+          __nanosleep(1000);
+        }
+      }
+      __threadfence();
+    }
+    quit = __shfl_sync(0xffffffffu, quit, 0);
+    s = __shfl_sync(0xffffffffu, s, 0);
+    if (quit) return;
+    int len = serStart[s + 1] - serStart[s];
+    const int p0 = *(volatile int*)(spos + s), resume = *(volatile int*)(sstate + s);
+    for (int pos = p0; pos < len; pos++) {
+      int bi = order[serStart[s] + pos];
+      unsigned long long t0 = gtimer();
+      if (pos == p0 && resume) load_state(save + (long long)s * SLOT_WORDS, b, r);
+      else { r.tStart = t0; battle_init(b, r, st, monIdx, dyn, seeds, bi, 0); }
+      battle_steps(b, r, 0x7fffffff);
+      __syncwarp();
+      if (lane == 0) {
+        battle_write(b, r, out, bi);
+        seg_rec(ctl, segs, segCap, gwarp, 1, bi, t0, gtimer());
+        atomicSub(&ctl[C_LIVE], 1u);
+      }
+    }
   }
 }
 #endif
