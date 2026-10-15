@@ -224,7 +224,7 @@ export function buildRunConfig(csvPath, opts) {
     // side. Part of the fingerprint.
     metaMode: !!opts.metaMode,
     // --gpu routes batches through the CUDA sidecar (float32, not bit-identical to pvpoke): only-when-on, so a CPU run's config is byte-identical to before and a resume with the switch flipped is refused.
-    ...(opts.gpu ? { gpu: true, gpuCpuShare: opts.gpuCpuShare ?? 0.015 } : {}),
+    ...(opts.gpu ? { gpu: true, gpuCpuShare: opts.gpuCpuShare ?? 'auto' } : {}),
     // Changes what a composed opponent's lead IS, not just a weighting --
     // resuming under a different value would silently regenerate every
     // future opponent with a different lead policy than the ones already in

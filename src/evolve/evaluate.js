@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { teamBuildCost } from '../cost/powerup.js';
 import { battleTeams } from '../engine/teamBattle.js';
 import { computeSharedWeaknessScore } from '../teams/typeCoverage.js';
@@ -105,6 +106,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
   const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
   const startedAt = Date.now();
+  const tPlan0 = performance.now(); // --gpu profile only (executor.noteEval); never feeds a result
   let battleCount = 0;
   let cachedCount = 0;
   let errorCount = 0;
@@ -169,11 +171,14 @@ export async function evaluateTeamsInOrder(ctx, params) {
   // ---- (2) run only the distinct, uncached pairings -----------------------
   /** @type {Map<string, {ok:true, value:object}|{ok:false, message:string}>} */
   const outcomes = new Map();
+  const planMs = performance.now() - tPlan0;
+  let ranStep = false;
   if (threaded) {
     let slots = [];
     if (pendingSpecs.length > 0) {
       try {
         executor.noteMemoHits?.(memoHits);
+        ranStep = true;
         slots = await executor.run(pendingSpecs);
       } catch (err) {
         if (err.gpuFatal) throw err; // GPU sidecar failure: stop the run (last checkpoint stays valid), never score it as battle errors
@@ -210,6 +215,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
   }
 
   // ---- (3) accumulate --------------------------------------------------
+  const tAcc0 = performance.now();
   const opponentTally = opponents.map(() => ({
     winPoints: 0, battles: 0, weightedWinPoints: 0, weightedBattles: 0, exchangeWon: 0, exchangeLost: 0,
   }));
@@ -555,6 +561,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
 
     results.push(entry); // positional -- NOT sorted
   }
+  executor?.noteEval?.({ planMs, accumulateMs: performance.now() - tAcc0, ranStep, memoHits });
 
   return {
     results,

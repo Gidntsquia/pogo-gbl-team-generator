@@ -128,15 +128,25 @@ Add `--hours H` when the user gives a time budget; the 8 h marisa run used
 
 ### GPU battles (`--gpu`, opt-in, plain `evolve.mjs` only)
 
-`node scripts/evolve.mjs ... --gpu [--gpu-cpu-share 0.004]` sends each step's uncached 3v3 battles to the CUDA
-sidecar (`gpu/`, needs `uv` and an NVIDIA GPU) while the CPU workers run a deterministic share
-(`--gpu-cpu-share`, default 0.015) of the same batch; the memo stays in front and both sides write the same
-cache keys. Each step logs `gpu step -- N memo hits, N battles on GPU in Xs, N on CPU in Xs`. Results are float32:
-~99.9% winner agreement with the CPU engine. With no device, a dead sidecar or a start failure the run exits 1 with
-one `gpu: <reason>` line, the last full generation's checkpoint stays valid, and the identical command resumes;
+`node scripts/evolve.mjs ... --gpu` sends each step's uncached 3v3 battles to the CUDA sidecar (`gpu/`, needs `uv`
+and an NVIDIA GPU) while the CPU workers run a deterministic share of the same batch; the memo stays in front and
+both sides write the same cache keys. The share defaults to `auto`: per step, a CPU count sized to finish inside the
+shortest measured GPU step under the rates in `GPU_RATE_MODEL` (`src/engine/gpuExecutor.js`, refit with
+`node gpu/fit-share.mjs`; ~95 battles a step), a pure function of the step size. `--gpu-cpu-share F` pins a fixed fraction instead. Rows the kernel flags invalid are re-run on the CPU
+as soon as their launch returns. Each step logs `gpu step -- N memo hits, N battles on GPU in Xs, N on CPU in Xs
+[(F GPU rows flagged invalid, re-run on CPU)], share auto (N CPU), wall Xs`, and `<out-dir>/gpu-profile.json` holds
+per-step / per-generation time buckets (`node gpu/gpu-profile.mjs` renders `out/gpu-profile.html`). Results are
+float32: ~99.8% winner agreement with the CPU engine. With no device, a dead sidecar or a start failure the run exits
+1 with one `gpu: <reason>` line, the last full generation's checkpoint stays valid, and the identical command resumes;
 `--gpu` is part of the run config, so resuming without it is refused. The MCP tools do not know `--gpu`.
-Report builder: `node gpu/gpu-ab.mjs agree|score|report`. Details: `docs/gpu-viability.md`.
-`POGO_COMMUNITY_FILE=<path>` points the curated-team loader at another file (the A/B used the archived mega pool).
+Report builder: `node gpu/gpu-ab.mjs agree|score [--v 2]|report`. Details: `docs/gpu-viability.md`.
+`POGO_COMMUNITY_FILE=<path>` points the curated-team loader at another file. The recipe-ab A/B needs
+`POGO_COMMUNITY_FILE=data/archive/meta-teams-community-mega-great.json`: the live file is base Great League, which
+a mega cup filters to 0 curated teams. Check the startup line says `(N curated)` with N > 0.
+```bash
+POGO_COMMUNITY_FILE=data/archive/meta-teams-community-mega-great.json nohup $(cat out/recipe-ab-cpu-baseline.cmd) \
+  --gpu --out-dir out/evolve-recipe-ab-gpu2-halving > out/evolve-recipe-ab-gpu2-halving.log 2>&1 &
+```
 
 ### Bare `evolve.mjs` recipes (no curated opponents)
 

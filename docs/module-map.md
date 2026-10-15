@@ -27,7 +27,8 @@ files.
 - `evolve/` — the evolve run, split by stage: `cli.js` parses/validates flags
   and holds `--help`, `run.js` drives generations, `evaluate.js`/`fitness.js`
   score (`fitness.js` holds `FITNESS_SEMANTICS`), `reportMd.js`/`reportHtml.js`/
-  `output.js` write results.
+  `output.js` write results; `gpuProfile.js` records the `--gpu` time buckets
+  (`gpu-profile.json`).
 - `meta/` — the opponent side: `teams.js` (curated pvpoke presets +
   `data/meta-teams-community.json`, tier weights), `sampleTeams.js` (weighted
   opponent sampler), `usage.js` (per-species usage weights, rank-position
@@ -62,7 +63,7 @@ files.
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
 | `scripts/bench.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `render-report.mjs` | benchmarks, analyses and report re-rendering, not part of the pipeline |
 | `scripts/symmetry-gap.mjs` | `run --label L` / `report --label L [--minus B]`: multi-seed candidate-vs-opponent fitness gap for meta-vs-meta runs; `report` exits 0 when within 0.02 |
-| `gpu/` | GPU viability prototype (Python/uv, cupy CUDA kernels for 1v1 and 3v3 battles incl. form changers, verifiers, benchmark, binary + JSON sidecar, inner-sim scheduler and driver, 5,000-battle slice timing; `describe.mjs` shared mon descriptors); wired into `evolve.mjs --gpu` via `src/engine/gpuExecutor.js` (GPU+CPU battle executor); `gpu-ab.mjs` builds the CPU-vs-GPU A/B report; see `docs/gpu-viability.md` |
+| `gpu/` | GPU viability prototype (Python/uv, cupy CUDA kernels for 1v1 and 3v3 battles incl. form changers, verifiers, benchmark, binary + JSON sidecar, inner-sim scheduler and driver, 5,000-battle slice timing; `describe.mjs` shared mon descriptors); wired into `evolve.mjs --gpu` via `src/engine/gpuExecutor.js` (GPU+CPU battle executor); `gpu-ab.mjs` builds the CPU-vs-GPU A/B report (GPU-v1 and v2 columns); `gpu-profile.mjs` builds the `--gpu` speed profile page `out/gpu-profile.html`; `gpu/profile_kernel.py` (kernel resources, launch tail, block sweep, divergence, layout/order prototypes, flagged-set and per-fix slice timing) and `gpu/replay_slice.py` (replay dumped batches) are the kernel-side measurements; `src/evolve/gpuProfile.js` records `gpu-profile.json` time buckets under `--gpu`; see `docs/gpu-viability.md` |
 
 ## Data
 

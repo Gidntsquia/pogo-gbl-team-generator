@@ -879,10 +879,17 @@ __device__ void freshMon(Mon* m, const double* srow, const double* drow, int pla
 }
 
 extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int n, int dbgThread, int* dbg) {
-  int t = blockIdx.x * blockDim.x + threadIdx.x;
+#ifndef LANES
+#define LANES 1  // threads per battle: 32 = one warp per battle, every lane runs the same battle (no divergence)
+#endif
+  int g = blockIdx.x * blockDim.x + threadIdx.x;
+  int t = g / LANES;
+  bool writer = (g % LANES) == 0;  // lanes of one battle compute identical state; one of them writes the row
   if (t >= n) return;
+  unsigned long long tStart;  // profiling only: %globaltimer ns at thread start/end -> out cols 20..23 (no effect on the battle)
+  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(tStart));
   B3 b;
-  b.flags = 0; b.poolMax = 0; b.innerSims = 0; b.draws = 0; b.dbg = (t == dbgThread) ? dbg : 0; b.ndbg = 0;
+  b.flags = 0; b.poolMax = 0; b.innerSims = 0; b.draws = 0; b.dbg = (t == dbgThread && writer) ? dbg : 0; b.ndbg = 0;
   int* o = out + (long long)t * B_OUT;
   for (int i = 0; i < 6; i++) {
     const double* srow = st + (long long)monIdx[t * 6 + i] * S_N;
@@ -922,6 +929,9 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
   int leadFaintA = -1, leadFaintB = -1;   // teamBattle.js leadFaintTurnA/B: first turn the designated lead (slot 0 / 3) is at 0 hp
   while (remaining(&b, 0) > 0 && remaining(&b, 1) > 0 && (b.turns - 1) * 500 + b.chargedUsed * 9500 <= 240000) {
     if (guard++ > 5000) { b.flags |= F_GUARD; break; }
+#ifdef EXIT_ON_INVALID
+    if (b.flags & F_INVALID_MASK) break;  // the row is discarded and re-run on the CPU anyway
+#endif
     step3(&b);
     drain(&b);
     if (leadFaintA < 0 && b.mon[0].hp <= 0) leadFaintA = b.turns - 1;
@@ -933,8 +943,12 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
   int winner;
   if (remA > remB) winner = 0; else if (remB > remA) winner = 1;
   else if (hpA > hpB) winner = 0; else if (hpB > hpA) winner = 1; else winner = 2;
+  if (!writer) return;
   o[0] = winner; o[1] = remA; o[2] = remB;
   for (int i = 0; i < 6; i++) o[3 + i] = imax(0, b.mon[i].hp);
   o[9] = b.turns - 1; o[10] = b.flags; o[11] = b.innerSims; o[12] = b.draws; o[13] = b.poolMax;
   o[14] = b.chargedUsed; o[15] = hpA; o[16] = hpB; o[17] = b.ndbg; o[18] = leadFaintA; o[19] = leadFaintB;
+  unsigned long long tEnd;
+  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(tEnd));
+  o[20] = (int)(tStart & 0xffffffffull); o[21] = (int)(tStart >> 32); o[22] = (int)(tEnd & 0xffffffffull); o[23] = (int)(tEnd >> 32);
 }

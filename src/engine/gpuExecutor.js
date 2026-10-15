@@ -8,6 +8,8 @@
 // keeps (`trimBattleResult` in src/evolve/cache.js: winner, survivorsHp, summary.leadFaintTurnA/B).
 // Any sidecar failure throws a UserError `gpu: <reason>` flagged `gpuFatal`, which evaluate.js does not swallow.
 import { performance } from 'node:perf_hooks';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { buildPokemon } from './harness.js';
 import { hashSeed } from './battle/virtualClock.js';
 import { applyGroupMoveset } from '../scoring/index.js';
@@ -15,16 +17,55 @@ import { UserError } from '../util/userError.js';
 import { makeDescriber } from '../../gpu/describe.mjs';
 import { GpuSidecar, packBattles } from '../../gpu/client.mjs';
 
-export const DEFAULT_GPU_CPU_SHARE = 0.015;
+/** Default `--gpu-cpu-share`: size each step's CPU share from the measured rates below (GPU_RATE_MODEL). */
+export const DEFAULT_GPU_CPU_SHARE = 'auto';
+/**
+ * Measured rates the `auto` share balances (plans/PLAN.md round 4, R8; `node gpu/fit-share.mjs --gpu out/evolve-gpu2-p1b
+ * --cpu out/evolve-gpu2-p1s --cpu out/evolve-gpu2-p1c`, 5-gen runs of the recipe-ab command, docs/gpu-viability.md
+ * "Round 4"). A GPU step takes 3.9-11 s whatever its size (3,000-18,000 battles; the slowest battles set it, r2 0.00
+ * against the count), so moving battles to the CPU never shortens it: the model has no per-battle GPU term and sizes
+ * the CPU share to finish inside the shortest measured GPU step (3.87 s) at 0.05 s + battles / 24.9 b/s, the rate the
+ * 8 workers reach beside the GPU, i.e. 95 battles a step.
+ */
+export const GPU_RATE_MODEL = { gpuFixedS: 3.87, gpuPerBattleS: 0, cpuFixedS: 0.05, cpuBps: 24.9 };
 /** Battles per sidecar message (the sidecar also splits on its own if GPU memory runs out). */
 export const GPU_BATCH_LIMIT = 36000;
 const INVALID = 0x6e; // POOL_OVERFLOW|STACK_OVERFLOW|MOVES_OVERFLOW|GUARD|BADSTATE (see gpu/gpu/verify_3v3.py)
 const WINNER = ['a', 'b', 'tie'];
 const DEFAULT_DIFFICULTY = 3;
 
-/** True when spec index `i` belongs to the CPU share. Deterministic in (i, share). */
-export function isCpuIndex(i, share) {
-  return Math.floor((i + 1) * share) > Math.floor(i * share);
+/**
+ * How many of a step's `n` specs go to the CPU executor at share `share`. Deterministic in (n, share).
+ * @param {number} n
+ * @param {number} share
+ * @returns {number}
+ */
+export function cpuCount(n, share) {
+  return Math.min(n, Math.floor(n * share));
+}
+
+/**
+ * CPU battles of an `n`-battle step under the `auto` share: the count that makes the CPU share and the GPU side
+ * finish together under `model`, i.e. cpuFixedS + c / cpuBps = gpuFixedS + gpuPerBattleS * (n - c).
+ * Deterministic in (n, model); never more than half the step.
+ * @param {number} n
+ * @param {{gpuFixedS:number, gpuPerBattleS:number, cpuFixedS:number, cpuBps:number}} [model]
+ * @returns {number}
+ */
+export function balancedCpuCount(n, model = GPU_RATE_MODEL) {
+  if (!(model.cpuBps > 0) || n <= 0) return 0;
+  const c = (model.gpuFixedS - model.cpuFixedS + model.gpuPerBattleS * n) / (model.gpuPerBattleS + 1 / model.cpuBps);
+  return Math.max(0, Math.min(Math.floor(n / 2), Math.floor(c)));
+}
+
+/** CPU count of an `n`-battle step for a `--gpu-cpu-share` value (a fraction, or 'auto'). */
+export function cpuCountFor(n, share) {
+  return share === 'auto' ? balancedCpuCount(n) : cpuCount(n, share);
+}
+
+/** True when spec `i` of `n` is one of the `nCpu` CPU slots (spread evenly; exact integer arithmetic). */
+export function isCpuSlot(i, nCpu, n) {
+  return Math.floor(((i + 1) * nCpu) / n) > Math.floor((i * nCpu) / n);
 }
 
 /** One kernel output row -> the memo-shaped result. */
@@ -40,12 +81,13 @@ export function rowToResult(out, o) {
 const monKey = (m) => `${m.speciesId}|${m.ivs.atk},${m.ivs.def},${m.ivs.hp}|${m.shadow ? 1 : 0}|${m.bestBuddy ? 1 : 0}|${m.fastMove ? `${m.fastMove}/${(m.chargedMoves || []).join(',')}` : ''}`;
 
 /**
- * @param {{ctx: object, cpuExecutor: object, cpuShare?: number, log?: (m:string)=>void, sidecar?: object}} opts
+ * @param {{ctx: object, cpuExecutor: object, cpuShare?: number, log?: (m:string)=>void, sidecar?: object, profile?: object}} opts
+ *   `profile` (optional): src/evolve/gpuProfile.js sink; each run() adds one timed step record.
  *   `sidecar` (tests): object with setStatic(table) and batch3(packed) -> {out, cols, kernelUs, pieces}.
  */
-export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_GPU_CPU_SHARE, log = () => {}, sidecar = null }) {
+export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_GPU_CPU_SHARE, log = () => {}, sidecar = null, profile = null }) {
   let memoHitsNext = 0; // memo hits of the step about to run (set by evaluateTeamsInOrder via noteMemoHits)
-  if (!(cpuShare >= 0 && cpuShare <= 1)) throw new UserError(`--gpu-cpu-share must be in [0,1], got ${cpuShare}`, 'use e.g. 0.015');
+  if (cpuShare !== 'auto' && !(cpuShare >= 0 && cpuShare <= 1)) throw new UserError(`--gpu-cpu-share must be in [0,1] or auto, got ${cpuShare}`, 'omit it for the measured default (auto)');
   let sc = sidecar;
   if (!sc) {
     try {
@@ -70,12 +112,22 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
   }
   let sentStatic = -1;
   const totals = { gpuBattles: 0, cpuBattles: 0, flagged: 0, gpuMs: 0, cpuMs: 0, steps: 0 };
+  const dumpDir = process.env.POGO_GPU_DUMP || null; // profiling: write every launch's BATCH3 body for gpu/gpu/profile_kernel.py
+  let dumpK = 0;
 
-  async function runGpu(specs) {
+  /**
+   * GPU share of one step, cut into launches of at most GPU_BATCH_LIMIT. Rows a launch flags invalid go to the CPU
+   * executor as soon as that launch returns (`rerun(specIdx)` -> promise), so they run while the next launch does.
+   */
+  async function runGpu(specs, rerun) {
     const results = new Array(specs.length);
     const flaggedIdx = [];
+    const reruns = [];
+    const launches = [];
+    let mapMs = 0;
     const t0 = performance.now();
     for (let lo = 0; lo < specs.length; lo += GPU_BATCH_LIMIT) {
+      const tp = performance.now();
       const part = specs.slice(lo, lo + GPU_BATCH_LIMIT);
       const battles = part.map((s) => {
         const diff = s.difficulty ?? DEFAULT_DIFFICULTY;
@@ -84,14 +136,26 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
         return { teamA: A, teamB: B, leadA: s.leadA, leadB: s.leadB, seed: hashSeed(A.map((d) => d.builtId).join(',') + '|' + B.map((d) => d.builtId).join(',') + `|${s.leadA}:${s.leadB}:${diff}`) };
       });
       const packed = packBattles(battles);
+      if (dumpDir) dumpBatch(dumpDir, dumpK++, packed, monTable);
+      const packMs = performance.now() - tp;
+      const tst = performance.now();
       if (monTable.length !== sentStatic) { await sc.setStatic(monTable); sentStatic = monTable.length; }
+      const staticMs = performance.now() - tst;
+      const ts = performance.now();
       const r = await sc.batch3(packed);
+      const sidecarMs = performance.now() - ts;
+      const tm = performance.now();
+      const mine = [];
       part.forEach((_, i) => {
-        if (r.out[i * r.cols + 10] & INVALID) flaggedIdx.push(lo + i);
+        if (r.out[i * r.cols + 10] & INVALID) mine.push(lo + i);
         else results[lo + i] = { ok: true, value: rowToResult(r.out, i * r.cols), viaGpu: true };
       });
+      if (mine.length) { flaggedIdx.push(...mine); reruns.push(rerun(mine)); }
+      const timing = kernelTiming(r.out, r.cols, part.length);
+      mapMs += performance.now() - tm;
+      launches.push({ n: part.length, flagged: mine.length, packMs, staticMs, sidecarMs, kernelUs: r.kernelUs, pieces: r.pieces, ...timing });
     }
-    return { results, flaggedIdx, ms: performance.now() - t0 };
+    return { results, flaggedIdx, reruns, launches, mapMs, ms: performance.now() - t0 };
   }
 
   const info = { share: cpuShare };
@@ -99,35 +163,61 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
     info,
     /** @returns {Promise<Array<{ok:boolean, value?:object, error?:object}>>} slots in spec order. */
     noteMemoHits(n) { memoHitsNext = n; },
+    /** evaluate.js plan/accumulate timings (profile only). */
+    noteEval(rec) { profile?.noteEval(rec); },
     async run(specs) {
       const memo = memoHitsNext; memoHitsNext = 0;
-      const gpuI = [], cpuI = [];
-      specs.forEach((_, i) => (isCpuIndex(i, cpuShare) ? cpuI : gpuI).push(i));
       const t0 = performance.now();
-      let cpuMs = 0;
-      const cpuP = cpuI.length ? cpuExecutor.run(cpuI.map((i) => specs[i])).then((r) => { cpuMs = performance.now() - t0; return r; }) : Promise.resolve([]);
+      const gpuI = [], cpuI = [];
+      const nCpu = cpuCountFor(specs.length, cpuShare);
+      specs.forEach((_, i) => (isCpuSlot(i, nCpu, specs.length) ? cpuI : gpuI).push(i));
+      let mapMs = performance.now() - t0;
+      let cpuDone = t0;
+      const cpuP = cpuI.length ? cpuExecutor.run(cpuI.map((i) => specs[i])).then((r) => { cpuDone = performance.now(); return r; }) : Promise.resolve([]);
+      // flagged rows of a launch: queued on the CPU executor right away (behind the CPU share), awaited at the end
+      let flaggedDone = t0;
+      const rerun = (ks) => cpuExecutor.run(ks.map((k) => specs[gpuI[k]])).then((r) => { flaggedDone = performance.now(); return { ks, r }; });
       let g;
       try {
-        g = gpuI.length ? await runGpu(gpuI.map((i) => specs[i])) : { results: [], flaggedIdx: [], ms: 0 };
+        g = gpuI.length ? await runGpu(gpuI.map((i) => specs[i]), rerun) : { results: [], flaggedIdx: [], reruns: [], launches: [], mapMs: 0, ms: 0 };
       } catch (err) {
         cpuP.catch(() => {});
         throw gpuError(err);
       }
+      const gpuDone = performance.now();
       const cpuSlots = await cpuP;
+      const cpuShareDone = performance.now();
+      const reruns = await Promise.all(g.reruns);
+      const allDone = performance.now();
+      const tm = performance.now();
       const slots = new Array(specs.length);
       cpuI.forEach((i, k) => { slots[i] = cpuSlots[k]; });
       gpuI.forEach((i, k) => { if (g.results[k]) slots[i] = g.results[k]; });
-      const redo = g.flaggedIdx.map((k) => gpuI[k]);
-      if (redo.length) {
-        const t1 = performance.now();
-        const rs = await cpuExecutor.run(redo.map((i) => specs[i]));
-        cpuMs += performance.now() - t1;
-        redo.forEach((i, k) => { slots[i] = rs[k]; });
+      for (const { ks, r } of reruns) ks.forEach((k, j) => { slots[gpuI[k]] = r[j]; });
+      const nRedo = g.flaggedIdx.length;
+      mapMs += g.mapMs + (performance.now() - tm);
+      const wallMs = performance.now() - t0;
+      const cpuMs = (cpuI.length ? cpuDone - t0 : 0) + (nRedo ? Math.max(0, flaggedDone - Math.max(gpuDone, t0)) : 0);
+      totals.steps += 1; totals.gpuBattles += gpuI.length - nRedo; totals.cpuBattles += cpuI.length + nRedo;
+      totals.flagged += nRedo; totals.gpuMs += g.ms; totals.cpuMs += cpuMs;
+      if (profile) {
+        const L = g.launches;
+        const sumL = (f) => L.reduce((acc, l) => acc + f(l), 0) / 1000;
+        // GPU path = pack + static + sidecar(kernel span + transport) + map, all measured; after it: waits on the CPU side
+        const buckets = {
+          plan: 0, pack: sumL((l) => l.packMs), transport: sumL((l) => l.staticMs + l.sidecarMs - l.spanMs),
+          kernel: sumL((l) => l.bodyMs), tail: sumL((l) => l.tailMs),
+          waitCpu: Math.max(0, cpuShareDone - gpuDone) / 1000, flagged: Math.max(0, allDone - Math.max(gpuDone, cpuShareDone)) / 1000,
+          map: mapMs / 1000, accumulate: 0,
+        };
+        profile.step({
+          n: specs.length, memoHits: memo, gpu: gpuI.length - nRedo, cpu: cpuI.length, flaggedRows: nRedo, share: cpuShare, cpuCount: cpuI.length,
+          cpuShareS: cpuI.length ? (cpuDone - t0) / 1000 : 0, gpuPathS: (gpuDone - t0) / 1000,
+          cpuIdleS: Math.max(0, gpuDone - (cpuI.length ? cpuDone : t0)) / 1000, wall: wallMs / 1000, buckets, launches: L,
+        });
       }
-      totals.steps += 1; totals.gpuBattles += gpuI.length - redo.length; totals.cpuBattles += cpuI.length + redo.length;
-      totals.flagged += redo.length; totals.gpuMs += g.ms; totals.cpuMs += cpuMs;
-      log(`evolve: gpu step -- ${memo} memo hits, ${gpuI.length - redo.length} battles on GPU in ${(g.ms / 1000).toFixed(1)}s, ${cpuI.length + redo.length} on CPU in ${(cpuMs / 1000).toFixed(1)}s` +
-        `${redo.length ? ` (${redo.length} GPU rows flagged invalid, re-run on CPU)` : ''}, wall ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+      log(`evolve: gpu step -- ${memo} memo hits, ${gpuI.length - nRedo} battles on GPU in ${(g.ms / 1000).toFixed(1)}s, ${cpuI.length + nRedo} on CPU in ${(cpuMs / 1000).toFixed(1)}s` +
+        `${nRedo ? ` (${nRedo} GPU rows flagged invalid, re-run on CPU)` : ''}, share ${cpuShare} (${cpuI.length} CPU), wall ${(wallMs / 1000).toFixed(1)}s`);
       return slots;
     },
     totals: () => ({ ...totals }),
@@ -139,6 +229,44 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       return stats;
     },
   };
+}
+
+/**
+ * Kernel timing of one launch from the per-battle %globaltimer stamps (out cols 20..23): span (first start to last
+ * end), body (span until half the battles have finished), tail (the rest), and the longest battle's
+ * duration / turns / inner sims. All ms. Rows without stamps (stub sidecar) give zeros.
+ */
+export function kernelTiming(out, cols, n) {
+  if (!n || cols < 24) return { spanMs: 0, bodyMs: 0, tailMs: 0, maxBattleMs: 0, p50BattleMs: 0, longest: null };
+  const hi0 = out[21];
+  const rel = (lo, hi) => (hi - hi0) * 4294967296 + (lo >>> 0);
+  const starts = new Float64Array(n), ends = new Float64Array(n), durs = new Float64Array(n);
+  let s0 = Infinity, e1 = -Infinity, longest = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * cols;
+    starts[i] = rel(out[o + 20], out[o + 21]); ends[i] = rel(out[o + 22], out[o + 23]); durs[i] = ends[i] - starts[i];
+    if (starts[i] < s0) s0 = starts[i];
+    if (ends[i] > e1) e1 = ends[i];
+    if (durs[i] > durs[longest]) longest = i;
+  }
+  if (!(e1 > s0)) return { spanMs: 0, bodyMs: 0, tailMs: 0, maxBattleMs: 0, p50BattleMs: 0, longest: null };
+  const sortedEnds = Float64Array.from(ends).sort();
+  const half = sortedEnds[Math.floor((n - 1) / 2)];
+  const sortedDur = Float64Array.from(durs).sort();
+  const o = longest * cols;
+  return {
+    spanMs: (e1 - s0) / 1e6, bodyMs: (half - s0) / 1e6, tailMs: (e1 - half) / 1e6,
+    maxBattleMs: durs[longest] / 1e6, p50BattleMs: sortedDur[Math.floor((n - 1) / 2)] / 1e6,
+    longest: { turns: out[o + 9], innerSims: out[o + 11], poolMax: out[o + 13] },
+  };
+}
+
+/** POGO_GPU_DUMP: `<dir>/batch-<k>.bin` = the BATCH3 body (idx i32 | dyn f64 | seeds u32), `<dir>/mons.json` = static table so far. */
+function dumpBatch(dir, k, packed, monTable) {
+  mkdirSync(dir, { recursive: true });
+  const bufs = [packed.idx, packed.dyn, packed.seeds].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength));
+  writeFileSync(path.join(dir, `batch-${String(k).padStart(4, '0')}.bin`), Buffer.concat(bufs));
+  writeFileSync(path.join(dir, 'mons.json'), JSON.stringify(monTable));
 }
 
 function gpuError(err) {

@@ -1,4 +1,4 @@
-# GPU viability: porting the 3v3 battle to CUDA (round 2)
+# GPU viability: porting the 3v3 battle to CUDA (rounds 2-4)
 
 ## Verdict
 
@@ -198,3 +198,49 @@ Earlier-round fix kept for reference: `Battle.js` line 415 `action.priority -= 4
   (see counts), so a seeded report would not be byte-equal. Wiring needed: a batching shim at `src/engine/teamBattle.js` that sends battles to the sidecar in
   ≥5,000-battle launches, a CPU fallback for `POOL_OVERFLOW` battles, and a seeded-report comparison.
 - GPU memory: the card is shared with other programs; 36,000-battle launches ran at ≈8.1 GB total in use.
+
+## Round 4: speedup
+
+**Conclusion.** The ×9.8 of the first `--gpu` run (GPU-v1) was mostly the kernel tail: a launch lasts as long as its
+slowest battle, and with one thread per battle a mixed warp runs as long as its slowest member, so about half of every
+launch is spent with fewer than 50% of battles still running (≈1,650 s of the v1 run's 3,324 s running time). Then came
+the many small halving-round launches (≈625 s) and the serial re-run of pool-overflow rows after the GPU (≈549 s). The
+evidence page is `out/gpu-profile.html` (`node gpu/gpu-profile.mjs`); the A/B page is `out/recipe-ab-gpu.html`
+(`node gpu/gpu-ab.mjs report`). Full GPU-v2 run (`out/evolve-recipe-ab-gpu2-halving`, the recipe-ab CPU
+command with `--gpu`, 79 curated): **0h 30m 49s, ×17.6** against the CPU run's 9h 01m 36s (v1: 0h 55m 24s, ×9.8);
+top-5 curated-100 quality 56.4% vs 57.6% CPU (−1.2 pts, inside the 3-pt noise); winner agreement 99.95% on a 2,000-battle
+sample; a same-seed repro matches gen 0–4; 0 flagged rows. 724 battles/s end to end, short of the 1,500 b/s target: the
+kernel is 91% of the run, and about half of each launch is its tail.
+
+**What changed (new defaults).**
+
+- **3v3 lookahead pool 2,048 entries, packed** (`gpu/gpu/kernels/pvp1v1.cuh`, 12-byte entries instead of the 768 wide
+  ones; same 36,000 battles per launch on 10 GB, 0 register spills). `POOL_OVERFLOW` goes to 0: the v1 run's 231 flagged
+  rows (reconstructed from its dumped batches) and every row of the 5-gen runs, peak pool 1,725. `verify_3v3`: 100%
+  winner agreement, 0 flagged on the 2,436-battle set; `verify_1v1` PASS. `POGO_GPU_KERNEL=v1` still builds the old
+  pool for comparison.
+- **Flagged rows re-run on the CPU workers as each launch returns them, concurrently,** instead of one by one after the
+  GPU (with pool 2,048 there are none left to re-run in practice).
+- **CPU share `auto` is the default** (`--gpu-cpu-share auto`; a number still sets a fixed share). It is a deterministic
+  function of the step's battle count, set from measured rates (`GPU_RATE_MODEL` in `src/engine/gpuExecutor.js`, fitted
+  by `node gpu/fit-share.mjs`): a GPU step takes 3.9–11 s whatever its size, so the CPU share is sized to finish inside
+  the shortest GPU step at 24.9 battles/s, which gives 95 battles a step. The plan expected a share near 0.06; measured,
+  that share (0.05) made 5 generations 84% slower because the CPU workers then set the step time.
+- **Every `--gpu` run writes `gpu-profile.json`** in its out dir (`src/evolve/gpuProfile.js`): per step and per
+  generation seconds for memo, packing, transport, kernel body and tail, CPU share, flagged re-runs, waiting, GA,
+  checkpoint and report, with the unattributed remainder (≤ 0.2% of wall on every 5-gen run).
+- **The community file is set with `POGO_COMMUNITY_FILE`** (e.g. `data/archive/meta-teams-community-mega-great.json`
+  between seasons, when `data/meta-teams-community.json` is absent) so a GPU run sees the same 79 curated teams as the
+  CPU baseline; see RUNBOOK "--gpu".
+
+**Not applied (measured, not worth it).** Bucketing battles by predicted length: even an oracle sort by the true length
+gives ×1.04 per launch, and grouping by team gives ×0.75–0.85. Warp-per-battle layout (32 lanes per battle, prototype):
+×1.22 at 5,000 battles and ×0.86 at 36,000, below the ×1.5 bar. Merging halving-round batches: each round's pairings
+depend on the previous round's results, so there is nothing to merge across rounds. Register cap (128/64): spills
+appear, no gain. Block size: 64 threads is best of 32–1024.
+
+| 5 generations of the recipe-ab command (same seed) | wall | per-step flagged |
+|---|---|---|
+| v1 kernel, share 0.004 (before) | 150.5 s | 152 re-runs |
+| + packed pool 2,048 (v2 kernel) | 121.6 s | 0 |
+| + share auto (v2 defaults) | 121.5 s | 0 |

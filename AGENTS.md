@@ -30,3 +30,8 @@ they don't say.
   restore the in-sim form rewrite, and results would then depend on worker/battle order. Same
   seed must give identical checkpoints at any `--threads`; check with two runs and diff the
   checkpoints ignoring timing fields.
+- `--gpu` timing: a GPU step's time is set by its slowest battles, not its battle count (3.9–11 s for
+  3,000–18,000 battles on the RTX 3080), so moving battles to the CPU never shortens it. Keep the CPU
+  share small (`auto`, ~95 a step); share 0.05 made 5 generations 84% slower. Every `--gpu` run writes
+  `<out-dir>/gpu-profile.json`; `node gpu/gpu-profile.mjs` renders it. GPU kernel changes are checked
+  with `cd gpu && uv run python -m gpu.verify_3v3` (100% winner, 0 flagged) and `gpu.verify_1v1`.

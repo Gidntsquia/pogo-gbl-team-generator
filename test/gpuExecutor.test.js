@@ -1,18 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isCpuIndex, rowToResult, createGpuExecutor } from '../src/engine/gpuExecutor.js';
+import { cpuCount, balancedCpuCount, isCpuSlot, rowToResult, createGpuExecutor } from '../src/engine/gpuExecutor.js';
 import { initEngine } from '../src/engine/harness.js';
 
 const IVS = { atk: 0, def: 15, hp: 15 };
 const team = (ids) => ids.map((speciesId) => ({ speciesId, ivs: IVS }));
 const spec = (i) => ({ teamA: team(['azumarill', 'registeel', 'altaria']), teamB: team(['magikarp', 'sunkern', 'feebas']), leadA: i % 3, leadB: 0 });
 
-test('cpu share split is a fixed function of index and share', () => {
-  const idx = (n, s) => Array.from({ length: n }, (_, i) => i).filter((i) => isCpuIndex(i, s));
-  assert.equal(idx(1000, 0.015).length, 15);
-  assert.deepEqual(idx(1000, 0.015), idx(1000, 0.015));
-  assert.equal(idx(50, 0).length, 0);
-  assert.equal(idx(50, 1).length, 50);
+test('cpu share split is a fixed function of (n, share) or of (n, rate model) under auto', () => {
+  const slots = (n, c) => Array.from({ length: n }, (_, i) => i).filter((i) => isCpuSlot(i, c, n));
+  assert.equal(slots(1000, cpuCount(1000, 0.015)).length, 15);
+  assert.equal(slots(50, cpuCount(50, 0)).length, 0);
+  assert.equal(slots(50, cpuCount(50, 1)).length, 50);
+  // GPU 2 s + 1 ms/battle, CPU 0.5 s + 40 b/s: c = (2 - 0.5 + 0.001 n) / (0.001 + 0.025)
+  const model = { gpuFixedS: 2, gpuPerBattleS: 0.001, cpuFixedS: 0.5, cpuBps: 40 };
+  assert.equal(balancedCpuCount(10000, model), Math.floor(11.5 / 0.026));
+  assert.equal(balancedCpuCount(4, model), 2); // capped at half the step
+  assert.equal(balancedCpuCount(1000, { ...model, cpuBps: 0 }), 0);
 });
 
 test('kernel row maps to the memo result shape (lead faint -1 -> null)', () => {

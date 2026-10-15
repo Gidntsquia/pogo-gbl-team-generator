@@ -1,4 +1,6 @@
+import { performance } from 'node:perf_hooks';
 import { createExecutor } from '../engine/parallel.js';
+import { createGpuProfile } from './gpuProfile.js';
 import { runFinalPass } from './finalPass.js';
 import { buildEvolveSetup } from './setup.js';
 import { initRunState } from './state.js';
@@ -26,7 +28,9 @@ async function gpuStartupLine(share) {
  * @returns {Promise<object>} the `result` the reports were rendered from.
  */
 export async function runEvolution(csvPath, opts = {}) {
+  const tSetup0 = performance.now();
   const setup = await buildEvolveSetup(csvPath, opts);
+  const setupS = (performance.now() - tSetup0) / 1000;
   const { config, outDir, log, threads, deadlineMs, ctx, battleCache } = setup;
   const threaded = typeof threads === 'number' && threads > 0;
   const profileDir = opts.profile ? outDir : undefined;
@@ -34,12 +38,17 @@ export async function runEvolution(csvPath, opts = {}) {
     ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true, profileDir, cp: ctx.cp, cup: ctx.cup })
     : null;
   let executor = cpuExecutor;
+  let gpuProfile = null;
   if (opts.gpu) {
-    const { createGpuExecutor } = await import('../engine/gpuExecutor.js');
-    executor = await createGpuExecutor({ ctx, cpuExecutor, cpuShare: config.gpuCpuShare, log });
+    const tSc0 = performance.now();
+    const { createGpuExecutor, GPU_BATCH_LIMIT } = await import('../engine/gpuExecutor.js');
+    gpuProfile = createGpuProfile(outDir, { cpuShare: config.gpuCpuShare, batchLimit: GPU_BATCH_LIMIT, threads });
+    gpuProfile.setPhase('setup', setupS);
+    executor = await createGpuExecutor({ ctx, cpuExecutor, cpuShare: config.gpuCpuShare, log, profile: gpuProfile });
     log(await gpuStartupLine(config.gpuCpuShare));
+    gpuProfile.setPhase('sidecarStart', (performance.now() - tSc0) / 1000);
   }
-  const env = { ...setup, opts, threaded, executor, profileDir };
+  const env = { ...setup, opts, threaded, executor, profileDir, gpuProfile };
 
   try {
     const state = initRunState(env);
@@ -62,7 +71,11 @@ export async function runEvolution(csvPath, opts = {}) {
     }
 
     const diskHitsInGenerations = battleCache.stats().diskHits ?? 0;
+    gpuProfile?.beginGen('final');
+    const tFin0 = performance.now();
     const fin = await runFinalPass(env, state);
+    gpuProfile?.setPhase('finalPass', (performance.now() - tFin0) / 1000);
+    const tOut0 = performance.now();
     const cacheStats = battleCache.stats();
     if (cacheStats.hits + cacheStats.misses > 0) {
       log(
@@ -79,6 +92,7 @@ export async function runEvolution(csvPath, opts = {}) {
     const result = buildResult(env, state, csvPath, fin);
     if (opts.battleCacheFile) result.battleCacheStats.diskHitsInGenerations = diskHitsInGenerations;
     writeOutputs(env, result);
+    if (gpuProfile) { gpuProfile.setPhase('outputs', (performance.now() - tOut0) / 1000); gpuProfile.write(); }
     return result;
   } finally {
     if (executor) await closeExecutor(executor, profileDir, log);

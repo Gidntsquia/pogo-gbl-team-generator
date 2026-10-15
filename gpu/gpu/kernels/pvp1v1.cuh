@@ -315,7 +315,24 @@ __device__ bool wouldShield(const Mon* attacker_c, const Mon* defender_c, Move* 
   return useShield;
 }
 
-struct BState { int energy, oppHealth, turn, oppShields, buffs, link, mv; };
+#ifdef WIDE_POOL
+struct BState { int energy, oppHealth, turn, oppShields, buffs, link, mv; };   // round 1-3 layout: 28 bytes
+typedef int QIdx;
+#else
+// Packed lookahead state, 12 bytes instead of 28, so a 2048-entry pool costs about what 768 wide entries did.
+// A value that does not fit its field flags the row POOL_OVERFLOW (re-run on the CPU), never silently truncates.
+struct BState { short energy, oppHealth, turn, link; signed char oppShields, buffs, mv, pad; };
+typedef short QIdx;
+#endif
+__device__ __forceinline__ BState mkB(int e, int h, int t, int s, int bf, int link, int mv, int* flags) {
+  BState r;
+  r.energy = e; r.oppHealth = h; r.turn = t; r.oppShields = s; r.buffs = bf; r.link = link; r.mv = mv;
+#ifndef WIDE_POOL
+  r.pad = 0;
+  if (r.energy != e || r.oppHealth != h || r.turn != t || r.oppShields != s || r.buffs != bf || r.link != link || r.mv != mv) *flags |= F_POOL_OVERFLOW;
+#endif
+  return r;
+}
 struct TState { int hp, opEnergy, turn, shields; };
 
 __device__ int movesOf(const BState* pool, int s, int* out) {
@@ -509,17 +526,18 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
 
   // dynamic programming over throw plans
   BState pool[MAXQ];
-  int queue[MAXQ];
+  QIdx queue[MAXQ];
+  QIdx* qp = queue;  // queue head: a pop advances it instead of shifting the whole queue (same order, same results)
   int qn = 0, pn = 0;
   int stateCount = 0;
   int finalState = -1;
-  pool[pn] = BState{poke->energy, opp->hp, 0, opp->shields, 0, -1, -1};
-  queue[qn++] = pn++;
+  pool[pn] = mkB(poke->energy, opp->hp, 0, opp->shields, 0, -1, -1, flags);
+  qp[qn++] = pn++;
   while (qn != 0) {
     if (stateCount >= 500) return -1;
     stateCount++;
-    int cur = queue[0];
-    for (int x = 1; x < qn; x++) queue[x - 1] = queue[x];
+    int cur = qp[0];
+    qp++;
     qn--;
     BState* cs = &pool[cur];
     cs->buffs = imin(4, cs->buffs);
@@ -549,11 +567,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
       {
         int i = 0;
         if (qn != 0) {
-          while (pool[queue[i]].turn <= farmTurn) { i++; if (i == qn) break; }
+          while (pool[qp[i]].turn <= farmTurn) { i++; if (i == qn) break; }
         }
-        pool[pn] = BState{cs->energy + poke->fast.gain * movesToFarmDown, 0, farmTurn, cs->oppShields, cs->buffs, cur, -1};
-        for (int x = qn; x > i; x--) queue[x] = queue[x - 1];
-        queue[i] = pn++;
+        pool[pn] = mkB(cs->energy + poke->fast.gain * movesToFarmDown, 0, farmTurn, cs->oppShields, cs->buffs, cur, -1, flags);
+        for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
+        qp[i] = pn++;
         qn++;
       }
       cs = &pool[cur];
@@ -571,13 +589,13 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         if (newShields > 0) newShields--;
         int i = 0;
         bool insertElement = true;
-        while (i < qn && pool[queue[i]].turn == cs->turn + 1) {
-          BState* q = &pool[queue[i]];
+        while (i < qn && pool[qp[i]].turn == cs->turn + 1) {
+          BState* q = &pool[qp[i]];
           if (q->oppHealth == newOppHealth && q->buffs == attackMult) {
             if (q->energy == (cs->energy - am->energy)) {
               int DPDebuffs = 0, currDebuffs = 0;
               int mv[MAXMV];
-              int cnt = movesOf(pool, queue[i], mv);
+              int cnt = movesOf(pool, qp[i], mv);
               for (int x = 0; x < cnt; x++) {
                 Move* mm = &poke->ch[mv[x]];
                 if (mm->selfDeb) DPDebuffs++;
@@ -592,7 +610,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
               if (am->selfDeb) currDebuffs++;
               if (am->chance == (REAL)1 && am->target == 1 && am->b0 + am->b1 > 0) currDebuffs--;
               if (DPDebuffs > currDebuffs) {
-                for (int x = i + 1; x < qn; x++) queue[x - 1] = queue[x];
+                for (int x = i + 1; x < qn; x++) qp[x - 1] = qp[x];
                 qn--;
               } else { insertElement = false; i++; }
             } else { insertElement = false; i++; }
@@ -600,11 +618,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         }
         if (insertElement) {
           i = 0;
-          while (i < qn && pool[queue[i]].turn <= cs->turn + 1) { i++; }
+          while (i < qn && pool[qp[i]].turn <= cs->turn + 1) { i++; }
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
-          pool[pn] = BState{cs->energy - am->energy, newOppHealth, cs->turn + 1, newShields, attackMult, cur, poke->act[n]};
-          for (int x = qn; x > i; x--) queue[x] = queue[x - 1];
-          queue[i] = pn++;
+          pool[pn] = mkB(cs->energy - am->energy, newOppHealth, cs->turn + 1, newShields, attackMult, cur, poke->act[n], flags);
+          for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
+          qp[i] = pn++;
           qn++;
         }
         if (am->selfDeb && am->b0 < 0 && am->energy * 2 <= 100) {
@@ -615,11 +633,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
             if (cs->oppShields > 0) nh = nh - 1; else nh = nh - moveDamage;
             newTurn += cs->turn + 1;
             int j = 0;
-            while (j < qn && pool[queue[j]].turn <= newTurn) { j++; }
+            while (j < qn && pool[qp[j]].turn <= newTurn) { j++; }
             if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
-            pool[pn] = BState{newEnergy, nh, newTurn, newShields, attackMult, cur, poke->act[n]};
-            for (int x = qn; x > j; x--) queue[x] = queue[x - 1];
-            queue[j] = pn++;
+            pool[pn] = mkB(newEnergy, nh, newTurn, newShields, attackMult, cur, poke->act[n], flags);
+            for (int x = qn; x > j; x--) qp[x] = qp[x - 1];
+            qp[j] = pn++;
             qn++;
           }
         }
@@ -632,11 +650,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         if (newShields > 0) newShields--;
         {
           int i = 0;
-          while (i < qn && pool[queue[i]].turn < newTurn) { i++; }
+          while (i < qn && pool[qp[i]].turn < newTurn) { i++; }
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
-          pool[pn] = BState{newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n]};
-          for (int x = qn; x > i; x--) queue[x] = queue[x - 1];
-          queue[i] = pn++;
+          pool[pn] = mkB(newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n], flags);
+          for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
+          qp[i] = pn++;
           qn++;
         }
         if (am->selfDeb && am->b0 < 0 && am->energy * 2 <= 100) {
@@ -646,11 +664,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
           if (cs->oppShields > 0) newOppHealth = newOppHealth - 1; else newOppHealth = newOppHealth - moveDamage;
           newTurn += cs->turn + 1;
           int i = 0;
-          while (i < qn && pool[queue[i]].turn < newTurn) { i++; }
+          while (i < qn && pool[qp[i]].turn < newTurn) { i++; }
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
-          pool[pn] = BState{newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n]};
-          for (int x = qn; x > i; x--) queue[x] = queue[x - 1];
-          queue[i] = pn++;
+          pool[pn] = mkB(newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n], flags);
+          for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
+          qp[i] = pn++;
           qn++;
         }
       }

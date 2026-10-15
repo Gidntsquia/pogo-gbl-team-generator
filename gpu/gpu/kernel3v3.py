@@ -16,19 +16,42 @@ def source():
     return "\n".join(open(os.path.join(_HERE, f)).read() for f in ("pvp1v1.cuh", "battle1v1.cuh", "battle3v3.cuh"))
 
 
-def get_kernel(real="float"):
-    cp = require_cuda()
-    if real not in _cache:
-        src = "#define REAL %s\n#define NO_1V1_KERNEL\n#define MAXQ 768\n%s" % (real, source())
-        mod = cp.RawModule(code=src, options=("--std=c++14", "--fmad=false"))
-        _cache[real] = mod.get_function("battle3v3_kernel")
-    return _cache[real]
+MAXQ = 2048  # lookahead DP pool per thread (pvp1v1.cuh, packed 12-byte states); a battle that needs more is flagged POOL_OVERFLOW
+DEFAULT_DEFINES = ()
+if os.environ.get("POGO_GPU_KERNEL") == "v1":  # profiling only: the round-3 kernel (wide 28-byte states, pool 768) for A/B runs
+    MAXQ, DEFAULT_DEFINES = 768, ("WIDE_POOL",)
+BLOCK = 32  # threads per block for every launch
 
 
-def run_3v3(static, idx, dyn, seeds, real="float", block=32, chunk=2048, stack=65536, trace=None):
-    """static [nMons,S_N] f64, idx [n,6] i32, dyn [n,6,D_N] f64, seeds [n] u32 -> out [n,B_OUT] i32."""
+def get_kernel(real="float", maxq=None, maxrreg=None, defines=None):
+    """Compiled battle3v3_kernel. maxq / maxrreg (register cap) / defines (extra #define names) are for profiling
+    variants; defaults = production."""
     cp = require_cuda()
-    k = get_kernel(real)
+    defines = DEFAULT_DEFINES if defines is None else defines
+    key = (real, maxq or MAXQ, maxrreg, tuple(defines))
+    if key not in _cache:
+        extra = "".join("#define %s\n" % d for d in defines)
+        src = "#define REAL %s\n#define NO_1V1_KERNEL\n#define MAXQ %d\n%s%s" % (real, maxq or MAXQ, extra, source())
+        opts = ("--std=c++14", "--fmad=false") + ((f"--maxrregcount={maxrreg}",) if maxrreg else ())
+        mod = cp.RawModule(code=src, options=opts)
+        _cache[key] = mod.get_function("battle3v3_kernel")
+    return _cache[key]
+
+
+def stamps(out):
+    """Per-battle (start_ns, end_ns) int64 arrays from output cols 20..23 (%globaltimer at thread start / end)."""
+    o = np.asarray(out).astype(np.int64) & 0xFFFFFFFF
+    return o[:, 20] | (o[:, 21] << 32), o[:, 22] | (o[:, 23] << 32)
+
+
+def run_3v3(static, idx, dyn, seeds, real="float", block=None, chunk=2048, stack=65536, trace=None, maxq=None, maxrreg=None, defines=None, lanes=1):
+    """static [nMons,S_N] f64, idx [n,6] i32, dyn [n,6,D_N] f64, seeds [n] u32 -> out [n,B_OUT] i32.
+    lanes > 1 (profiling prototype): that many threads run each battle in lockstep, one of them writes the row."""
+    cp = require_cuda()
+    block = block or BLOCK
+    if lanes > 1:
+        defines = tuple(DEFAULT_DEFINES if defines is None else defines) + ("LANES %d" % lanes,)
+    k = get_kernel(real, maxq, maxrreg, defines)
     cp.cuda.runtime.deviceSetLimit(0x00, stack)
     n = idx.shape[0]
     d_st = cp.asarray(static)
@@ -41,7 +64,7 @@ def run_3v3(static, idx, dyn, seeds, real="float", block=32, chunk=2048, stack=6
         d_out = cp.zeros((hi - lo, B_OUT), dtype=cp.int32)
         d_dbg = cp.zeros((6000 * 5,), dtype=cp.int32)
         tt = -1 if trace is None or not (lo <= trace < hi) else trace - lo
-        k(((hi - lo + block - 1) // block,), (block,), (d_st, d_idx, d_dyn, d_seed, d_out, np.int32(hi - lo), np.int32(tt), d_dbg))
+        k((((hi - lo) * lanes + block - 1) // block,), (block,), (d_st, d_idx, d_dyn, d_seed, d_out, np.int32(hi - lo), np.int32(tt), d_dbg))
         cp.cuda.Stream.null.synchronize()
         outs.append(cp.asnumpy(d_out))
         if tt >= 0:

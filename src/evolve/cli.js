@@ -53,7 +53,8 @@ Options:
                             float32, not bit-identical to pvpoke (winner agrees ~99.8%), but a run is reproducible.
                             Part of the run config: resume with the identical flags. A GPU failure exits 1 with a
                             one-line "gpu: ..." reason. Requires --threads > 0
-  --gpu-cpu-share F       fraction of each batch the CPU workers take under --gpu  (default 0.015)
+  --gpu-cpu-share F|auto  fraction of each batch the CPU workers take under --gpu  (default: auto, a fixed count per step
+                            sized from measured GPU/CPU rates to finish inside the GPU's step; see docs/gpu-viability.md)
   --profile                capture a per-worker CPU profile (node:inspector)
                             spanning the whole run, written to
                             <out-dir>/worker-*.cpuprofile and
@@ -371,7 +372,7 @@ const NUMBER_FLAGS = [
   ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
   ['sampled-combats'], // unset = off; validated as 1/K below
   ['sampled-opponents'], // unset = off; positive integer K, validated below
-  ['gpu-cpu-share'], // unset = 0.015; only meaningful with --gpu
+  ['gpu-cpu-share'], // unset = auto (balanced from measured rates); only meaningful with --gpu
   ['hoeffding-confidence'], // unset = 0.1 (only meaningful with --hoeffding-races)
 ];
 
@@ -411,6 +412,7 @@ const parseInt0 = (value, flag) => checkNumber(value, flag, Number.isInteger, 'a
 
 function numericOpts(values) {
   const out = {};
+  if (values['gpu-cpu-share'] === 'auto') values = { ...values, 'gpu-cpu-share': undefined }; // explicit default
   const each = (table, ok, expectation) => {
     for (const [flag, fallback] of table) {
       const n = checkNumber(values[flag], flag, (x) => x >= 0 && ok(x), expectation);
