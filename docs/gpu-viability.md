@@ -14,9 +14,8 @@
   PASS on both bars, float32: winner agreement ≥ 99% and win rate within ±1 pp.
 - **Path (a) fails:** with 16–64 battles in flight and every lookahead sim batched, the effective inner-sim rate is
   2,445–3,129 sims/s against 4,895 for the 8 CPU threads, so S = 0.50–0.64 against the 10.6 needed. Not viable (details below).
-- Open items for integration: 0.8% of battles (19 of 2,400) overflow the kernel's lookahead pool (flag `POOL_OVERFLOW`) and need the CPU
-  as fallback; multi-stream overlap does not help (×0.55); results are float32 and not bit-identical (9 survivor-HP / 10 turn-count
-  differences in 2,381 compared battles, never a winner).
+- Open items for integration: the 3v3 lookahead pool is now 768 entries (was 320, which flagged 19 of 2,400 battles); the re-run flags 0 of 2,436. Multi-stream overlap does not help (×0.55); results are float32 and not bit-identical (9 survivor-HP / 10 turn-count
+  differences in 2,400 compared battles, never a winner).
 - Not done: a `--gpu` flag, routing, or a seeded-report diff (see "Not done").
 
 ## Why the numbers differ
@@ -164,7 +163,7 @@ defined by the species, not by the old flag counts).
 | set | build | scenarios | rows with a mismatch | notes |
 |---|---|---|---|---|
 | previously flagged (form changers) | double | 89,355 | 226 (0.25%) | rating 25, hp 18/12, energy 13/15, turnsToKO 124/87, rngDraws 7 |
-| previously flagged (form changers) | float32 | 89,355 | 226 (0.25%) | same counts |
+| previously flagged (form changers) | float32 | 89,355 | 226 (0.25%) | same counts; winner agreement 99.99%, win-rate delta +0.00 pp → PASS |
 | rest | double | 1,103,981 | **0** | |
 | rest | float32 | 1,103,981 | 195 (0.018%) | rating 182 |
 
@@ -174,12 +173,12 @@ rankings-1500 leads: 398 pairs, 0 rating and 0 any-field mismatches (both builds
 
 | set (float32) | battles | flagged invalid | winner mismatches | survivorsHp | turn count |
 |---|---|---|---|---|---|
-| previously flagged (form changers) | 436 | 1 | 0 | 1 | 2 |
-| rest | 1,964 | 18 | 0 | 8 | 8 |
+| previously flagged (form changers) | 436 | 0 | 0 | 1 | 2 |
+| rest | 1,964 | 0 | 0 | 8 | 8 |
 | fixtures (incl. 18 form-changer lead pairings) | 36 | 0 | 1 | 4 | 5 |
 
 Double build: previously flagged 0/0/0 winner/HP/turn mismatches (435 compared), rest 0/0/0 (1,946 compared), fixtures 1/4/5; no pass bar applied to double.
-Float32: team-A win rate pvpoke 50.04% vs kernel 50.04% (+0.00 pp) → PASS; per-matchup winner agreement 100.00% → PASS; previously-flagged subset alone 435 battles, 100.00%, +0.00 pp.
+Float32 (pool 768, 0 flagged; the double row above is from the earlier pool-320 run): team-A win rate pvpoke 49.94% vs kernel 49.94% (+0.00 pp) → PASS; per-matchup winner agreement 100.00% → PASS; previously-flagged subset alone 436 battles, 100.00%, +0.00 pp.
 The fixture mismatches are all in form-changer lead pairings (`forms-02`, `forms-11`, `forms-21`, `forms-mirror-21`; one winner flips in `forms-02`). Flagged invalid
 = `POOL_OVERFLOW` (the lookahead pool capacity of the 3v3 kernel), reported in the "flagged invalid" count, distinct from the removed "unsupported" flag.
 

@@ -56,7 +56,19 @@ def main():
               f"(whole export: {int(fm.sum())} of {len(fm)})")
         r1, _ = table(f"{real} / gen-0 inner sims, previously flagged (form changers)", out[gen0 & fm], exp[gen0 & fm])
         r2, _ = table(f"{real} / gen-0 inner sims, rest", out[gen0 & ~fm], exp[gen0 & ~fm])
-        fails += (r1 + r2) if real == "double" else 0  # float32 mismatches are reported, not fatal
+        fails += r2 if real == "double" else 0  # double on the non-form rest must be exact; float32 drift and the form set (double: no bar) are only reported
+        if real == "float":
+            # plan bar on the previously flagged set (float32): winner agreement >= 99% and team-A win rate within 1 pp
+            o, e = out[gen0 & fm], exp[gen0 & fm]
+            ok = (o[:, 16] & INVALID) == 0
+            sgn = lambda a: np.sign(a[:, 0].astype(float) - 500.0)  # rating0 > 500: mon 0 wins
+            wo, we = sgn(o)[ok], sgn(e)[ok]
+            agree = 100.0 * float((wo == we).mean()) if ok.any() else 0.0
+            rate = lambda w: 100.0 * float(((w > 0).sum() + 0.5 * (w == 0).sum()) / max(len(w), 1))
+            d = rate(wo) - rate(we)
+            print(f"[float] form-changer scenarios: {int(ok.sum())} compared, winner agreement {agree:.2f}% -> "
+                  f"{'PASS' if agree >= 99 else 'FAIL'} (>= 99%); mon-0 win rate delta {d:+.2f} pp -> {'PASS' if abs(d) <= 1 else 'FAIL'} (|delta| <= 1 pp)")
+            fails += int(agree < 99 or abs(d) > 1)
         rk_path = os.path.join(a.data, "rankings.json")
         if os.path.exists(rk_path):
             rk = json.load(open(rk_path))

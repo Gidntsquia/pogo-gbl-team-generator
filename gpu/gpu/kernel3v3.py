@@ -19,7 +19,7 @@ def source():
 def get_kernel(real="float"):
     cp = require_cuda()
     if real not in _cache:
-        src = "#define REAL %s\n#define NO_1V1_KERNEL\n#define MAXQ 320\n%s" % (real, source())
+        src = "#define REAL %s\n#define NO_1V1_KERNEL\n#define MAXQ 768\n%s" % (real, source())
         mod = cp.RawModule(code=src, options=("--std=c++14", "--fmad=false"))
         _cache[real] = mod.get_function("battle3v3_kernel")
     return _cache[real]
