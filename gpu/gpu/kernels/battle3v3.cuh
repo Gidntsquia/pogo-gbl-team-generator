@@ -878,14 +878,16 @@ __device__ void freshMon(Mon* m, const double* srow, const double* drow, int pla
   m->hasActed = 0; m->csi = 0; m->shUsed = 0; m->faintSource = 0;
 }
 
-extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int n, int dbgThread, int* dbg) {
 #ifndef LANES
 #define LANES 1  // threads per battle: 32 = one warp per battle, every lane runs the same battle (no divergence)
 #endif
-  int g = blockIdx.x * blockDim.x + threadIdx.x;
-  int t = g / LANES;
-  bool writer = (g % LANES) == 0;  // lanes of one battle compute identical state; one of them writes the row
-  if (t >= n) return;
+// One battle -> one output row. Shared by the thread-per-battle kernel and the work-queue kernel (QUEUE).
+#ifdef QUEUE
+#define BATTLE_INLINE __noinline__
+#else
+#define BATTLE_INLINE __forceinline__
+#endif
+static __device__ BATTLE_INLINE void battle_one(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int t, bool writer, int dbgThread, int* dbg) {
   unsigned long long tStart;  // profiling only: %globaltimer ns at thread start/end -> out cols 20..23 (no effect on the battle)
   asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(tStart));
   B3 b;
@@ -952,3 +954,23 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
   asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(tEnd));
   o[20] = (int)(tStart & 0xffffffffull); o[21] = (int)(tStart >> 32); o[22] = (int)(tEnd & 0xffffffffull); o[23] = (int)(tEnd >> 32);
 }
+
+#ifndef QUEUE
+extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int n, int dbgThread, int* dbg) {
+  int g = blockIdx.x * blockDim.x + threadIdx.x;
+  int t = g / LANES;
+  if (t >= n) return;
+  battle_one(st, monIdx, dyn, seeds, out, t, (g % LANES) == 0, dbgThread, dbg);
+}
+#else
+// Work-queue (persistent-threads) variant, experimental (POGO_GPU_KERNEL=queue): a small resident grid; each thread takes the next
+// battle from an atomic counter when its battle ends, and the launch ends when the queue drains. Battle math is untouched.
+__device__ unsigned int g_queue;
+extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int* out, int n, int dbgThread, int* dbg) {
+  for (;;) {
+    unsigned t = atomicAdd(&g_queue, 1u);
+    if (t >= (unsigned)n) return;
+    battle_one(st, monIdx, dyn, seeds, out, (int)t, true, dbgThread, dbg);
+  }
+}
+#endif

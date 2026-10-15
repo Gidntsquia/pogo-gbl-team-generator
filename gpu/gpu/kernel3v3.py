@@ -10,6 +10,7 @@ B_OUT = 24
 OUT_FIELDS = ["winner", "remA", "remB", "hp0", "hp1", "hp2", "hp3", "hp4", "hp5", "turns", "flags",
               "innerSims", "draws", "poolMax", "chargedUsed", "hpA", "hpB"]
 _cache = {}
+_mods = {}
 
 
 def source():
@@ -21,6 +22,11 @@ DEFAULT_DEFINES = ()
 if os.environ.get("POGO_GPU_KERNEL") == "v1":  # profiling only: the round-3 kernel (wide 28-byte states, pool 768) for A/B runs
     MAXQ, DEFAULT_DEFINES = 768, ("WIDE_POOL",)
 BLOCK = 32  # threads per block for every launch
+# EXPERIMENTAL (plans round 5), off by default: POGO_GPU_KERNEL=queue -> work-queue kernel; =warp -> one warp per battle for launches
+# up to POGO_GPU_WARP_BELOW battles (default 5000), thread per battle above.
+PROTO = os.environ.get("POGO_GPU_KERNEL", "")
+WARP_BELOW = int(os.environ.get("POGO_GPU_WARP_BELOW", "5000"))
+QUEUE_GRID_WARPS = 544  # 68 SMs x 8 resident warps at 254 registers (round 4)
 
 
 def get_kernel(real="float", maxq=None, maxrreg=None, defines=None):
@@ -35,6 +41,7 @@ def get_kernel(real="float", maxq=None, maxrreg=None, defines=None):
         opts = ("--std=c++14", "--fmad=false") + ((f"--maxrregcount={maxrreg}",) if maxrreg else ())
         mod = cp.RawModule(code=src, options=opts)
         _cache[key] = mod.get_function("battle3v3_kernel")
+        _mods[key] = mod
     return _cache[key]
 
 
@@ -49,6 +56,11 @@ def run_3v3(static, idx, dyn, seeds, real="float", block=None, chunk=2048, stack
     lanes > 1 (profiling prototype): that many threads run each battle in lockstep, one of them writes the row."""
     cp = require_cuda()
     block = block or BLOCK
+    queue = PROTO == "queue"
+    if PROTO == "warp" and lanes == 1 and idx.shape[0] <= WARP_BELOW:
+        lanes, block = 32, 64
+    if queue:
+        defines = tuple(DEFAULT_DEFINES if defines is None else defines) + ("QUEUE",)
     if lanes > 1:
         defines = tuple(DEFAULT_DEFINES if defines is None else defines) + ("LANES %d" % lanes,)
     k = get_kernel(real, maxq, maxrreg, defines)
@@ -64,7 +76,12 @@ def run_3v3(static, idx, dyn, seeds, real="float", block=None, chunk=2048, stack
         d_out = cp.zeros((hi - lo, B_OUT), dtype=cp.int32)
         d_dbg = cp.zeros((6000 * 5,), dtype=cp.int32)
         tt = -1 if trace is None or not (lo <= trace < hi) else trace - lo
-        k((((hi - lo) * lanes + block - 1) // block,), (block,), (d_st, d_idx, d_dyn, d_seed, d_out, np.int32(hi - lo), np.int32(tt), d_dbg))
+        grid = ((hi - lo) * lanes + block - 1) // block
+        if queue:
+            ptr = _mods[next(kk for kk in _mods if _cache[kk] is k)].get_global("g_queue")
+            cp.cuda.runtime.memset(ptr.ptr, 0, 4)
+            grid = min(grid, QUEUE_GRID_WARPS * 32 // block)
+        k((grid,), (block,), (d_st, d_idx, d_dyn, d_seed, d_out, np.int32(hi - lo), np.int32(tt), d_dbg))
         cp.cuda.Stream.null.synchronize()
         outs.append(cp.asnumpy(d_out))
         if tt >= 0:

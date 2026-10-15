@@ -139,7 +139,7 @@ per-step / per-generation time buckets (`node gpu/gpu-profile.mjs` renders `out/
 float32: ~99.8% winner agreement with the CPU engine. With no device, a dead sidecar or a start failure the run exits
 1 with one `gpu: <reason>` line, the last full generation's checkpoint stays valid, and the identical command resumes;
 `--gpu` is part of the run config, so resuming without it is refused. The MCP tools do not know `--gpu`.
-Report builder: `node gpu/gpu-ab.mjs agree|score [--v 2]|report`. Details: `docs/gpu-viability.md`.
+Experimental, off by default: `POGO_GPU_KERNEL=warp|queue`, `POGO_GPU_WARP_BELOW=N` (warp kernel for launches up to N battles; measured ×1.28 at 5k, below bar). Report builders: `node gpu/gpu-ab.mjs agree|score [--v 2]|report`, `node gpu/gpu-gap.mjs`. Details: `docs/gpu-viability.md`.
 `POGO_COMMUNITY_FILE=<path>` points the curated-team loader at another file. The recipe-ab A/B needs
 `POGO_COMMUNITY_FILE=data/archive/meta-teams-community-mega-great.json`: the live file is base Great League, which
 a mega cup filters to 0 curated teams. Check the startup line says `(N curated)` with N > 0.

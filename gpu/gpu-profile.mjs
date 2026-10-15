@@ -263,6 +263,7 @@ body{font:15px/1.5 system-ui,sans-serif;max-width:1200px;margin:2rem auto;paddin
 .concl{border:2px solid var(--line);padding:8px 14px;border-radius:6px}details{margin:.5rem 0}</style>
 <h1>Why --gpu gave x9.8, and what changed</h1>
 <p class="concl"><b>Conclusion:</b> ${esc(conclusion)}</p>
+<p>Round 5: <a href="gpu-gap.html">why the v2 run reached 724 b/s and not 1,500, and what would close the gap</a>.</p>
 
 <h2 id="s1">1. Where the time goes (R1)</h2>
 <h3>GPU-v1 run (from its log; the v1 code logged only these totals)</h3>${v1Table}

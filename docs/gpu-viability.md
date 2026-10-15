@@ -244,3 +244,21 @@ appear, no gain. Block size: 64 threads is best of 32–1024.
 | v1 kernel, share 0.004 (before) | 150.5 s | 152 re-runs |
 | + packed pool 2,048 (v2 kernel) | 121.6 s | 0 |
 | + share auto (v2 defaults) | 121.5 s | 0 |
+
+## Round 5: why v2 gave 724 b/s, not 1,500
+
+Report: `node gpu/gpu-gap.mjs` → `out/gpu-gap.html` (sections: causes, bounds, v1 reconciliation, literature, ideas,
+prototype results). Prototype benchmark: `cd gpu && uv run python -m gpu.gap_proto --dump ../out/gpu/dump-prof0`.
+
+- **The gap is the tail.** The v2 5-gen run did 1,338,568 battles in 1,846 s of step wall (725 b/s); 1,500 b/s needed
+  892 s, a gap of about 954 s. About 894 s of it is the launch tail: a launch lasts as long as its single longest battle
+  (one thread per battle), so small launches leave the GPU mostly idle. Per-launch fixed cost (0.163 s × 301 steps) and
+  CPU waiting (40 s) are minor.
+- **Ideas, predicted b/s:** fewer/bigger launches 923; warp-per-battle for small launches 799; overlap 741 (pairing
+  dependency between halving rounds); work queue 725 (the span already equals the longest battle, so a queue cannot
+  shorten it). Top two prototyped.
+- **Measured.** Warp kernel on the 5k slice: ×1.28 (below the ×1.3 bar, NO-GO; identical rows to v2; verify_3v3 100%,
+  verify_1v1 PASS). Bigger launches (`--halving-rounds 2`): ×1.65 on the 5k step inside a 15k launch (kernel GO); the
+  search effect is judged by the 5-gen run in the report. Queue kernel: smoke only, no gain.
+- Experimental flags (default off): `POGO_GPU_KERNEL=warp|queue`, `POGO_GPU_WARP_BELOW` (default 5000).
+- The verdict against 1,500 b/s stays FAIL until a run meets it.

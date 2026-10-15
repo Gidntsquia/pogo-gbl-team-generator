@@ -35,3 +35,5 @@ they don't say.
   share small (`auto`, ~95 a step); share 0.05 made 5 generations 84% slower. Every `--gpu` run writes
   `<out-dir>/gpu-profile.json`; `node gpu/gpu-profile.mjs` renders it. GPU kernel changes are checked
   with `cd gpu && uv run python -m gpu.verify_3v3` (100% winner, 0 flagged) and `gpu.verify_1v1`.
+- `--gpu` launch span equals the longest single battle (one thread per battle), so a work queue cannot shorten a launch;
+  only fewer/bigger launches or more parallelism per battle can (`out/gpu-gap.html`, `docs/gpu-viability.md` round 5).
