@@ -41,6 +41,7 @@ scripts/sim.sh your-collection.csv --name mine --threads 4 --hours 1
 
 The report is written to `out/evolve-mine/my-teams-evolve.md` and `.html`.
 `fixtures/sample-pokegenie.csv` is a small collection for trying it out.
+With an NVIDIA GPU and `uv`, `node scripts/evolve.mjs <csv> --gpu` runs battles on the GPU too (see RUNBOOK.md).
 
 Other commands:
 ```

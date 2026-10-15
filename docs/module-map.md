@@ -62,7 +62,7 @@ files.
 | `scripts/build-evolution-costs.mjs` | regenerates `src/cost/evolutionCandy.json` |
 | `scripts/bench.mjs`, `chart-top-teams.mjs`, `fitness-sides.mjs`, `render-report.mjs` | benchmarks, analyses and report re-rendering, not part of the pipeline |
 | `scripts/symmetry-gap.mjs` | `run --label L` / `report --label L [--minus B]`: multi-seed candidate-vs-opponent fitness gap for meta-vs-meta runs; `report` exits 0 when within 0.02 |
-| `gpu/` | GPU viability prototype (Python/uv, cupy CUDA kernels for 1v1 and 3v3 battles incl. form changers, verifiers, benchmark, binary + JSON sidecar, inner-sim scheduler and driver, 5,000-battle slice timing; `describe.mjs` shared mon descriptors); not wired into the CLI, see `docs/gpu-viability.md` |
+| `gpu/` | GPU viability prototype (Python/uv, cupy CUDA kernels for 1v1 and 3v3 battles incl. form changers, verifiers, benchmark, binary + JSON sidecar, inner-sim scheduler and driver, 5,000-battle slice timing; `describe.mjs` shared mon descriptors); wired into `evolve.mjs --gpu` via `src/engine/gpuExecutor.js` (GPU+CPU battle executor); `gpu-ab.mjs` builds the CPU-vs-GPU A/B report; see `docs/gpu-viability.md` |
 
 ## Data
 

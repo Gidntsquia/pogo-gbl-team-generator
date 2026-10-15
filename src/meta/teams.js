@@ -237,7 +237,7 @@ function parseCommunityMember(member) {
  */
 function readCommunityEntries(ctx, opts) {
   if (opts.communityEntries) return opts.communityEntries;
-  const filePath = opts.communityFile ?? DEFAULT_COMMUNITY_FILE;
+  const filePath = opts.communityFile ?? process.env.POGO_COMMUNITY_FILE ?? DEFAULT_COMMUNITY_FILE;
   if (!existsSync(filePath)) return [];
   const raw = JSON.parse(readFileSync(filePath, 'utf8'));
   const fileCup = raw.cup ?? DEFAULT_CUP;

@@ -44,6 +44,7 @@ const monKey = (m) => `${m.speciesId}|${m.ivs.atk},${m.ivs.def},${m.ivs.hp}|${m.
  *   `sidecar` (tests): object with setStatic(table) and batch3(packed) -> {out, cols, kernelUs, pieces}.
  */
 export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_GPU_CPU_SHARE, log = () => {}, sidecar = null }) {
+  let memoHitsNext = 0; // memo hits of the step about to run (set by evaluateTeamsInOrder via noteMemoHits)
   if (!(cpuShare >= 0 && cpuShare <= 1)) throw new UserError(`--gpu-cpu-share must be in [0,1], got ${cpuShare}`, 'use e.g. 0.015');
   let sc = sidecar;
   if (!sc) {
@@ -87,7 +88,7 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       const r = await sc.batch3(packed);
       part.forEach((_, i) => {
         if (r.out[i * r.cols + 10] & INVALID) flaggedIdx.push(lo + i);
-        else results[lo + i] = { ok: true, value: rowToResult(r.out, i * r.cols) };
+        else results[lo + i] = { ok: true, value: rowToResult(r.out, i * r.cols), viaGpu: true };
       });
     }
     return { results, flaggedIdx, ms: performance.now() - t0 };
@@ -97,7 +98,9 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
   return {
     info,
     /** @returns {Promise<Array<{ok:boolean, value?:object, error?:object}>>} slots in spec order. */
+    noteMemoHits(n) { memoHitsNext = n; },
     async run(specs) {
+      const memo = memoHitsNext; memoHitsNext = 0;
       const gpuI = [], cpuI = [];
       specs.forEach((_, i) => (isCpuIndex(i, cpuShare) ? cpuI : gpuI).push(i));
       const t0 = performance.now();
@@ -123,7 +126,7 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       }
       totals.steps += 1; totals.gpuBattles += gpuI.length - redo.length; totals.cpuBattles += cpuI.length + redo.length;
       totals.flagged += redo.length; totals.gpuMs += g.ms; totals.cpuMs += cpuMs;
-      log(`evolve: gpu step -- ${gpuI.length - redo.length} battles on GPU in ${(g.ms / 1000).toFixed(1)}s, ${cpuI.length + redo.length} on CPU in ${(cpuMs / 1000).toFixed(1)}s` +
+      log(`evolve: gpu step -- ${memo} memo hits, ${gpuI.length - redo.length} battles on GPU in ${(g.ms / 1000).toFixed(1)}s, ${cpuI.length + redo.length} on CPU in ${(cpuMs / 1000).toFixed(1)}s` +
         `${redo.length ? ` (${redo.length} GPU rows flagged invalid, re-run on CPU)` : ''}, wall ${((performance.now() - t0) / 1000).toFixed(1)}s`);
       return slots;
     },

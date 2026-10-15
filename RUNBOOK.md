@@ -126,6 +126,18 @@ candidates before because it is too expensive to build; opponents keep it).
 Add `--hours H` when the user gives a time budget; the 8 h marisa run used
 `--hours 7.75` (465 min) to leave room for the final pass.
 
+### GPU battles (`--gpu`, opt-in, plain `evolve.mjs` only)
+
+`node scripts/evolve.mjs ... --gpu [--gpu-cpu-share 0.004]` sends each step's uncached 3v3 battles to the CUDA
+sidecar (`gpu/`, needs `uv` and an NVIDIA GPU) while the CPU workers run a deterministic share
+(`--gpu-cpu-share`, default 0.015) of the same batch; the memo stays in front and both sides write the same
+cache keys. Each step logs `gpu step -- N memo hits, N battles on GPU in Xs, N on CPU in Xs`. Results are float32:
+~99.9% winner agreement with the CPU engine. With no device, a dead sidecar or a start failure the run exits 1 with
+one `gpu: <reason>` line, the last full generation's checkpoint stays valid, and the identical command resumes;
+`--gpu` is part of the run config, so resuming without it is refused. The MCP tools do not know `--gpu`.
+Report builder: `node gpu/gpu-ab.mjs agree|score|report`. Details: `docs/gpu-viability.md`.
+`POGO_COMMUNITY_FILE=<path>` points the curated-team loader at another file (the A/B used the archived mega pool).
+
 ### Bare `evolve.mjs` recipes (no curated opponents)
 
 `sim.sh` fixes the opponent and elite settings, so a run with no curated teams uses bare

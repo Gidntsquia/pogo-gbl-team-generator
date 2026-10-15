@@ -142,8 +142,10 @@ export async function evaluateTeamsInOrder(ctx, params) {
   const pendingSpecs = [];
   const pendingBattles = []; // serial-mode inputs, parallel to pendingSpecs
   const queued = new Set();
+  let memoHits = 0; // distinct pairings answered by the memo (reported by the GPU executor's step log)
   function enqueue(key, teamASpec, leadA, teamBSpec, leadB, teamAPokemon, teamBPokemon) {
-    if (cache.get(key) !== undefined || queued.has(key)) return;
+    if (queued.has(key)) return;
+    if (cache.get(key) !== undefined) { memoHits += 1; queued.add(key); return; }
     queued.add(key);
     pendingKeys.push(key);
     pendingSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
@@ -171,6 +173,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
     let slots = [];
     if (pendingSpecs.length > 0) {
       try {
+        executor.noteMemoHits?.(memoHits);
         slots = await executor.run(pendingSpecs);
       } catch (err) {
         if (err.gpuFatal) throw err; // GPU sidecar failure: stop the run (last checkpoint stays valid), never score it as battle errors
