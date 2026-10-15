@@ -6,6 +6,17 @@ import { runGeneration } from './generation.js';
 import { buildResult, closeExecutor, writeOutputs } from './output.js';
 import { saveBattleCacheFile } from './cache.js';
 
+/** One startup line under --gpu: device name, memory, batch limit, cpu share. */
+async function gpuStartupLine(share) {
+  const { execFileSync } = await import('node:child_process');
+  const { GPU_BATCH_LIMIT } = await import('../engine/gpuExecutor.js');
+  let dev = 'CUDA device';
+  try {
+    dev = execFileSync('nvidia-smi', ['--query-gpu=name,memory.total', '--format=csv,noheader'], { encoding: 'utf8' }).split('\n')[0].trim();
+  } catch { /* name unavailable; the sidecar already proved a device exists */ }
+  return `evolve: gpu on -- ${dev}, batch limit ${GPU_BATCH_LIMIT} battles per message (sidecar halves on out-of-memory), cpu share ${share}`;
+}
+
 /**
  * Run (or resume) the whole search on one collection: setup, generation loop,
  * final pass, reports. Checkpoints land in `outDir` after every generation.
@@ -19,9 +30,15 @@ export async function runEvolution(csvPath, opts = {}) {
   const { config, outDir, log, threads, deadlineMs, ctx, battleCache } = setup;
   const threaded = typeof threads === 'number' && threads > 0;
   const profileDir = opts.profile ? outDir : undefined;
-  const executor = threaded
+  const cpuExecutor = threaded
     ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true, profileDir, cp: ctx.cp, cup: ctx.cup })
     : null;
+  let executor = cpuExecutor;
+  if (opts.gpu) {
+    const { createGpuExecutor } = await import('../engine/gpuExecutor.js');
+    executor = await createGpuExecutor({ ctx, cpuExecutor, cpuShare: config.gpuCpuShare, log });
+    log(await gpuStartupLine(config.gpuCpuShare));
+  }
   const env = { ...setup, opts, threaded, executor, profileDir };
 
   try {

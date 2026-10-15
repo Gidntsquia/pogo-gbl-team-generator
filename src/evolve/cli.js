@@ -48,6 +48,12 @@ Options:
                             --threads 1 for the serial reference mode, or
                             a value above 8 if the machine has memory to
                             spare                                        (default ${defaultThreadCount()} on this machine)
+  --gpu                   send each battle batch's uncached 3v3 pairings to the CUDA sidecar (gpu/, needs uv + an NVIDIA
+                            GPU) while the CPU workers run a --gpu-cpu-share fraction at the same time. Results are
+                            float32, not bit-identical to pvpoke (winner agrees ~99.8%), but a run is reproducible.
+                            Part of the run config: resume with the identical flags. A GPU failure exits 1 with a
+                            one-line "gpu: ..." reason. Requires --threads > 0
+  --gpu-cpu-share F       fraction of each batch the CPU workers take under --gpu  (default 0.015)
   --profile                capture a per-worker CPU profile (node:inspector)
                             spanning the whole run, written to
                             <out-dir>/worker-*.cpuprofile and
@@ -365,6 +371,7 @@ const NUMBER_FLAGS = [
   ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
   ['sampled-combats'], // unset = off; validated as 1/K below
   ['sampled-opponents'], // unset = off; positive integer K, validated below
+  ['gpu-cpu-share'], // unset = 0.015; only meaningful with --gpu
   ['hoeffding-confidence'], // unset = 0.1 (only meaningful with --hoeffding-races)
 ];
 
@@ -375,7 +382,7 @@ const STRING_FLAGS = [
 
 /** Switches. */
 const BOOLEAN_FLAGS = [
-  'profile', 'force-fresh', 'fixed-opponents', 'no-battle-cache', 'no-html', 'no-evolutions', 'meta-mode',
+  'profile', 'gpu', 'force-fresh', 'fixed-opponents', 'no-battle-cache', 'no-html', 'no-evolutions', 'meta-mode',
   'no-opponent-fitness-normalised', 'random-opponent-lead', 'hoeffding-races', 'no-hoeffding-races', 'check', 'help',
 ];
 
@@ -472,6 +479,7 @@ export function parseEvolveArgs(argv) {
     seed: values.seed ?? DEFAULTS.seed,
     threads: values.threads !== undefined ? parseInt0(values.threads, 'threads') : defaultThreadCount(),
     profile: !!values.profile,
+    gpu: !!values.gpu,
     seedFrom: values['seed-from'],
     forceFresh: !!values['force-fresh'],
     cup: values.cup ?? DEFAULTS.cup,
@@ -515,6 +523,7 @@ export function parseEvolveArgs(argv) {
       }
     }
   }
+  if (opts.gpu && !(opts.threads > 0)) throw usageError('--gpu requires --threads > 0', 'the CPU workers share each batch with the GPU; pass e.g. --threads 8');
   if (opts.sampledCombats && opts.hoeffdingRaces) {
     throw usageError('--sampled-combats and --hoeffding-races cannot be combined', 'drop one; sampled combats works with Halving on or off');
   }

@@ -173,6 +173,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
       try {
         slots = await executor.run(pendingSpecs);
       } catch (err) {
+        if (err.gpuFatal) throw err; // GPU sidecar failure: stop the run (last checkpoint stays valid), never score it as battle errors
         onLog?.(`battle batch error (whole generation's ${pendingSpecs.length} battles skipped): ${err.message}`);
         slots = new Array(pendingSpecs.length).fill({ ok: false, error: { message: err.message } });
       }

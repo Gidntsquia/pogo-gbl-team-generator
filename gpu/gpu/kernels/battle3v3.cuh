@@ -919,10 +919,13 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
   evalMatchup(&b, 0);
   evalMatchup(&b, 1);
   int guard = 0;
+  int leadFaintA = -1, leadFaintB = -1;   // teamBattle.js leadFaintTurnA/B: first turn the designated lead (slot 0 / 3) is at 0 hp
   while (remaining(&b, 0) > 0 && remaining(&b, 1) > 0 && (b.turns - 1) * 500 + b.chargedUsed * 9500 <= 240000) {
     if (guard++ > 5000) { b.flags |= F_GUARD; break; }
     step3(&b);
     drain(&b);
+    if (leadFaintA < 0 && b.mon[0].hp <= 0) leadFaintA = b.turns - 1;
+    if (leadFaintB < 0 && b.mon[3].hp <= 0) leadFaintB = b.turns - 1;
   }
   int remA = remaining(&b, 0), remB = remaining(&b, 1);
   int hpA = 0, hpB = 0;
@@ -933,5 +936,5 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
   o[0] = winner; o[1] = remA; o[2] = remB;
   for (int i = 0; i < 6; i++) o[3 + i] = imax(0, b.mon[i].hp);
   o[9] = b.turns - 1; o[10] = b.flags; o[11] = b.innerSims; o[12] = b.draws; o[13] = b.poolMax;
-  o[14] = b.chargedUsed; o[15] = hpA; o[16] = hpB; o[17] = b.ndbg;
+  o[14] = b.chargedUsed; o[15] = hpA; o[16] = hpB; o[17] = b.ndbg; o[18] = leadFaintA; o[19] = leadFaintB;
 }
