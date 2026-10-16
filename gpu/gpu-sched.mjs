@@ -57,7 +57,7 @@ function run5(dir) {
   const all = repDirs(dir).map((d) => run5one(d)).filter((x) => x && x.gens >= 5 && x.done);
   if (!all.length) return run5one(dir);
   const s = [...all].sort((x, y) => x.bps - y.bps), mid = s[(s.length - 1) >> 1];
-  return { ...mid, bps: median(s.map((x) => x.bps)), reps: all.map((x) => x.bps), min: s[0].bps, max: s.at(-1).bps };
+  return { ...mid, bps: median(s.map((x) => x.bps)), reps: all.map((x) => x.bps), first: all[0].dir === dir ? all[0].bps : null, min: s[0].bps, max: s.at(-1).bps };
 }
 /** One 5-gen run's stats from gpu-profile.json (step wall, battles) and the log (CPU battles per step). */
 function run5one(dir, maxGen = 5) {
@@ -68,7 +68,7 @@ function run5one(dir, maxGen = 5) {
   const log = txt(`${dir}.log`) ?? '';
   const cpu = [...log.matchAll(/gpu step -- .*?, (\d+) on CPU in/g)].map((m) => +m[1]);
   const gens = new Set(S.map((s) => s.gen)).size;
-  return { N, W, bps: N / W, steps: S.length, gens, cpuMax: cpu.length ? Math.max(...cpu) : null, cpuSteps: cpu.length, done: existsSync(`${dir}/evolve-DONE`) || gens >= maxGen };
+  return { dir, N, W, bps: N / W, steps: S.length, gens, cpuMax: cpu.length ? Math.max(...cpu) : null, cpuSteps: cpu.length, done: existsSync(`${dir}/evolve-DONE`) || gens >= maxGen };
 }
 function cmpV2(dir) {
   const out = [];
@@ -189,7 +189,7 @@ function summaryChart() {
   let g = `<text x="${P1[0]}" y="18" class="h">Idle GPU threads (lower = better)</text>
 <text x="${P1[0]}" y="36" class="sub"><tspan fill="var(--c0)">●</tspan> 5k launch   <tspan fill="var(--c1)">◆</tspan> 36k launch   line = range of ≥ 5 launches</text>
 <text x="${P2[0]}" y="18" class="h">5-gen run speed, battles/s (higher = better)</text>
-<text x="${P2[0]}" y="36" class="sub">bar = median run, ○ = each repeat run; dropped configs had no 5-gen run</text>`;
+<text x="${P2[0]}" y="36" class="sub">bar = median of (n) runs, ○ = each run, <tspan fill="var(--bad)">□</tspan> = first run (10-15 evening, slower in every step)</text>`;
   for (let v = 0; v <= 1.001; v += 0.25) g += `<line x1="${XI(v)}" x2="${XI(v)}" y1="${top - 6}" y2="${H - 26}" stroke="var(--line)"/><text x="${XI(v)}" y="${H - 10}" text-anchor="middle" class="sub">${v * 100}%</text>`;
   for (let v = 0; v <= BMAX; v += 400) g += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 26}" stroke="var(--line)"/><text x="${XB(v)}" y="${H - 10}" text-anchor="middle" class="sub">${n0(v)}</text>`;
   const ref = (v, c, t, anchor) => `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 26}" stroke="${c}" stroke-width="2" ${c === 'var(--bad)' ? '' : 'stroke-dasharray="5 3"'}/><text x="${XB(v) + (anchor === 'end' ? -4 : 4)}" y="${top - 2}" text-anchor="${anchor}" class="sub" style="fill:${c}">${t}</text>`;
@@ -207,10 +207,10 @@ function summaryChart() {
         : `<rect x="${XI(sl.idle_median) - 4.5}" y="${yy - 4.5}" width="9" height="9" transform="rotate(45 ${XI(sl.idle_median)} ${yy})" fill="${c}"><title>${pct(sl.idle_median)}</title></rect>`;
     });
     if (has5) {
-      g += `<rect x="${XB(0)}" y="${y - 9}" width="${XB(x.r5.bps) - XB(0)}" height="18" rx="3" fill="${isBest ? 'var(--c2)' : 'var(--c0)'}" opacity="${isBest ? 1 : 0.65}"/><text x="${XB(x.r5.bps) + 6}" y="${y + 4}" class="lbl" font-weight="${isBest ? 700 : 400}">${n0(x.r5.bps)}${x.r5.reps?.length > 1 ? ` <tspan class="sub">(${x.r5.reps.length} runs ${n0(x.r5.min)}–${n0(x.r5.max)})</tspan>` : ''}</text>`;
+      g += `<rect x="${XB(0)}" y="${y - 9}" width="${XB(x.r5.bps) - XB(0)}" height="18" rx="3" fill="${isBest ? 'var(--c2)' : 'var(--c0)'}" opacity="${isBest ? 1 : 0.65}"/><text x="${XB(Math.max(x.r5.bps, x.r5.max ?? 0)) + 8}" y="${y + 4}" class="lbl" font-weight="${isBest ? 700 : 400}">${n0(x.r5.bps)}${x.r5.reps?.length > 1 ? ` <tspan class="sub">(${x.r5.reps.length})</tspan>` : ''}</text>`;
       if (x.r5.reps?.length > 1) {
         g += `<line x1="${XB(x.r5.min)}" x2="${XB(x.r5.max)}" y1="${y}" y2="${y}" stroke="var(--fg)" stroke-width="2"/>`;
-        for (const v of x.r5.reps) g += `<circle cx="${XB(v)}" cy="${y}" r="3.5" fill="var(--bg)" stroke="var(--fg)" stroke-width="1.5"><title>${n0(v)} b/s</title></circle>`;
+        x.r5.reps.forEach((v, k) => { g += k === 0 && x.r5.first != null ? `<rect x="${XB(v) - 4}" y="${y - 4}" width="8" height="8" fill="var(--bg)" stroke="var(--bad)" stroke-width="1.5"><title>first run (2026-10-15 evening): ${n0(v)} b/s</title></rect>` : `<circle cx="${XB(v)}" cy="${y}" r="3.5" fill="var(--bg)" stroke="var(--fg)" stroke-width="1.5"><title>${n0(v)} b/s</title></circle>`; });
       }
     } else g += `<text x="${XB(0) + 6}" y="${y + 4}" class="sub">no 5-gen run</text>`;
   });
@@ -247,25 +247,28 @@ figure{margin:0}figcaption{font-size:13px;color:var(--mut)}svg.tl{width:100%;hei
 const OUT = 'out';
 const runsLike = (re) => readdirSync(OUT).filter((f) => re.test(f) && existsSync(`${OUT}/${f}/gpu-profile.json`)).map((f) => `${OUT}/${f}`);
 function bigLaunchChart() {
+  const reps = (re) => runsLike(re).map((d) => run5one(d)).filter((x) => x?.done).map((x) => x.bps);
   const groups = [
-    ['v2, normal launches', rows.find((x) => x.r.name === 'v2')?.r5?.reps ?? [], 'var(--c0)'],
-    ['slice + bin, normal', rows.find((x) => x.r.name === 'i3-bin')?.r5?.reps ?? [], 'var(--c2)'],
-    ['v2, bigger launches', runsLike(/^evolve-gpu6-h2-v2-r\d+$/).map((d) => run5one(d)).filter((x) => x?.done).map((x) => x.bps), 'var(--c0)'],
-    ['slice + bin, bigger', runsLike(/^evolve-gpu6-h2-slice-bin-r\d+$/).map((d) => run5one(d)).filter((x) => x?.done).map((x) => x.bps), 'var(--c2)'],
+    ['v2, halving 3 (normal)', rows.find((x) => x.r.name === 'v2')?.r5?.reps ?? [], 'var(--c0)', 0.45],
+    ['v2, halving 2', reps(/^evolve-gpu6-h2-v2-r\d+$/), 'var(--c0)', 0.75],
+    ['v2, full grid', reps(/^evolve-gpu6-h0-v2$/), 'var(--c0)', 1],
+    ['slice + bin, halving 3', rows.find((x) => x.r.name === 'i3-bin')?.r5?.reps ?? [], 'var(--c2)', 0.45],
+    ['slice + bin, halving 2', reps(/^evolve-gpu6-h2-slice-bin-r\d+$/), 'var(--c2)', 0.75],
+    ['slice + bin, full grid', reps(/^evolve-gpu6-h0-slice-bin$/), 'var(--c2)', 1],
   ];
-  if (!groups[2][1].length && !groups[3][1].length) return '';
+  if (!groups.slice(1).some((x) => x[1].length && x !== groups[3])) return '';
   const LBL = 170, X0 = LBL + 16, X1 = 760, BMAX = 1600, XB = (v) => X0 + (v / BMAX) * (X1 - X0), rh = 34, top = 44, H = top + groups.length * rh + 30;
-  let g = `<text x="${X0}" y="18" class="h">5-gen speed, battles/s: normal vs bigger launches (--halving-rounds 2)</text>`;
+  let g = `<text x="${X0}" y="18" class="h">5-gen speed, battles/s: fewer halving rounds = fewer, bigger GPU launches</text>`;
   for (let v = 0; v <= BMAX; v += 400) g += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 24}" stroke="var(--line)"/><text x="${XB(v)}" y="${H - 8}" text-anchor="middle" class="sub">${n0(v)}</text>`;
   g += `<line x1="${XB(TARGET)}" x2="${XB(TARGET)}" y1="${top - 6}" y2="${H - 24}" stroke="var(--bad)" stroke-width="2"/><text x="${XB(TARGET) - 4}" y="${top - 10}" text-anchor="end" class="sub" style="fill:var(--bad)">target 1,500</text>`;
-  groups.forEach(([name, v, c], i) => {
+  groups.forEach(([name, v, c, op], i) => {
     const y = top + i * rh + rh / 2;
     g += `<text x="${LBL}" y="${y + 4}" text-anchor="end" class="lbl">${name}</text>`;
     if (!v.length) { g += `<text x="${X0 + 6}" y="${y + 4}" class="sub">not run yet</text>`; return; }
     const m = median(v);
-    g += `<rect x="${X0}" y="${y - 9}" width="${XB(m) - X0}" height="18" rx="3" fill="${c}" opacity="${i >= 2 ? 1 : 0.45}"/>`;
+    g += `<rect x="${X0}" y="${y - 9}" width="${XB(m) - X0}" height="18" rx="3" fill="${c}" opacity="${op}"/>`;
     for (const b of v) g += `<circle cx="${XB(b)}" cy="${y}" r="3.5" fill="var(--bg)" stroke="var(--fg)" stroke-width="1.5"><title>${n0(b)} b/s</title></circle>`;
-    g += `<text x="${XB(Math.max(...v)) + 8}" y="${y + 4}" class="lbl">${n0(m)} <tspan class="sub">(${v.length} runs)</tspan></text>`;
+    g += `<text x="${XB(Math.max(...v)) + 8}" y="${y + 4}" class="lbl">${n0(m)} <tspan class="sub">(${v.length} run${v.length > 1 ? 's' : ''})</tspan></text>`;
   });
   return `<svg viewBox="0 0 900 ${H}" class="fig" role="img" aria-label="bigger launches">${g}</svg>`;
 }
@@ -276,25 +279,47 @@ const perGen = (dir) => {
   return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([gen, e]) => ({ gen, bps: e.n / e.w, n: e.n }));
 };
 function longRunChart() {
-  const L = [['v2 (old kernel)', perGen(`${OUT}/evolve-gpu6-g20-v2`), 'var(--c0)'], ['slice + bin', perGen(`${OUT}/evolve-gpu6-g20-slice-bin`), 'var(--c2)']];
+  const NAME = { v2: ['v2 (old kernel)', 'var(--c0)'], slice: ['slice', 'var(--c3)'], 'slice-bin': ['slice + bin', 'var(--c2)'], 'h2-v2': ['v2, halving 2', 'var(--c1)'], 'h2-slice-bin': ['slice + bin, halving 2', 'var(--bad)'] };
+  const L = runsLike(/^evolve-gpu6-g20-/).map((d) => { const m = d.match(/g20-(.+?)(-r\d+)?$/); return [`${NAME[m[1]]?.[0] ?? m[1]}${m[2] ? ` (${m[2].slice(1)})` : ''}`, perGen(d), NAME[m[1]]?.[1] ?? 'var(--mut)', !!m[2]]; })
+    .filter((x) => x[1].length).sort((a, b) => a[0].localeCompare(b[0]));
   if (!L.some((x) => x[1].length)) return '';
-  const G = Math.max(...L.map((x) => x[1].length)), YMAX = 1600, X0 = 60, X1 = 860, Y0 = 250, Y1 = 40;
+  const G = Math.max(...L.map((x) => x[1].length)), YMAX = 1600, X0 = 60, X1 = 860, Y1 = 40 + L.length * 18, Y0 = Y1 + 210;
   const X = (gen) => X0 + (gen / Math.max(1, G - 1)) * (X1 - X0), Y = (v) => Y0 - (v / YMAX) * (Y0 - Y1);
-  let g = `<text x="${X0}" y="18" class="h">Speed per generation over a 20-gen run, battles/s</text>`;
+  let g = `<text x="${X0}" y="18" class="h">Speed per generation over 20-gen runs, battles/s (dashed = repeat run)</text>`;
   for (let v = 0; v <= YMAX; v += 400) g += `<line x1="${X0}" x2="${X1}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${X0 - 6}" y="${Y(v) + 4}" text-anchor="end" class="sub">${n0(v)}</text>`;
   for (let k = 0; k < G; k += G > 10 ? 2 : 1) g += `<text x="${X(k)}" y="${Y0 + 18}" text-anchor="middle" class="sub">${k}</text>`;
   g += `<text x="${(X0 + X1) / 2}" y="${Y0 + 36}" text-anchor="middle" class="sub">generation</text>`;
   g += `<line x1="${X0}" x2="${X1}" y1="${Y(TARGET)}" y2="${Y(TARGET)}" stroke="var(--bad)" stroke-width="2"/><text x="${X1}" y="${Y(TARGET) - 5}" text-anchor="end" class="sub" style="fill:var(--bad)">target 1,500</text>`;
-  L.forEach(([name, pts, c], i) => {
+  L.forEach(([name, pts, c, rep], i) => {
     if (!pts.length) return;
-    g += `<polyline fill="none" stroke="${c}" stroke-width="2.5" points="${pts.map((p) => `${X(p.gen)},${Y(p.bps)}`).join(' ')}"/>`;
+    g += `<polyline fill="none" stroke="${c}" stroke-width="${rep ? 1.5 : 2.5}" ${rep ? 'stroke-dasharray="5 3"' : ''} points="${pts.map((p) => `${X(p.gen)},${Y(p.bps)}`).join(' ')}"/>`;
     for (const p of pts) g += `<circle cx="${X(p.gen)}" cy="${Y(p.bps)}" r="3" fill="${c}"><title>gen ${p.gen}: ${n0(p.bps)} b/s (${n0(p.n)} battles)</title></circle>`;
     const tot = sum(pts, (p) => p.n) / sum(pts, (p) => p.n / p.bps);
-    g += `<text x="${X0 + 10}" y="${Y1 + 4 + i * 18}" class="lbl" style="fill:${c}">● ${name}: ${n0(tot)} b/s over ${pts.length} gens</text>`;
+    g += `<text x="${X0 + 10}" y="${34 + i * 18}" class="lbl" style="fill:${c}">● ${name}: ${n0(tot)} b/s over ${pts.length} gens${pts.length < 20 ? ' (running)' : ''}</text>`;
   });
   return `<svg viewBox="0 0 900 ${Y0 + 46}" class="fig" role="img" aria-label="20-gen run speed per generation">${g}</svg>`;
 }
-const extraCharts = [bigLaunchChart(), longRunChart()].filter(Boolean);
+/** Step wall per GPU step (gens 0-4), median over repeat runs: where the old and new kernel spend the time. */
+function stepChart() {
+  const per = (dir) => repDirs(dir).map((d) => rd(`${d}/gpu-profile.json`)?.steps?.filter((st) => st.gen !== 'final')).filter((S) => S?.length === 15);
+  const A = per(`${OUT}/evolve-gpu6-v2-share0`), B = per(`${OUT}/evolve-gpu6-slice-bin`);
+  if (A.length < 2 || B.length < 2) return '';
+  const med = (R) => R[0].map((st, k) => ({ gen: st.gen, n: st.n, w: median(R.map((S) => S[k].wall)) }));
+  const a = med(A), b = med(B), WMAX = Math.ceil(Math.max(...a.map((x) => x.w)) / 4) * 4;
+  const X0 = 50, X1 = 880, Y0 = 230, Y1 = 50, cw = (X1 - X0) / a.length, Y = (v) => Y0 - (v / WMAX) * (Y0 - Y1);
+  let g = `<text x="${X0}" y="18" class="h">Seconds per GPU step, gens 0–4 (median of ${A.length} / ${B.length} runs)</text>
+<text x="${X0}" y="36" class="sub"><tspan fill="var(--c0)">■</tspan> v2 (old kernel) ${n1(sum(a, (x) => x.w))} s total   <tspan fill="var(--c2)">■</tspan> slice + bin ${n1(sum(b, (x) => x.w))} s total   ·   under each pair: battles in the step</text>`;
+  for (let v = 0; v <= WMAX; v += 4) g += `<line x1="${X0}" x2="${X1}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${X0 - 6}" y="${Y(v) + 4}" text-anchor="end" class="sub">${v} s</text>`;
+  a.forEach((x, k) => {
+    const x0 = X0 + k * cw + 4, bw = (cw - 10) / 2;
+    g += `<rect x="${x0}" y="${Y(x.w)}" width="${bw}" height="${Y0 - Y(x.w)}" fill="var(--c0)"><title>v2: ${n1(x.w)} s, ${n0(x.n)} battles</title></rect>`;
+    g += `<rect x="${x0 + bw + 2}" y="${Y(b[k].w)}" width="${bw}" height="${Y0 - Y(b[k].w)}" fill="var(--c2)"><title>slice + bin: ${n1(b[k].w)} s (×${n2(x.w / b[k].w)} faster)</title></rect>`;
+    g += `<text x="${x0 + bw}" y="${Y0 + 14}" text-anchor="middle" class="sub">${(x.n / 1000).toFixed(x.n < 10000 ? 1 : 0)}k</text>`;
+    if (k === 0 || a[k - 1].gen !== x.gen) g += `<text x="${x0}" y="${Y0 + 30}" class="sub">gen ${x.gen}</text>`;
+  });
+  return `<svg viewBox="0 0 900 ${Y0 + 40}" class="fig" role="img" aria-label="seconds per GPU step">${g}</svg>`;
+}
+const extraCharts = [stepChart(), bigLaunchChart(), longRunChart()].filter(Boolean);
 const extraHtml = extraCharts.length ? `<h2 id="extra">Extra runs</h2>
 <p class="mut">Same command and seed as the 5-gen runs. "Bigger launches" = <code>--halving-rounds 2</code> (fewer, larger GPU steps; it also changes which teams the search keeps). The 20-gen run shows whether the speed holds as the population changes.</p>
 ${extraCharts.join('\n')}` : '';
