@@ -127,7 +127,7 @@ const xmax = (size) => Math.max(...shown.map((n) => sl(benches[n], size)?.span_m
 const charts = shown.map((n) => {
   const b = benches[n], s5 = sl(b, 5000), s36 = sl(b, 36000);
   const st = Object.keys(s36?.launches[0]?.timeline ?? {}).length;
-  return `<div class="tlrow"><h3>${esc(iters.rows.find((r) => r.name === n)?.label ?? n)} <small><code>${esc(flags(b.cfg))}</code></small></h3>
+  return `<div class="tlrow"><h4>${esc(iters.rows.find((r) => r.name === n)?.label ?? n)} <small><code>${esc(flags(b.cfg))}</code></small></h4>
 <div class="tlpair"><figure>${chart(b, 5000, xmax(5000))}<figcaption>5k slice: idle ${n3(s5?.idle_median)} (${n3(s5?.idle_min)}–${n3(s5?.idle_max)}), span ${n2(s5?.span_median_s)} s</figcaption></figure>
 <figure>${chart(b, 36000, xmax(36000))}<figcaption>36k slice: idle ${n3(s36?.idle_median)} (${n3(s36?.idle_min)}–${n3(s36?.idle_max)}), span ${n2(s36?.span_median_s)} s${st > 1 ? `; ${st} streams stacked (colours)` : ''}</figcaption></figure></div></div>`;
 }).join('\n');
@@ -164,11 +164,62 @@ const ov = best ? cmpV2(best.r.run) : [];
 const ovBase = base ? cmpV2(base.r.run) : [];
 const conc = iters.conclusion ?? 'pending: the iteration loop has not finished.';
 
-const css = `:root{--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f5f7fa;--ok:#157347;--bad:#b42318;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}}
-:root[data-theme="dark"]{--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}
-body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1150px;padding:16px}
-h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:1rem;margin:1.2rem 0 .3rem}
+// ---------------------------------------------------------------- picture-first summary (amendment 2)
+const SHORT = { v2: 'v2 (old kernel)', 'i1-handoff-T64': 'slice, handoff', 'i1-requeue-T64': 'slice, requeue', 'i2-requeue-spread': 'slice + spread', 'i3-bin': '+ length binning',
+  'i4-streams-v2': 'v2 + 2 streams', 'i5-streams-slice': 'slice + 2 streams', 'i6-ahead': 'slice + move-ahead', 'i7-handoff-spread': 'handoff + spread', 'i8-requeue-nospread': 'slice, spread off', 'i9-all-on': 'bin + streams + ahead' };
+function summaryChart() {
+  const R = rows.filter((x) => benches[x.r.name]);
+  const rh = 30, top = 70, H = top + R.length * rh + 34;
+  const LBL = 190, P1 = [LBL + 14, 530], P2 = [610, 1110];
+  const XI = (v) => P1[0] + v * (P1[1] - P1[0]);
+  const BMAX = 1600, XB = (v) => P2[0] + (v / BMAX) * (P2[1] - P2[0]);
+  let g = `<text x="${P1[0]}" y="18" class="h">Idle GPU threads (lower = better)</text>
+<text x="${P1[0]}" y="36" class="sub"><tspan fill="var(--c0)">●</tspan> 5k launch   <tspan fill="var(--c1)">◆</tspan> 36k launch   line = range of ≥ 5 launches</text>
+<text x="${P2[0]}" y="18" class="h">5-gen run speed, battles/s (higher = better)</text>
+<text x="${P2[0]}" y="36" class="sub">dropped configs had no 5-gen run</text>`;
+  for (let v = 0; v <= 1.001; v += 0.25) g += `<line x1="${XI(v)}" x2="${XI(v)}" y1="${top - 6}" y2="${H - 26}" stroke="var(--line)"/><text x="${XI(v)}" y="${H - 10}" text-anchor="middle" class="sub">${v * 100}%</text>`;
+  for (let v = 0; v <= BMAX; v += 400) g += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 26}" stroke="var(--line)"/><text x="${XB(v)}" y="${H - 10}" text-anchor="middle" class="sub">${n0(v)}</text>`;
+  const ref = (v, c, t, anchor) => `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 26}" stroke="${c}" stroke-width="2" ${c === 'var(--bad)' ? '' : 'stroke-dasharray="5 3"'}/><text x="${XB(v) + (anchor === 'end' ? -4 : 4)}" y="${top - 2}" text-anchor="${anchor}" class="sub" style="fill:${c}">${t}</text>`;
+  g += ref(TARGET, 'var(--bad)', 'target', 'start') + ref(BEST_R5, 'var(--mut)', 'round 5', 'end') + ref(X10, 'var(--mut)', '×10 CPU', 'start');
+  R.forEach((x, i) => {
+    const y = top + i * rh + rh / 2, isBest = best && x.r.name === best.r.name, has5 = x.r5 && x.r5.gens >= 5;
+    const dim = !x.r.kept && !has5;
+    g += `<rect x="0" y="${y - rh / 2}" width="1170" height="${rh}" fill="${i % 2 ? 'transparent' : 'var(--stripe)'}"/>`;
+    g += `<text x="${LBL}" y="${y + 4}" text-anchor="end" class="lbl" ${dim ? 'fill="var(--mut)"' : ''}>${isBest ? '★ ' : ''}${esc(SHORT[x.r.name] ?? x.r.label ?? x.r.name)}</text>`;
+    [[x.s5, 'var(--c0)', 'c'], [x.s36, 'var(--c1)', 'd']].forEach(([sl, c, shape], k) => {
+      if (!sl) return;
+      const yy = y + (k ? 5 : -5);
+      g += `<line x1="${XI(sl.idle_min)}" x2="${XI(sl.idle_max)}" y1="${yy}" y2="${yy}" stroke="${c}" stroke-width="4" opacity="0.4"/>`;
+      g += shape === 'c' ? `<circle cx="${XI(sl.idle_median)}" cy="${yy}" r="5" fill="${c}"><title>${pct(sl.idle_median)}</title></circle>`
+        : `<rect x="${XI(sl.idle_median) - 4.5}" y="${yy - 4.5}" width="9" height="9" transform="rotate(45 ${XI(sl.idle_median)} ${yy})" fill="${c}"><title>${pct(sl.idle_median)}</title></rect>`;
+    });
+    if (has5) {
+      g += `<rect x="${XB(0)}" y="${y - 9}" width="${XB(x.r5.bps) - XB(0)}" height="18" rx="3" fill="${isBest ? 'var(--c2)' : 'var(--c0)'}" opacity="${isBest ? 1 : 0.65}"/><text x="${XB(x.r5.bps) + 6}" y="${y + 4}" class="lbl" font-weight="${isBest ? 700 : 400}">${n0(x.r5.bps)}</text>`;
+    } else g += `<text x="${XB(0) + 6}" y="${y + 4}" class="sub">no 5-gen run</text>`;
+  });
+  return `<svg viewBox="0 0 1170 ${H}" class="fig" role="img" aria-label="idle share and 5-gen b/s per configuration">${g}</svg>`;
+}
+const bS5 = best ? best.s5 : null, bS36 = best ? best.s36 : null;
+const dropped = rows.filter((x) => !x.r.kept && benches[x.r.name]).map((x) => SHORT[x.r.name] ?? x.r.name);
+const keyLines = best ? [
+  ['Best config', `${esc(SHORT[best.r.name] ?? best.r.name)} <small><code>${esc(flags(benches[best.r.name]?.cfg))}</code></small>`],
+  ['5-gen speed', `<b>${n0(best.r5.bps)} b/s</b>${base ? ` (old kernel at same CPU share: ${n0(base.r5.bps)} → ×${n2(best.r5.bps / base.r5.bps)})` : ''}`],
+  ['vs 1,500 target', `${tag(best.r5.bps >= TARGET)} — ${n0((best.r5.bps / TARGET) * 100)}% of the way`],
+  [`vs ×10 CPU (${n0(X10)})`, tag(best.r5.bps >= X10)],
+  ['Idle left', `5k launch ${pct(bS5?.idle_median)} (too few battles to fill the GPU) · 36k launch ${pct(bS36?.idle_median)} (waiting on the longest battles)`],
+  ['Did not help', `${esc(dropped.join(', '))} (dropped: idle went up, or a sibling did better)`],
+  ['Next step', 'put several small steps into one launch on this kernel; then re-add the CPU share'],
+] : [['Status', 'pending: no kept configuration has a finished 5-gen run']];
+const summaryHtml = `${summaryChart()}
+<dl class="keys">${keyLines.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+
+const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f5f7fa;--ok:#157347;--bad:#b42318;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4;--stripe:#eef1f5}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea;--stripe:#191d24}}
+:root[data-theme="dark"]{--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea;--stripe:#191d24}
+a{color:var(--link)}body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1150px;padding:16px}
+h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:1.1rem;margin:1.6rem 0 .4rem}h4{font-size:.95rem;margin:1rem 0 .3rem}
+svg.fig{width:100%;height:auto;background:var(--card);border-radius:6px;margin:.5rem 0}svg.fig text{fill:var(--fg);font-size:13px}svg.fig .h{font-weight:700;font-size:14px}svg.fig .sub{fill:var(--mut);font-size:12px}
+dl.keys{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:1rem 0;font-size:16px}dl.keys dt{font-weight:700}dl.keys dd{margin:0}@media(max-width:600px){dl.keys{grid-template-columns:1fr}dl.keys dd{margin-bottom:6px}}details{margin:.5rem 0}summary{cursor:pointer;color:var(--mut)}
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:14px}th,td{border:1px solid var(--line);padding:5px 7px;text-align:left;vertical-align:top}th{background:var(--card)}
 .pass{color:var(--ok);font-weight:700}.fail{color:var(--bad);font-weight:700}.na{color:var(--mut)}small,.mut{color:var(--mut)}pre{background:var(--card);padding:8px;overflow-x:auto;white-space:pre-wrap}
 .box{background:var(--card);border-left:4px solid var(--c0);padding:10px 14px;margin:1rem 0}
@@ -176,41 +227,43 @@ h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);paddi
 figure{margin:0}figcaption{font-size:13px;color:var(--mut)}svg.tl{width:100%;height:auto;background:var(--card);border-radius:4px}svg.tl text{font-size:10px;fill:var(--mut)}`;
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU Scheduler Round 6</title><style>${css}</style></head><body>
-<h1>GPU round 6: time-sliced work queue and load balancing</h1>
-<p class="mut">Built by <code>node gpu/gpu-sched.mjs</code> from <code>${SCHED}/*.json</code> and the 5-gen run logs. See also <a href="gpu-gap.html">why v2 missed 1,500 b/s</a> and <a href="recipe-ab-gpu.html">the CPU-vs-GPU A/B page</a>.
-Idle share of a launch = 1 − (thread-busy time ÷ (resident threads × launch span)), from per-battle <code>%globaltimer</code> stamps; resident threads = ${n0(v2b?.slices[0]?.threads)} (68 SMs × 8 warps × 32 lanes at 254–255 registers). A warp-mode segment counts all 32 lanes as busy.</p>
+<h1>GPU round 6: does a work queue make the GPU faster?</h1>
+<p class="mut">Built by <code>node gpu/gpu-sched.mjs</code>. Related: <a href="gpu-gap.html">why v2 missed 1,500 b/s</a> · <a href="recipe-ab-gpu.html">CPU-vs-GPU A/B page</a>.</p>
+${summaryHtml}
 
-<div class="box"><b>Conclusion.</b> ${conc}</div>
+<h2 id="details">Details</h2>
+<p class="mut">Idle share = 1 − (thread-busy time ÷ (${n0(v2b?.slices[0]?.threads)} resident threads × launch span)), from per-battle <code>%globaltimer</code> stamps.</p>
+<details><summary>Full conclusion text</summary><p>${conc}</p></details>
 
-<h2 id="verdict">Verdict</h2>
+<h3 id="verdict">Verdict</h3>
 ${best ? table(['Config', '5-gen b/s', 'vs 1,500 b/s', `vs ×10 CPU (${n0(X10)} b/s)`, 'vs v2 at share 0', `vs round-5 best (${n0(BEST_R5)})`, 'CPU battles per step'], [[esc(best.r.label ?? best.r.name), `<b>${n0(best.r5.bps)}</b>`, tag(best.r5.bps >= TARGET), tag(best.r5.bps >= X10), base ? `×${n2(best.r5.bps / base.r5.bps)} (${n0(base.r5.bps)})` : 'n/a', `×${n2(best.r5.bps / BEST_R5)}`, best.r5.cpuMax == null ? 'n/a' : `max ${best.r5.cpuMax} over ${best.r5.cpuSteps} steps`]]) : '<p class="na">pending: no kept configuration has a finished 5-gen run.</p>'}
 <p>Verdict on the 1,500 b/s bar: ${tag(best ? best.r5.bps >= TARGET : false)}${best && best.r5.bps < TARGET ? ' (stays FAIL until a run meets it)' : ''}. No 100-gen run this round.</p>
 
-<h2 id="iter">Iterations</h2>
+<h3 id="iter">Iterations</h3>
 <p class="mut">≥ 5 timed launches per slice; median with min–max beneath. Kept = median idle share lower on both slices, or lower on one and not higher on the other (vs the kept config before it). “rows = v2”: every launch's result rows equal v2's row for row. Stop rule: two consecutive iterations each improving the 5-gen b/s (or idle share, when no 5-gen run was warranted) by under 5%.</p>
 ${table(['#', 'Config', 'Flags', 'Idle 5k', 'Idle 36k', 'Kernel b/s 5k', 'Kernel b/s 36k', 'Span 5k', 'Span 36k', 'Verify', '5-gen run', 'Kept / why'], rows.map((x) => x.cells))}
 ${iters.stop ? `<p><b>Stop rule:</b> ${esc(iters.stop)}</p>` : ''}
 
-<h2 id="tl">Per-launch thread occupancy</h2>
+<h3 id="tl">Per-launch thread occupancy</h3>
 <p class="mut">Y = share of the ${n0(v2b?.slices[0]?.threads)} resident threads busy in a battle; X = seconds from the launch's first battle start (same scale for every config of a slice). Filled area: the median-span repeat (one colour per CUDA stream when streams &gt; 1, stacked, so overlapping launches show as two colours at the same time). Grey lines: every repeat's total, ticks under the axis: each repeat's end, so the spread across repeats is visible. White space above the fill is idle.</p>
 ${charts || '<p class="na">pending</p>'}
 
-<h2 id="pred">Length predictor (R3)</h2>
+<h3 id="pred">Length predictor (R3)</h3>
 ${pred ? `<p>Ridge regression on log(battle time) over ${pred.n_features} cheap features read from the packed mon arrays (bulk, fast-move damage rate, time-to-KO each way, charged-move count and cheapest energy, buff moves, form changers, shields, bait), fitted on the 5k slice. The target is each battle's time with a warp to itself in a full launch (no divergence).</p>
 ${table(['Measure', 'Value'], [['Pearson r, 36k slice (all)', n3(pred.pearson_36000)], ['Pearson r, 36k rows not in the 5k fit', n3(pred.pearson_36000_heldout)], ['Pearson r on log time, 36k', n3(pred.pearson_log_36000)], ['Spearman ρ, 36k', n3(pred.spearman_36000)], ['Pearson r vs thread-mode time (v2), 36k', n3(pred.pearson_thread_time_36000)], ['Pearson r, 5k fit set', n3(pred.pearson_train_5000)], ['Warp-solo time median / max (s)', `${n2(pred.solo_p50_s)} / ${n2(pred.solo_max_s)}`]])}
 ${iters.predictorNote ? `<p>${iters.predictorNote}</p>` : ''}` : '<p class="na">pending</p>'}
 
-<h2 id="ahead">Move-ahead log (R4)</h2>
+<h3 id="ahead">Move-ahead log (R4)</h3>
 <p class="mut">Ahead work is the next launch's battles, whose inputs are fully known when it is offered. A thread takes one only when the queue of the current launch is empty and the battle's predicted finish is before the predicted end of the current launch's longest battle. Every taken result is kept and used by the next launch (never re-run); “late” = actual finish after that deadline.</p>
 ${aheadRows.length ? table(['Config', 'Slice', 'Offered / launch', 'Taken / launch', 'Late (all reps)', 'Discarded', 'Median predicted / actual (ms)', 'Rows'], aheadRows) : '<p class="na">pending</p>'}
-${aheadSample ? `<h3>First taken battles of one ${aheadB.some((x) => sl(x, 36000)?.launches[0]?.ahead_log?.length) ? '36k' : '5k'} launch of ${esc(aheadB[0]?.name ?? '')} (ms from the first take)</h3>${aheadSample}` : ''}
-${runAhead.length ? `<h3>Ahead log of the 5-gen runs</h3>${table(['Run', 'Steps', 'Taken', 'Late', 'Discarded'], runAhead)}` : ''}
+${aheadSample ? `<h4>First taken battles of one ${aheadB.some((x) => sl(x, 36000)?.launches[0]?.ahead_log?.length) ? '36k' : '5k'} launch of ${esc(aheadB[0]?.name ?? '')} (ms from the first take)</h4>${aheadSample}` : ''}
+${runAhead.length ? `<h4>Ahead log of the 5-gen runs</h4>${table(['Run', 'Steps', 'Taken', 'Late', 'Discarded'], runAhead)}` : ''}
 
-<h2 id="det">Determinism and agreement with v2 (R6)</h2>
+<h3 id="det">Determinism and agreement with v2 (R6)</h3>
 <pre>${esc(det ?? 'pending')}</pre>
-${best && ov.length ? `<h3>Best config vs round-4 v2 (gens 0–${ov.length - 1}; reported, not gated)</h3>${table(['Gen', 'Top-12 shared with v2', 'Mean top-12 fitness delta'], ov.map((g) => [g.g, `${g.shared} / 12`, (g.d >= 0 ? '+' : '') + g.d.toFixed(4)]))}` : ''}
-${base && ovBase.length ? `<h3>v2 at CPU share 0 vs round-4 v2 (same kernel; differs only by the CPU share)</h3>${table(['Gen', 'Top-12 shared', 'Mean top-12 fitness delta'], ovBase.map((g) => [g.g, `${g.shared} / 12`, (g.d >= 0 ? '+' : '') + g.d.toFixed(4)]))}` : ''}
-${iters.notes ? `<h2 id="notes">Notes</h2>${iters.notes}` : ''}
+${best && ov.length ? `<h4>Best config vs round-4 v2 (gens 0–${ov.length - 1}; reported, not gated)</h4>${table(['Gen', 'Top-12 shared with v2', 'Mean top-12 fitness delta'], ov.map((g) => [g.g, `${g.shared} / 12`, (g.d >= 0 ? '+' : '') + g.d.toFixed(4)]))}` : ''}
+${base && ovBase.length ? `<h4>v2 at CPU share 0 vs round-4 v2 (same kernel; differs only by the CPU share)</h4>${table(['Gen', 'Top-12 shared', 'Mean top-12 fitness delta'], ovBase.map((g) => [g.g, `${g.shared} / 12`, (g.d >= 0 ? '+' : '') + g.d.toFixed(4)]))}` : ''}
+${iters.notes ? `<h3 id="notes">Notes</h3>${iters.notes}` : ''}
 </body></html>`;
 writeFileSync('out/gpu-sched.html', html);
 console.log(`out/gpu-sched.html written: ${rows.length} iteration rows, ${shown.length} timeline configs, best ${best ? `${best.r.name} ${n0(best.r5.bps)} b/s` : 'pending'}`);

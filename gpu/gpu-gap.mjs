@@ -205,8 +205,65 @@ const r13by = (size) => r13rows.find((r) => r.size === size);
 const r13html = r13rows.length ? table(['Slice', 'Launch pairs', 'v2 span (s), median (min–max)', 'Warp-per-battle span (s)', 'Speed-up v2 ÷ warp, per pair', 'Rows equal v2'],
   r13rows.map((r) => [`${r.size.toLocaleString()} battles`, r.n, spread5(r.v), spread5(r.w), `×${n2(median(r.q))} <small>(×${n2(Math.min(...r.q))}–×${n2(Math.max(...r.q))}; each: ${r.q.map((x) => n2(x)).join(', ')})</small>`, r.same ? 'yes' : '<b>no</b>'])) : '<p class="na">pending: <code>out/gpu/sched/r13-warp.json</code></p>';
 const r5k = r13by(5000), r36k = r13by(36000);
-const r13para = r5k && r36k ? `<p><b>Why the 5k gain is absent at 36k.</b> Over ${r5k.n} launch pairs on each slice, warp-per-battle ran the 5k slice ×${n2(median(r5k.q))} faster than v2 (pairs ranged ×${n2(Math.min(...r5k.q))}–×${n2(Math.max(...r5k.q))}) and the 36k slice ×${n2(median(r36k.q))} (×${n2(Math.min(...r36k.q))}–×${n2(Math.max(...r36k.q))}). (Round 5's ×1.28 at 5k came from 3 launches on another day; it sits just below this range, which is the size of the day-to-day noise.) The 5k and 36k ranges ${Math.min(...r5k.q) > Math.max(...r36k.q) ? 'do not overlap, so the difference is not noise' : 'overlap, so on this machine the difference is within the noise'}. The reason is how many warps each layout keeps busy. The GPU holds ${n0(WARPS)} warps at once (68 SMs × 8). In v2, the 5,000 battles fill only ${n0(Math.ceil(5000 / 32))} warps, 32 battles each, and a warp runs its 32 different battles mostly one after another (they take different branches, so the lanes wait for each other); the other ${n0(WARPS - Math.ceil(5000 / 32))} warps have nothing to do. Warp-per-battle spreads the same 5,000 battles over all ${n0(WARPS)} warps, about ${n0(5000 / WARPS)} battles per warp in turn instead of 32, so the busiest warp finishes sooner. At 36k there is no empty warp left to spread into: v2 already gives every warp about ${n0(36000 / WARPS)} battles, and warp-per-battle gives every warp about ${n0(36000 / WARPS)} battles too, but one at a time with 31 of the 32 lanes repeating the same work, while v2's lanes still overlap part of their work. The two effects roughly cancel, which is what the 36k pairs show (around ×1, against ×0.86 in round 4's single 36k measurement): the 5k gain came from filling empty warps, and at 36k there are none to fill. Two smaller effects add noise to both slices: other programs using the GPU (this desktop ran a game during these measurements) and which SM happens to run the few very long battles; the 5k slice's slowest battle takes about 3.8 s even alone (round 6, <a href="gpu-sched.html">gpu-sched</a>).</p>` : '';
-const r13box = `<div class="box"><b>What “warp-per-battle” means.</b> A GPU runs threads in groups of 32 called <i>warps</i>; the 32 threads of a warp execute the same instruction at the same time. Today (v2) <b>one thread simulates one whole battle</b>, so one warp carries 32 different battles. When those battles take different branches (different moves, different shield choices), the warp has to run each branch in turn while the other threads wait, so a warp of 32 battles takes far longer than one battle alone. <b>Warp-per-battle</b> gives each battle a whole warp: all 32 threads run the same battle, so they never wait for each other, but 31 of them only repeat the work, so each battle uses 32 times as much hardware. <b>Who it helps:</b> small launches (a few thousand battles), where most warps of the GPU would otherwise sit empty, so the spare hardware is free. <b>Why it hurts big launches:</b> when there are more battles than warps, there is no spare hardware: every repeated thread is a thread that could have run another battle.</div>`;
+// §6 pictures: (1) what each layout does with the GPU's warps, (2) every measured launch as a point.
+const BATTLE_COLS = ['#2f6fdb', '#e0832a', '#3aa676', '#a259c4', '#d1495b', '#00a6a6', '#c8a400', '#7a5c3e'];
+function laneRow(x, y, same, label) {
+  let g = `<text x="${x}" y="${y - 6}" class="lbl">${label}</text>`;
+  for (let i = 0; i < 32; i++) g += `<rect x="${x + i * 11}" y="${y}" width="10" height="18" rx="2" fill="${same ? BATTLE_COLS[0] : BATTLE_COLS[i % 8]}"/>`;
+  return g;
+}
+/** Grid of the GPU's warps (17 × 32 = 544); filled = has work. */
+function warpGrid(x, y, filled, label, sub, multi) {
+  let g = `<text x="${x}" y="${y - 20}" class="lbl">${label}</text><text x="${x}" y="${y - 6}" class="sub">${sub}</text>`;
+  for (let i = 0; i < WARPS; i++) {
+    const cx = x + (i % 32) * 8.5, cy = y + Math.floor(i / 32) * 8.5;
+    const fill = i < filled ? (multi ? `url(#stripes)` : BATTLE_COLS[i % 8]) : 'var(--empty)';
+    g += `<rect x="${cx}" y="${cy}" width="7.5" height="7.5" rx="1" fill="${fill}"/>`;
+  }
+  return g;
+}
+const warpsUsed = (n, layout) => (layout === 'v2' ? Math.min(WARPS, Math.ceil(n / 32)) : Math.min(WARPS, n));
+const diagram = `<svg viewBox="0 0 760 520" class="fig" role="img" aria-label="thread per battle vs warp per battle">
+<defs><pattern id="stripes" width="4" height="7.5" patternUnits="userSpaceOnUse"><rect width="2" height="7.5" fill="#2f6fdb"/><rect x="2" width="2" height="7.5" fill="#e0832a"/></pattern></defs>
+<text x="10" y="18" class="h">One warp = 32 threads that run the same instruction together</text>
+${laneRow(10, 46, false, 'v2: one thread = one battle → a warp carries 32 different battles (they wait on each other’s branches)')}
+${laneRow(10, 100, true, 'warp-per-battle: 32 threads = one battle → a warp carries 1 battle, no waiting, 32× the hardware')}
+<text x="10" y="156" class="h">The GPU holds ${n0(WARPS)} warps at once (each square = 1 warp; grey = idle)</text>
+${warpGrid(10, 196, warpsUsed(5000, 'v2'), '5k launch, v2', `${n0(warpsUsed(5000, 'v2'))} of ${n0(WARPS)} warps busy (striped = 32 battles share a warp)`, true)}
+${warpGrid(390, 196, warpsUsed(5000, 'warp'), '5k launch, warp-per-battle', `all ${n0(WARPS)} busy, ~${n0(5000 / WARPS)} battles each in turn`)}
+${warpGrid(10, 376, warpsUsed(36000, 'v2'), '36k launch, v2', `all ${n0(WARPS)} busy already`, true)}
+${warpGrid(390, 376, warpsUsed(36000, 'warp'), '36k launch, warp-per-battle', `all ${n0(WARPS)} busy, no spare warps to gain`)}
+</svg>`;
+/** Dot plot: one row per series, every launch a dot, median as a tick. */
+function dots(rowsIn, { lo, hi, unit, ref, refLabel, w = 360, title }) {
+  const L = 92, R = 30, top = 44, rh = 34, H = top + rowsIn.length * rh + 26;
+  const X = (v) => L + ((v - lo) / (hi - lo)) * (w - L - R);
+  let g = `<text x="8" y="16" class="h">${title}</text>`;
+  const step = [0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5].find((x) => (hi - lo) / x <= 7);
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) { g += `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 4}" y2="${H - 22}" stroke="var(--line)"/><text x="${X(v)}" y="${H - 8}" text-anchor="middle" class="sub">${unit === '×' ? '×' + v.toFixed(step < 0.1 ? 2 : 1) : v.toFixed(step < 1 ? 1 : 0) + ' s'}</text>`; }
+  if (ref != null) g += `<line x1="${X(ref)}" x2="${X(ref)}" y1="${top - 14}" y2="${H - 22}" stroke="var(--mut)" stroke-dasharray="4 3"/><text x="${X(ref) + 4}" y="${top - 6}" class="sub">${refLabel}</text>`;
+  rowsIn.forEach((r, i) => {
+    const y = top + i * rh + rh / 2;
+    g += `<text x="${L - 6}" y="${y + 4}" text-anchor="end" class="lbl">${r.label}</text>`;
+    const mn = Math.min(...r.v), mx = Math.max(...r.v);
+    g += `<rect x="${X(mn)}" y="${y - 9}" width="${Math.max(2, X(mx) - X(mn))}" height="18" rx="4" fill="${r.c}" opacity="0.15"/>`;
+    for (const v of r.v) g += `<circle cx="${X(v)}" cy="${y}" r="4.5" fill="${r.c}" opacity="0.85"><title>${v.toFixed(3)}</title></circle>`;
+    const md = median(r.v);
+    g += `<line x1="${X(md)}" x2="${X(md)}" y1="${y - 12}" y2="${y + 12}" stroke="var(--fg)" stroke-width="2"/>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${H}" class="fig" role="img" aria-label="${esc(title)}">${g}</svg>`;
+}
+const pad = (xs, f = 0.08) => { const lo = Math.min(...xs), hi = Math.max(...xs), d = (hi - lo) * f + 0.05; return [lo - d, hi + d]; };
+const spanChart = (r, nm) => { const [lo, hi] = pad([...r.v, ...r.w]); return dots([{ label: 'v2', v: r.v, c: 'var(--c0)' }, { label: 'warp', v: r.w, c: 'var(--c1)' }], { lo, hi, unit: 's', title: `${nm} launch span, ${r.n} launches each`, w: 380 }); };
+const spdChart = r5k && r36k ? (() => { const all = [...r5k.q, ...r36k.q, 1]; const [lo, hi] = pad(all); return dots([{ label: '5k', v: r5k.q, c: 'var(--c2)' }, { label: '36k', v: r36k.q, c: 'var(--c3)' }], { lo, hi, unit: '×', ref: 1, refLabel: 'no gain', title: 'Speed-up of warp-per-battle (v2 span ÷ warp span), each pair a dot', w: 760 }); })() : '';
+const r13pics = r5k && r36k ? `${diagram}
+<div class="pair">${spanChart(r5k, '5k')}${spanChart(r36k, '36k')}</div>
+${spdChart}
+<ul class="keys">
+<li><b>5k:</b> ×${n2(median(r5k.q))} faster (pairs ×${n2(Math.min(...r5k.q))}–×${n2(Math.max(...r5k.q))}) — v2 leaves ${n0(WARPS - warpsUsed(5000, 'v2'))} warps idle, warp-per-battle fills them.</li>
+<li><b>36k:</b> ×${n2(median(r36k.q))} (×${n2(Math.min(...r36k.q))}–×${n2(Math.max(...r36k.q))}) — no idle warps to fill, so no gain.</li>
+<li><b>Noise:</b> the two bands ${Math.min(...r5k.q) > Math.max(...r36k.q) ? 'do not overlap, so the gap is real, not noise' : 'overlap, so the gap is within noise'}. Dot = one launch, bar = median.</li>
+</ul>` : '<p class="na">pending: <code>out/gpu/sched/r13-warp.json</code></p>';
 
 // ---------------------------------------------------------------- page
 const best = ideas[0];
@@ -214,13 +271,16 @@ const conclusion = `The dominant cause is the kernel tail: ${n0(tail)} of the ${
   + (c5 ? `its 5-gen run measured ${n0(c5.bB / c5.tB)} b/s vs ${n0(c5.bA / c5.tA)} for v2 gens 0–4. ` : '')
   + `Verdict stays FAIL against 1,500 until a full run meets it. Recommended next round: ${chk.recommend ?? 'see the prototype table'}.`;
 
-const css = `:root{--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f5f7fa;--ok:#157347;--bad:#b42318}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72}}
-body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1100px;padding:16px}
+const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f5f7fa;--ok:#157347;--bad:#b42318;--empty:#d5dae3;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--empty:#2e3542;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}}
+:root[data-theme="dark"]{--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--empty:#2e3542;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}
+a{color:var(--link)}body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1100px;padding:16px}
 h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:4px}
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:.6rem 0}th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}th{background:var(--card)}
 .pass{color:var(--ok);font-weight:700}.fail{color:var(--bad);font-weight:700}.na{color:var(--mut)}small,.mut{color:var(--mut)}pre{background:var(--card);padding:8px;overflow-x:auto}blockquote{margin:0;color:var(--mut)}
-.box{background:var(--card);border-left:4px solid var(--ok);padding:10px 14px;margin:1rem 0}`;
+.box{background:var(--card);border-left:4px solid var(--ok);padding:10px 14px;margin:1rem 0}
+svg.fig{width:100%;height:auto;background:var(--card);border-radius:6px;margin:.5rem 0}svg.fig text{fill:var(--fg);font-size:12px}svg.fig .h{font-weight:700;font-size:13px}svg.fig .sub{fill:var(--mut);font-size:11px}svg.fig .lbl{font-size:12px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.pair{grid-template-columns:1fr}}ul.keys{padding-left:1.2rem}ul.keys li{margin:.2rem 0}details{margin:.5rem 0}summary{cursor:pointer;color:var(--mut)}`;
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU Gap Analysis</title><style>${css}</style></head><body>
 <h1>Why 724 b/s and not 1,500</h1>
@@ -251,11 +311,10 @@ ${table(['Idea', 'Predicted b/s on v2 run', 'Arithmetic', 'Literature', 'Status'
 <p class="mut">The two largest predictions are prototyped. Result-identical ideas win ties; none tied.</p>
 
 <h2 id="s6">6. Prototype results</h2>
-${r13box}
-<h3 id="s6-5k36k">5k vs 36k, repeated launches</h3>
-${r13html}
-${r13para}
-<p class="mut">Round 6 builds on this: <a href="gpu-sched.html">GPU scheduler round 6</a> (time-sliced queue, spreading small launches over all warps).</p>
+<h3 id="s6-warp">Warp-per-battle, and why it helps at 5k but not at 36k</h3>
+${r13pics}
+<details><summary>Numbers behind the charts</summary>${r13html}</details>
+<p class="mut">Round 6 builds on this: <a href="gpu-sched.html">GPU scheduler round 6</a>.</p>
 <h3>Round 5 prototype table</h3>
 ${slices ? table(['Prototype', 'Kernel b/s on the 5k slice (v2 → prototype, median of 3)', '36k slice', 'Verdict'], protoRows) : '<p class="na">pending: run <code>uv run python -m gpu.gap_proto</code></p>'}
 ${slices ? `<p><b>Smoke measurement of the untested work-queue kernel</b> (<code>POGO_GPU_KERNEL=queue</code>, 3 launches, not verified, status stays “untested”): 5k ${n0(vrow('queue', 5000)?.bps)} b/s vs v2 ${n0(vrow('v2', 5000)?.bps)}; 36k ${n0(vrow('queue', 36000)?.bps)} vs ${n0(vrow('v2', 36000)?.bps)}; rows equal v2: ${vrow('queue', 5000)?.same_results && vrow('queue', 36000)?.same_results ? 'yes' : 'no'}.</p>` : ''}
