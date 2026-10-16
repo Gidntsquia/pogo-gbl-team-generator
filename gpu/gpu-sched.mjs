@@ -226,10 +226,12 @@ const keyLines = best ? [
   ['vs 1,500 target', `${tag(best.r5.bps >= TARGET)} — ${n0((best.r5.bps / TARGET) * 100)}% of the way`],
   [`vs ×10 CPU (${n0(X10)})`, tag(best.r5.bps >= X10)],
   ...(() => { const h = bpsOf(/^evolve-gpu6-h2-slice-bin-r\d+$/), sr = h.length ? sameRun('out/evolve-gpu6-v2-share0', 'out/evolve-gpu6-h2-v2-r1', 4) : null;
-    return h.length ? [['Same + <code>--halving-rounds 2</code>', `<b>${n0(median(h))} b/s</b> (median of ${h.length}, ${n0(Math.min(...h))}–${n0(Math.max(...h))}) ${tag(median(h) >= TARGET, 'over 1,500', 'under 1,500')} — fewer, bigger launches; not v2's command: it changes the search (top 12 at gen 4: ${sr?.shared ?? '?'} of 12 shared with halving 3)`]] : []; })(),
+    const g0 = bpsOf(/^evolve-gpu6-h0-slice-bin(-r\d+)?$/);
+    return h.length ? [['Same + <code>--halving-rounds 2</code>', `<b>${n0(median(h))} b/s</b> (median of ${h.length}, ${n0(Math.min(...h))}–${n0(Math.max(...h))}) ${tag(median(h) >= TARGET, 'over 1,500', 'under 1,500')} — fewer, bigger launches; not v2's command: it changes the search (top 12 at gen 4: ${sr?.shared ?? '?'} of 12 shared with halving 3)`], ...(g0.length ? [['Same, full grid', `<b>${n0(median(g0))} b/s</b> (median of ${g0.length}) ${tag(median(g0) >= TARGET, 'over 1,500', 'under 1,500')}`]] : []),
+      ['But per generation', 'higher b/s comes from running more battles (less pruning), not from finishing sooner: GPU seconds per generation are lowest at halving 3 (see Extra runs)']] : []; })(),
   ['Idle left', `5k launch ${pct(bS5?.idle_median)} (too few battles to fill the GPU) · 36k launch ${pct(bS36?.idle_median)} (waiting on the longest battles)`],
   ['Did not help', `${esc(dropped.join(', '))} (dropped: idle went up, or a sibling did better)`],
-  ['Next step', 'put several small steps into one launch on this kernel; then re-add the CPU share'],
+  ['Next step', 'choose the search trade-off: halving 3 = shortest generation, small launches (rounds depend on each other, cannot merge); halving 2 = over 1,500 b/s, +2.4 s GPU per generation, more battles per team. Then re-add the CPU share'],
 ] : [['Status', 'pending: no kept configuration has a finished 5-gen run']];
 const summaryHtml = `${summaryChart()}
 <dl class="keys">${keyLines.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
@@ -251,22 +253,23 @@ figure{margin:0}figcaption{font-size:13px;color:var(--mut)}svg.tl{width:100%;hei
 const OUT = 'out';
 const runsLike = (re) => readdirSync(OUT).filter((f) => re.test(f) && existsSync(`${OUT}/${f}/gpu-profile.json`)).map((f) => `${OUT}/${f}`);
 function bigLaunchChart() {
-  const reps = (re) => runsLike(re).map((d) => run5one(d)).filter((x) => x?.done).map((x) => x.bps);
+  const runs = (re) => runsLike(re).map((d) => run5one(d)).filter((x) => x?.done && x.gens >= 5);
   const groups = [
-    ['v2, halving 3 (normal)', rows.find((x) => x.r.name === 'v2')?.r5?.reps ?? [], 'var(--c0)', 0.45],
-    ['v2, halving 2', reps(/^evolve-gpu6-h2-v2-r\d+$/), 'var(--c0)', 0.75],
-    ['v2, full grid', reps(/^evolve-gpu6-h0-v2$/), 'var(--c0)', 1],
-    ['slice + bin, halving 3', rows.find((x) => x.r.name === 'i3-bin')?.r5?.reps ?? [], 'var(--c2)', 0.45],
-    ['slice + bin, halving 2', reps(/^evolve-gpu6-h2-slice-bin-r\d+$/), 'var(--c2)', 0.75],
-    ['slice + bin, full grid', reps(/^evolve-gpu6-h0-slice-bin$/), 'var(--c2)', 1],
-  ];
-  if (!groups.slice(1).some((x) => x[1].length && x !== groups[3])) return '';
-  const LBL = 170, X0 = LBL + 16, X1 = 760, BMAX = 1600, XB = (v) => X0 + (v / BMAX) * (X1 - X0), rh = 34, top = 44, H = top + groups.length * rh + 30;
-  let g = `<text x="${X0}" y="18" class="h">5-gen speed, battles/s: fewer halving rounds = fewer, bigger GPU launches</text>`;
+    ['v2, halving 3 (normal)', runs(/^evolve-gpu6-v2-share0(-r\d+)?$/), 'var(--c0)', 0.45],
+    ['v2, halving 2', runs(/^evolve-gpu6-h2-v2-r\d+$/), 'var(--c0)', 0.75],
+    ['v2, full grid', runs(/^evolve-gpu6-h0-v2(-r\d+)?$/), 'var(--c0)', 1],
+    ['slice + bin, halving 3', runs(/^evolve-gpu6-slice-bin(-r\d+)?$/), 'var(--c2)', 0.45],
+    ['slice + bin, halving 2', runs(/^evolve-gpu6-h2-slice-bin-r\d+$/), 'var(--c2)', 0.75],
+    ['slice + bin, full grid', runs(/^evolve-gpu6-h0-slice-bin(-r\d+)?$/), 'var(--c2)', 1],
+  ].map(([n, R, c, op]) => [n, R.map((x) => x.bps), c, op, R]);
+  if (!groups.some((x, i) => i % 3 && x[1].length)) return '';
+  const LBL = 170, X0 = LBL + 16, X1 = 700, BMAX = 1800, XB = (v) => X0 + (v / BMAX) * (X1 - X0), rh = 34, top = 44, H = top + groups.length * rh + 30;
+  let g = `<text x="${X0}" y="18" class="h">5-gen speed, battles/s: fewer halving rounds = fewer, bigger GPU launches</text><text x="892" y="${top - 12}" text-anchor="end" class="sub">battles/gen · GPU s/gen</text>`;
   for (let v = 0; v <= BMAX; v += 400) g += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 24}" stroke="var(--line)"/><text x="${XB(v)}" y="${H - 8}" text-anchor="middle" class="sub">${n0(v)}</text>`;
   g += `<line x1="${XB(TARGET)}" x2="${XB(TARGET)}" y1="${top - 6}" y2="${H - 24}" stroke="var(--bad)" stroke-width="2"/><text x="${XB(TARGET) - 4}" y="${top - 10}" text-anchor="end" class="sub" style="fill:var(--bad)">target 1,500</text>`;
-  groups.forEach(([name, v, c, op], i) => {
+  groups.forEach(([name, v, c, op, R], i) => {
     const y = top + i * rh + rh / 2;
+    if (R.length) g += `<text x="892" y="${y + 4}" text-anchor="end" class="lbl">${(median(R.map((x) => x.N)) / 5000).toFixed(1)}k · <tspan font-weight="700">${n1(median(R.map((x) => x.W)) / 5)} s</tspan></text>`;
     g += `<text x="${LBL}" y="${y + 4}" text-anchor="end" class="lbl">${name}</text>`;
     if (!v.length) { g += `<text x="${X0 + 6}" y="${y + 4}" class="sub">not run yet</text>`; return; }
     const m = median(v);
@@ -282,26 +285,44 @@ const perGen = (dir) => {
   const by = new Map(); for (const st of prof.steps.filter((x) => x.gen !== 'final')) { const e = by.get(st.gen) ?? { n: 0, w: 0 }; e.n += st.n; e.w += st.wall; by.set(st.gen, e); }
   return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([gen, e]) => ({ gen, bps: e.n / e.w, n: e.n }));
 };
-function longRunChart() {
-  const NAME = { v2: ['v2 (old kernel)', 'var(--c0)'], slice: ['slice', 'var(--c3)'], 'slice-bin': ['slice + bin', 'var(--c2)'], 'h2-v2': ['v2, halving 2', 'var(--c1)'], 'h2-slice-bin': ['slice + bin, halving 2', 'var(--bad)'] };
-  const L = runsLike(/^evolve-gpu6-g20-/).map((d) => { const m = d.match(/g20-(.+?)(-r\d+)?$/); return [`${NAME[m[1]]?.[0] ?? m[1]}${m[2] ? ` (${m[2].slice(1)})` : ''}`, perGen(d), NAME[m[1]]?.[1] ?? 'var(--mut)', !!m[2]]; })
-    .filter((x) => x[1].length).sort((a, b) => a[0].localeCompare(b[0]));
-  if (!L.some((x) => x[1].length)) return '';
-  const G = Math.max(...L.map((x) => x[1].length)), YMAX = 1600, X0 = 60, X1 = 860, Y1 = 40 + L.length * 18, Y0 = Y1 + 210;
-  const X = (gen) => X0 + (gen / Math.max(1, G - 1)) * (X1 - X0), Y = (v) => Y0 - (v / YMAX) * (Y0 - Y1);
-  let g = `<text x="${X0}" y="18" class="h">Speed per generation over 20-gen runs, battles/s (dashed = repeat run)</text>`;
-  for (let v = 0; v <= YMAX; v += 400) g += `<line x1="${X0}" x2="${X1}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${X0 - 6}" y="${Y(v) + 4}" text-anchor="end" class="sub">${n0(v)}</text>`;
-  for (let k = 0; k < G; k += G > 10 ? 2 : 1) g += `<text x="${X(k)}" y="${Y0 + 18}" text-anchor="middle" class="sub">${k}</text>`;
-  g += `<text x="${(X0 + X1) / 2}" y="${Y0 + 36}" text-anchor="middle" class="sub">generation</text>`;
-  g += `<line x1="${X0}" x2="${X1}" y1="${Y(TARGET)}" y2="${Y(TARGET)}" stroke="var(--bad)" stroke-width="2"/><text x="${X1}" y="${Y(TARGET) - 5}" text-anchor="end" class="sub" style="fill:var(--bad)">target 1,500</text>`;
-  L.forEach(([name, pts, c, rep], i) => {
-    if (!pts.length) return;
-    g += `<polyline fill="none" stroke="${c}" stroke-width="${rep ? 1.5 : 2.5}" ${rep ? 'stroke-dasharray="5 3"' : ''} points="${pts.map((p) => `${X(p.gen)},${Y(p.bps)}`).join(' ')}"/>`;
-    for (const p of pts) g += `<circle cx="${X(p.gen)}" cy="${Y(p.bps)}" r="3" fill="${c}"><title>gen ${p.gen}: ${n0(p.bps)} b/s (${n0(p.n)} battles)</title></circle>`;
-    const tot = sum(pts, (p) => p.n) / sum(pts, (p) => p.n / p.bps);
-    g += `<text x="${X0 + 10}" y="${34 + i * 18}" class="lbl" style="fill:${c}">● ${name}: ${n0(tot)} b/s over ${pts.length} gens${pts.length < 20 ? ' (running)' : ''}</text>`;
+/** 20-gen runs: one line per config (first run only), gen-by-gen b/s; plus overall b/s bars for every 20-gen run. */
+const G20 = { v2: ['v2, halving 3', 'var(--c0)', 'v2'], 'h2-v2': ['v2, halving 2', 'var(--c0)', 'v2'], 'h0-v2': ['v2, full grid', 'var(--c0)', 'v2'],
+  'slice-bin': ['slice + bin, halving 3', 'var(--c2)', 's'], 'h2-slice-bin': ['slice + bin, halving 2', 'var(--c2)', 's'], 'h0-slice-bin': ['slice + bin, full grid', 'var(--c2)', 's'], slice: ['slice, halving 3', 'var(--c3)', 's'] };
+const g20runs = () => runsLike(/^evolve-gpu6-g20-/).map((d) => { const m = d.match(/g20-(.+?)(-r\d+)?$/); const pts = perGen(d); return { key: m[1], rep: !!m[2], pts, tot: sum(pts, (p) => p.n) / sum(pts, (p) => p.n / p.bps) }; })
+  .filter((x) => G20[x.key] && x.pts.length >= 20);
+function longRunBars() {
+  const R = g20runs(); if (!R.length) return '';
+  const keys = Object.keys(G20).filter((k) => R.some((x) => x.key === k));
+  const LBL = 170, X0 = LBL + 16, X1 = 760, BMAX = 1800, XB = (v) => X0 + (v / BMAX) * (X1 - X0), rh = 30, top = 44, H = top + keys.length * rh + 30;
+  let g = `<text x="${X0}" y="18" class="h">20-gen run speed, battles/s (all 20 generations)</text>`;
+  for (let v = 0; v <= BMAX; v += 400) g += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top - 6}" y2="${H - 24}" stroke="var(--line)"/><text x="${XB(v)}" y="${H - 8}" text-anchor="middle" class="sub">${n0(v)}</text>`;
+  g += `<line x1="${XB(TARGET)}" x2="${XB(TARGET)}" y1="${top - 6}" y2="${H - 24}" stroke="var(--bad)" stroke-width="2"/><text x="${XB(TARGET) - 4}" y="${top - 10}" text-anchor="end" class="sub" style="fill:var(--bad)">target 1,500</text>`;
+  keys.forEach((k, i) => {
+    const y = top + i * rh + rh / 2, v = R.filter((x) => x.key === k).map((x) => x.tot), m = median(v), [name, c] = G20[k];
+    g += `<text x="${LBL}" y="${y + 4}" text-anchor="end" class="lbl">${name}</text><rect x="${X0}" y="${y - 9}" width="${XB(m) - X0}" height="18" rx="3" fill="${c}" opacity="${k.startsWith('h0') ? 1 : k.startsWith('h2') ? 0.75 : 0.45}"/>`;
+    for (const b of v) g += `<circle cx="${XB(b)}" cy="${y}" r="3.5" fill="var(--bg)" stroke="var(--fg)" stroke-width="1.5"><title>${n0(b)} b/s</title></circle>`;
+    g += `<text x="${XB(Math.max(...v)) + 8}" y="${y + 4}" class="lbl">${n0(m)} <tspan class="sub">(${v.length} run${v.length > 1 ? 's' : ''})</tspan></text>`;
   });
-  return `<svg viewBox="0 0 900 ${Y0 + 46}" class="fig" role="img" aria-label="20-gen run speed per generation">${g}</svg>`;
+  return `<svg viewBox="0 0 900 ${H}" class="fig" role="img" aria-label="20-gen run speed">${g}</svg>`;
+}
+function longRunChart() {
+  const show = ['v2', 'slice-bin', 'h2-slice-bin', 'h0-slice-bin'], DASH = { v2: '', 'slice-bin': '', 'h2-slice-bin': '6 3', 'h0-slice-bin': '2 3' };
+  const L = show.map((k) => g20runs().find((x) => x.key === k && !x.rep)).filter(Boolean);
+  if (!L.length) return '';
+  const G = 20, YMAX = 2000, X0 = 60, X1 = 860, Y1 = 40 + L.length * 18, Y0 = Y1 + 220;
+  const X = (gen) => X0 + (gen / (G - 1)) * (X1 - X0), Y = (v) => Y0 - (Math.min(v, YMAX) / YMAX) * (Y0 - Y1);
+  let g = `<text x="${X0}" y="18" class="h">Speed per generation, battles/s (the population changes; launch sizes change with it)</text>`;
+  for (let v = 0; v <= YMAX; v += 500) g += `<line x1="${X0}" x2="${X1}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${X0 - 6}" y="${Y(v) + 4}" text-anchor="end" class="sub">${n0(v)}</text>`;
+  for (let k = 0; k < G; k += 2) g += `<text x="${X(k)}" y="${Y0 + 18}" text-anchor="middle" class="sub">${k}</text>`;
+  g += `<text x="${(X0 + X1) / 2}" y="${Y0 + 36}" text-anchor="middle" class="sub">generation</text>`;
+  g += `<line x1="${X0}" x2="${X1}" y1="${Y(TARGET)}" y2="${Y(TARGET)}" stroke="var(--bad)" stroke-width="1.5"/><text x="${X1}" y="${Y(TARGET) - 5}" text-anchor="end" class="sub" style="fill:var(--bad)">target 1,500</text>`;
+  L.forEach((r, i) => {
+    const [name, c] = G20[r.key];
+    g += `<polyline fill="none" stroke="${c}" stroke-width="2.5" ${DASH[r.key] ? `stroke-dasharray="${DASH[r.key]}"` : ''} points="${r.pts.map((p) => `${X(p.gen)},${Y(p.bps)}`).join(' ')}"/>`;
+    for (const p of r.pts) g += `<circle cx="${X(p.gen)}" cy="${Y(p.bps)}" r="2.5" fill="${c}"><title>${name}, gen ${p.gen}: ${n0(p.bps)} b/s (${n0(p.n)} battles)</title></circle>`;
+    g += `<line x1="${X0 + 10}" x2="${X0 + 40}" y1="${30 + i * 18}" y2="${30 + i * 18}" stroke="${c}" stroke-width="2.5" ${DASH[r.key] ? `stroke-dasharray="${DASH[r.key]}"` : ''}/><text x="${X0 + 48}" y="${34 + i * 18}" class="lbl">${name}: ${n0(r.tot)} b/s</text>`;
+  });
+  return `<svg viewBox="0 0 900 ${Y0 + 46}" class="fig" role="img" aria-label="20-gen speed per generation">${g}</svg>`;
 }
 /** Step wall per GPU step (gens 0-4), median over repeat runs: where the old and new kernel spend the time. */
 function stepChart() {
@@ -337,11 +358,12 @@ const sameRows = [
   ['slice + bin vs v2, halving 2', 'h2-v2-r1', 'h2-slice-bin-r1', 4],
   ['slice + bin vs v2, full grid', 'h0-v2', 'h0-slice-bin', 4],
   ['halving 2 vs halving 3 (v2)', 'v2-share0', 'h2-v2-r1', 4],
+  ['full grid vs halving 3 (v2)', 'v2-share0', 'h0-v2', 4],
 ].map(([k, a, b, g]) => [k, sameRun(`${OUT}/evolve-gpu6-${a}`, `${OUT}/evolve-gpu6-${b}`, g), g]).filter((x) => x[1]);
 const sameHtml = sameRows.length ? `<dl class="keys">${sameRows.map(([k, r, g]) => `<dt>${k}</dt><dd>${r.same ? `<span class="pass">same results</span> <small>(gen-${g} checkpoint equal apart from timing)</small>` : `<b>different search</b> <small>(top 12 at gen ${g}: ${r.shared} of 12 shared)</small>`}</dd>`).join('')}</dl>` : '';
-const extraCharts = [stepChart(), bigLaunchChart(), sameHtml, longRunChart()].filter(Boolean);
+const extraCharts = [stepChart(), bigLaunchChart(), sameHtml, longRunBars(), longRunChart()].filter(Boolean);
 const extraHtml = extraCharts.length ? `<h2 id="extra">Extra runs</h2>
-<p class="mut">Same command and seed as the 5-gen runs. "Bigger launches" = <code>--halving-rounds 2</code> (fewer, larger GPU steps; it also changes which teams the search keeps). The 20-gen run shows whether the speed holds as the population changes.</p>
+<p class="mut">Overnight runs, 2026-10-16. Same command and seed as the 5-gen runs; only <code>--halving-rounds</code> (3 = normal, 2, 0 = full grid: one launch per generation) and <code>--generations</code> change.</p>
 ${extraCharts.join('\n')}` : '';
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU Scheduler Round 6</title><style>${css}</style></head><body>

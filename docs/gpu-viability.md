@@ -270,13 +270,21 @@ prototype results). Prototype benchmark: `cd gpu && uv run python -m gpu.gap_pro
 Report: `node gpu/gpu-sched.mjs` → `out/gpu-sched.html` (iteration table, per-launch occupancy timelines, predictor,
 move-ahead log, determinism). Bench: `gpu/gpu/sched_bench.py`; 5-gen runs `out/gpu/sched/run5.sh`.
 
-- **Conclusion.** Best config `POGO_GPU_KERNEL=slice` (requeue, T=64, small launches spread over all warps), CPU share 0:
-  971 b/s on the 5-gen run vs 795 for v2 at share 0 (×1.22). Clears ×10 over CPU, misses 1,500 b/s: FAIL.
-- **Iterations (5-gen b/s):** v2 795; slice requeue + spread 971 (kept); + binning 942 (−3%); spread off 793 (−18%).
-  Streams, move-ahead, handoff + spread, and bin + streams + ahead raised idle on both slices and were dropped.
-  Stop rule met (two consecutive iterations under +5%).
-- **Idle left:** ~92% of threads on a 5k launch (too small to fill the GPU), ~39% on 36k (tail of longest series).
+- **Conclusion.** Best config `POGO_GPU_KERNEL=slice POGO_GPU_BIN=on` (requeue, T=64, small launches spread over all
+  warps, length binning), CPU share 0: 1,315 b/s on the 5-gen run vs 885 for v2 at share 0 (×1.49; medians of 10 runs
+  each, 2026-10-16). Clears ×10 over CPU, misses 1,500 b/s on v2's command: FAIL. Same search results as v2
+  (checkpoints equal apart from timing, gen 4 and gen 19 of a 20-gen run).
+- **Iterations (5-gen b/s, median of 10):** v2 885; slice requeue + spread 1,309; + binning 1,315; spread off 1,282.
+  The first runs (2026-10-15 evening: 795 / 971 / 942 / 793) were slower in every GPU step; the repeats agree within a
+  few percent. Streams, move-ahead, handoff + spread, and bin + streams + ahead raised idle on both slices and were
+  dropped. Stop rule met (two consecutive iterations under +5%).
+- **Bigger launches (fewer halving rounds), slice + bin, 5 runs each:** `--halving-rounds 2` 1,535 b/s, full grid
+  (`0`) 1,618 (20-gen: 1,517 / 1,658); v2 1,199 / 1,225. Not v2's command: more battles per generation (28.5k / 35.9k
+  vs 21.3k), a different search (top 12 at gen 4: 6 / 2 of 12 shared with halving 3), and more GPU seconds per
+  generation (18.6 / 22.2 vs 16.2).
+- **Idle left:** ~92% of threads on a 5k launch (too small to fill the GPU), ~36% on 36k (tail of longest series).
 - **Flags (experimental, off by default):** `POGO_GPU_KERNEL=slice`, `POGO_GPU_SLICE_TURNS`, `POGO_GPU_SERIES`,
   `POGO_GPU_SLICE_MODE=handoff|requeue`, `POGO_GPU_SPREAD=off`, `POGO_GPU_BIN=on`, `POGO_GPU_STREAMS=N`,
   `POGO_GPU_AHEAD=on`. `--gpu` runs at CPU share 0 this round; re-add the share once GPU speed stabilises.
-- **Next:** bigger launches (round 5's 1,280 b/s idea) on top of the slice kernel.
+- **Next:** choose the search trade-off (halving 3: shortest generation; halving 2: over 1,500 b/s, +2.4 s GPU per
+  generation), then re-add the CPU share.
