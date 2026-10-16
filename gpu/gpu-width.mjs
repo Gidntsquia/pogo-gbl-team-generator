@@ -237,7 +237,7 @@ const colOf = (s) => SCOL[s.mode] ?? 'var(--c1)';
 const popLabel = (p) => `pop ${p}×`;
 function wallChart() {
   if (!settings.length) return '<p class="na">no finished 20-gen runs yet</p>';
-  const LBL = 190, X0 = LBL + 12, X1 = 760, rh = 40;
+  const LBL = 190, X0 = LBL + 12, X1 = 640, rh = 40;   // room for the label after the longest bar
   const tmax = Math.max(...settings.flatMap((s) => s.R.map((r) => r.total ?? 0)));
   const XB = (v) => X0 + (v / tmax) * (X1 - X0);
   let g = `<text x="${X0}" y="18" class="h">20-gen wall time, minutes: total (light) and warm part (dark), median of runs; dots = each run's total</text>`;
@@ -267,12 +267,14 @@ function bpsChart() {
     if (s.pop !== lastPop) { g += `<text x="4" y="${y + 16}" class="h">${popLabel(s.pop)}</text>`; y += 24; lastPop = s.pop; }
     g += `<text x="${LBL}" y="${y + 14}" text-anchor="end" class="lbl">${esc(s.label)}</text><rect x="${X0}" y="${y + 3}" width="${XB(s.bps) - X0}" height="15" rx="2" fill="${colOf(s)}" opacity="0.8"/>`;
     for (const r of s.R) g += `<circle cx="${XB(r.bps)}" cy="${y + 10}" r="3" fill="var(--bg)" stroke="var(--fg)"><title>${esc(r.name)} ${n0(r.bps)}</title></circle>`;
-    g += `<text x="${XB(Math.max(...s.R.map((r) => r.bps))) + 8}" y="${y + 14}" class="lbl">${n0(s.bps)} <tspan class="sub">· ${n0(s.battlesPerGen)} battles/gen · ${n1(s.gpuPerGen)} GPU s/gen</tspan></text>`;
+    const lx = XB(Math.max(...s.R.map((r) => r.bps))) + 8;   // a label that would cross the 1,500 line starts right of it
+    g += `<text x="${Math.max(lx, XB(TARGET) + 8)}" y="${y + 14}" class="lbl">${n0(s.bps)} <tspan class="sub">· ${n0(s.battlesPerGen)} battles/gen · ${n1(s.gpuPerGen)} GPU s/gen</tspan></text>`;
     y += rh;
   }
-  for (let v = 0; v <= bmax; v += 500) g += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top}" y2="${y}" stroke="var(--line)"/><text x="${XB(v)}" y="${y + 14}" text-anchor="middle" class="sub">${n0(v)}</text>`;
-  g += `<line x1="${XB(TARGET)}" x2="${XB(TARGET)}" y1="${top}" y2="${y}" stroke="var(--bad)" stroke-width="2"/><text x="${XB(TARGET) + 4}" y="${top + 10}" class="sub" style="fill:var(--bad)">1,500</text>`;
-  return `<svg viewBox="0 0 960 ${y + 22}" class="fig" role="img" aria-label="battles per second per setting">${g}</svg>`;
+  let grid = '';   // gridlines first, so the row labels (with their halo) sit on top
+  for (let v = 0; v <= bmax; v += 500) grid += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top}" y2="${y}" stroke="var(--line)"/><text x="${XB(v)}" y="${y + 14}" text-anchor="middle" class="sub">${n0(v)}</text>`;
+  grid += `<line x1="${XB(TARGET)}" x2="${XB(TARGET)}" y1="${top}" y2="${y}" stroke="var(--bad)" stroke-width="2"/><text x="${XB(TARGET) + 4}" y="${top + 10}" class="sub" style="fill:var(--bad)">1,500</text>`;
+  return `<svg viewBox="0 0 960 ${y + 22}" class="fig" role="img" aria-label="battles per second per setting">${grid}${g}</svg>`;
 }
 
 // ---------------------------------------------------------------- determinism (R3/R7), probe (R5), island (R7)
@@ -350,7 +352,7 @@ const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d
 :root[data-theme="dark"]{--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}
 a{color:var(--link)}body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1150px;padding:16px}
 h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:4px}
-svg.fig{width:100%;height:auto;background:var(--card);border-radius:6px;margin:.5rem 0}svg.fig text{fill:var(--fg);font-size:13px}svg.fig .h{font-weight:700;font-size:14px}svg.fig .sub{fill:var(--mut);font-size:12px}
+svg.fig{width:100%;height:auto;background:var(--card);border-radius:6px;margin:.5rem 0}svg.fig text{fill:var(--fg);font-size:13px}svg.fig .h{font-weight:700;font-size:14px}svg.fig .sub{fill:var(--mut);font-size:12px}svg.fig .lbl{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
 .box{background:var(--card);border-left:4px solid var(--c0);padding:10px 14px;margin:1rem 0}.box p{margin:.2rem 0}
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:14px}th,td{border:1px solid var(--line);padding:5px 7px;text-align:left;vertical-align:top}th{background:var(--card)}
 .pass{color:var(--ok);font-weight:700}.fail{color:var(--bad);font-weight:700}.na{color:var(--mut)}small,.mut{color:var(--mut)}pre{background:var(--card);padding:8px;overflow-x:auto;white-space:pre-wrap}
@@ -398,5 +400,5 @@ ${det2 ? `<details><summary>2-gen determinism and CPU-only check</summary><pre>$
 </body></html>
 `;
 mkdirSync(OUT, { recursive: true });
-writeFileSync(`${OUT}/gpu-width.html`, html);
+writeFileSync(`${OUT}/gpu-width.html`, html.replace(/<h([23])>([^<]*)/g, (_, l, t) => `<h${l} id="${t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}">${t}`));
 console.log(`wrote ${OUT}/gpu-width.html: ${runs.length} runs (${done.length} finished), ${settings.length} settings, ${Object.keys(benches).length} benches${best ? `; best at pop 1x: ${best.key}` : ''}`);
