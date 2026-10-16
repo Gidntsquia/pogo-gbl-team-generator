@@ -290,3 +290,42 @@ move-ahead log, determinism). Bench: `gpu/gpu/sched_bench.py`; 5-gen runs `out/g
   `POGO_GPU_AHEAD=on`. `--gpu` runs at CPU share 0 this round; re-add the share once GPU speed stabilises.
 - **Next:** choose the search trade-off (halving 3: shortest generation; halving 2: over 1,500 b/s, +2.4 s GPU per
   generation), then re-add the CPU share.
+
+## Round 7: width picker and island halving
+
+Report: `node gpu/gpu-width.mjs` → `out/gpu-width.html` (linked from `gpu-sched.html`: wall and b/s per setting,
+auto vs fixed width, occupancy timelines, width bench, finalists, island runs, probe, correctness, same-seed table).
+Bench: `gpu/gpu/width_bench.py` (writes `gpu/gpu/width-table.json`); runs: `out/gpu/width/chain.sh`.
+
+- **Width bench (threads per battle G = 1..32, slices 1k–36k, median of 5 launches).** No width wins by much: at 5k
+  G=1 929 b/s, G=16 924, G=32 915; at 36k G=2 2,045, G=1 1,981, G=32 1,857. Mixed widths in one launch (`mix`, top
+  5–20% by predicted length on wide lanes) are slower than G=1 at every size (36k: 1,814–1,931). Every width, mix and
+  auto pass verify (same results as the CPU engine).
+- **Auto picker.** Fill formula (widest G that still covers every resident lane), bounded by the bench table: a width
+  is allowed when it is within 2% of the bucket's best. At 5% auto picked G=4 at 2.5k, which a recheck measured 6%
+  under G=16; 2% fixed it. Auto is within 5% of the best fixed width at every size (737 / 587 / 926 / 1,326 / 1,686 /
+  2,031 b/s at 1k–36k).
+- **5-gen run (v2's command, auto, 5 runs):** median 1,332 b/s (1,324–1,365) vs round 6's 1,315 (+1.3%).
+- **Island halving (`POGO_GPU_ISLAND=on`, experimental, off by default).** Every halving round of a generation step runs
+  in one GPU launch: 20 launches in 20 generations, and the host reference recomputes each island cut with 0
+  mismatches in all 14 island runs. It is slower than standard halving: halving 3 17.6 vs 12.1 s per warm
+  generation, halving 2 15.7 vs 13.4 s (+17.6%). The reason is that one launch uses FIFO tasks with no slicing or
+  length order, so each island round waits for its longest battle. Finalists on the gen-19 pool of 300 opponents
+  (CPU engine): mean win% of the top 12 is 57.8% (island halving 3) and 57.7% (island halving 2), against 57.3%
+  (halving 3), 57.1% (halving 2) and 57.0% (full grid). The search quality is about the same.
+- **Population (20 gens, median of runs).** At halving 3, b/s is 1,274 at 1×, 1,505 at 1.5× and 1,521 at 2×; bigger
+  launches fill the GPU. Halving 2 runs at 1,535, 1,738 and 1,675 b/s, and full grid at 1,686, 1,653 and 1,644.
+- **Best setting (lowest warm wall per generation at pop 1×):** G=16 with halving 3, 11.9 s per warm generation,
+  4.3 min total, 1,288 b/s, which is below the 1,500 bar. Auto with halving 3 is 12.1 s (1.6% slower). At pop 1×,
+  only halving 2 (1,535) and full grid (1,686) clear 1,500 b/s, and they do it by running more battles per generation.
+- **Correctness.** verify_3v3 and verify_1v1 PASS for every width, mix and auto. Every setting's same-seed runs
+  write identical checkpoints (18 settings, 20 checkpoints each). A CPU-only 2-gen run with round-7 code is
+  identical to round 5's `out/gpu/gap/cpu2b`.
+- **Run notes.** Two pop-2× island runs were slowed by other load on the machine: isl-h2-p2-r2 ran at 1,048 b/s (its
+  gen 0 took 619 s against 135 s) and isl-h3-p2-r2 at 1,121 b/s. Each setting got a clean third run, so the median
+  of 3 outvotes the slowed one, and the page marks runs more than 15% under their median as "slowed". At the user's
+  request, isl-h3-p2-r2 was stopped after its gen-13 checkpoint to free memory, then resumed from that checkpoint.
+  Its 20 checkpoints are identical to isl-h3-p2's. Its total wall leaves out the 122.3 min pause and the resumed
+  process's 2.8 s of setup. The pause starts at the gen-13 checkpoint, so the unfinished gen 14 is also dropped.
+- **Next:** re-add the CPU share at the chosen setting. Retire the probe: its picks match the formula in 3 of 6
+  buckets, and the widths are now fixed per bucket in `width-table.json`.

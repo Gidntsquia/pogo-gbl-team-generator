@@ -65,12 +65,15 @@ function runStats(dir) {
   const m = name.match(/^(auto|isl|mix|w\d+)-h(\d)-p([\d.]+)(?:-r(\d+))?$/) ?? name.match(/^(5g-auto)()()(?:-r(\d+))?$/);
   if (!m) return null;
   const prof = rd(`${dir}/gpu-profile.json`);
+  // a resumed run's second setup + sidecar start (resume.sh merges them as resume_*): a cost of the stop, not of the setting
+  const restart = (prof?.phases?.resume_setup ?? 0) + (prof?.phases?.resume_sidecarStart ?? 0);
   const start = +(log.match(/wall start ([\d.]+)/)?.[1] ?? NaN);
-  const exit = log.match(/^exit (\d+)/m)?.[1];
+  const exit = [...log.matchAll(/^exit (\d+)/gm)].at(-1)?.[1]; // a resumed run (out/gpu/width/resume.sh) logs the stop's exit first
+  const paused = sum([...log.matchAll(/^wall pause ([\d.]+)/gm)], (x) => +x[1]); // idle time between a stop's last checkpoint and its resume
   const gens = [...log.matchAll(/^generation (\d+): done -- .*?(\d+) battles simulated \+ (\d+) served from cache/gm)].map((x) => ({ g: +x[1], sim: +x[2], hit: +x[3] }));
   const G = gens.length;
   const lastCk = `${dir}/evolve-gen${G - 1}.json`;
-  const total = G && existsSync(lastCk) && start ? statSync(lastCk).mtimeMs / 1000 - start : null;
+  const total = G && existsSync(lastCk) && start ? statSync(lastCk).mtimeMs / 1000 - start - paused - restart : null;
   const rate = gens.map((x) => x.hit / Math.max(1, x.sim + x.hit));
   const tail = rate.slice(-5), tailMean = tail.length ? sum(tail) / tail.length : null;
   const sat = G >= 5 ? rate.findIndex((r) => Math.abs(r - tailMean) <= 0.02) : -1;
@@ -82,7 +85,7 @@ function runStats(dir) {
   const islandChecks = [...log.matchAll(/gpu island check -- (\d+) teams cut differently.*?, (\d+) extra battles/g)].map((x) => [+x[1], +x[2]]);
   const widths = [...log.matchAll(/gpu width -- (\d+) battles, G=(\w+)/g)].map((x) => [+x[1], x[2]]);
   return {
-    dir, name, mode: m[1], h: m[2], pop: m[3], rep: +(m[4] ?? 1), key: m[1] === '5g-auto' ? '5g-auto' : `${m[1]}-h${m[2]}-p${m[3]}`,
+    paused, restart, dir, name, mode: m[1], h: m[2], pop: m[3], rep: +(m[4] ?? 1), key: m[1] === '5g-auto' ? '5g-auto' : `${m[1]}-h${m[2]}-p${m[3]}`,
     label: m[1] === '5g-auto' ? 'auto, halving 3, 5 gens' : SETTING_LABEL(m[1], m[2]), exit: exit == null ? null : +exit, gens: G, total, sat, warm,
     warmPerGen: warm != null ? warm / (G - sat) : null, bps: SW ? N / SW : null, battlesPerGen: G ? sum(gens, (x) => x.sim) / G : null,
     gpuPerGen: G ? SW / G : null, stepWall: SW, battles: N, rate, tailMean, steps: steps.length, launchSteps: steps.filter((x) => x.n > 0).length, islandSteps, islandChecks, widths,
@@ -279,8 +282,10 @@ function bpsChart() {
 
 // ---------------------------------------------------------------- determinism (R3/R7), probe (R5), island (R7)
 const detRows = [...byKey.entries()].filter(([, R]) => R.length >= 2).map(([key, R]) => {
-  const c = compareRuns(R[0].dir, R[1].dir);
-  return [esc(R[0].label), popLabel(R[0].pop), `${esc(R[0].name)} vs ${esc(R[1].name)}`, `${c.files} checkpoints`, tag(c.same, 'IDENTICAL', `DIFFERENT: ${esc(c.differ.slice(0, 3).join(', '))}`)];
+  // every later run against the first
+  const cs = R.slice(1).map((x) => compareRuns(R[0].dir, x.dir));
+  const same = cs.every((c) => c.same), differ = cs.flatMap((c) => c.differ);
+  return [esc(R[0].label), popLabel(R[0].pop), `${esc(R[0].name)} vs ${R.slice(1).map((x) => esc(x.name)).join(', ')}`, cs.map((c) => `${c.files} checkpoints`).join(', '), tag(same, 'IDENTICAL', `DIFFERENT: ${esc(differ.slice(0, 3).join(', '))}`)];
 });
 const detAll = detRows.length ? detRows.every((r) => r[4].includes('IDENTICAL')) : null;
 const det2 = (txt(`${W}/det.txt`) ?? '').trim();
@@ -344,7 +349,10 @@ const conclusion = [
 ];
 
 // ---------------------------------------------------------------- page
-const runRows = runs.map((r) => [esc(r.name), esc(r.label), r.pop ? popLabel(r.pop) : '', r.exit == null ? '<span class="na">running</span>' : tag(r.exit === 0, 'exit 0', `exit ${r.exit}`), r.gens,
+// a run more than 15% under its setting's median b/s was slowed by something outside it (the user's own load on this box)
+const slowRun = (r) => { const s = settings.find((x) => x.key === r.key); return r.exit === 0 && s?.R.length >= 3 && r.bps < s.bps * 0.85; };
+const slowRuns = runs.filter(slowRun);
+const runRows = runs.map((r) => [esc(r.name) + (slowRun(r) ? ' <span class="na">slowed</span>' : ''), esc(r.label), r.pop ? popLabel(r.pop) : '', r.exit == null ? '<span class="na">running</span>' : tag(r.exit === 0, 'exit 0', `exit ${r.exit}`), r.gens,
   mins(r.total), r.warm == null ? 'n/a' : `${mins(r.warm)}<br><small>${n1(r.warmPerGen)} s/gen</small>`, r.sat >= 0 ? `gen ${r.sat}<br><small>hit ${pct(r.rate[r.sat])}, final-5 ${pct(r.tailMean)}</small>` : 'n/a',
   n0(r.bps), n0(r.battlesPerGen), n1(r.gpuPerGen)]);
 const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f5f7fa;--ok:#157347;--bad:#b42318;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4}
@@ -369,7 +377,7 @@ ${wallChart()}
 <p class="mut">Total wall = run start → last checkpoint written. Warm = sum of generation walls from the saturation generation on; saturation = first generation whose memo hit rate is within 2 pp of the run's final-5-generation mean. ★ = lowest warm s/gen at pop 1×.</p>
 <h2>Battles per second per setting</h2>
 ${bpsChart()}
-<details open><summary>Every run (R9)</summary>${table(['run', 'setting', 'pop', 'exit', 'gens', 'total wall', 'warm wall', 'saturation', 'b/s', 'battles/gen', 'GPU s/gen'], runRows)}</details>
+<details open><summary>Every run (R9)</summary>${table(['run', 'setting', 'pop', 'exit', 'gens', 'total wall', 'warm wall', 'saturation', 'b/s', 'battles/gen', 'GPU s/gen'], runRows)}<div id="run-notes"></div>${slowRuns.length ? `<p class="mut">Slowed (b/s more than 15% under the setting's median of ${'≥'}3 runs; they ran while other work on this machine shared the GPU): ${slowRuns.map((r) => `${esc(r.name)} ${n0(r.bps)} b/s`).join(', ')}. Medians per setting use every run; a third clean run outvotes the slowed one.</p>` : ''}${runs.filter((r) => r.paused > 0).map((r) => `<p class="mut">${esc(r.name)} was stopped after a checkpoint and resumed from it (user request): its total wall leaves out the ${mins(r.paused)} pause (which starts at that checkpoint, so it also drops the unfinished generation) and the resumed process's ${n1(r.restart)} s setup and sidecar start.</p>`).join('')}</details>
 
 <h2>Width vs launch size (auto vs fixed)</h2>
 ${bucketSvg}
