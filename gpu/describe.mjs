@@ -80,6 +80,11 @@ export function makeDescriber(ctx) {
     throw new Error('unknown formChange ' + JSON.stringify(fc));
   }
   const snapshotCache = new Map();
+  /** Pokemon.js changeForm's replaceMove, as plain move -> the variant that form carries. */
+  const FORM_MOVES = {
+    aegislash_shield: { AIR_SLASH: 'AEGISLASH_CHARGE_AIR_SLASH', PSYCHO_CUT: 'AEGISLASH_CHARGE_PSYCHO_CUT' },
+    morpeko_hangry: { AURA_WHEEL_ELECTRIC: 'AURA_WHEEL_DARK' },
+  };
   /** Fresh per-form snapshot rows of the mon's family, built by really calling pvpoke's changeForm. */
   function formSnapshots(p, fam) {
     const orig = p.originalFormId;
@@ -91,7 +96,10 @@ export function makeDescriber(ctx) {
     if (rows) return rows;
     rows = fam.forms.map((formId) => {
       const q = buildPokemon(ctx, { speciesId: orig, ivs: { atk: p.ivs.atk, def: p.ivs.def, hp: p.ivs.hp }, shadow: p.shadowType === 'shadow', bestBuddy: p.level > 40 });
-      applyGroupMoveset(q, { fastMove: fast, chargedMoves: charged });
+      // The start form's own row needs that form's move variants: changeForm() swaps them in for every other form, but the
+      // start form is never changed into (a shield-start Aegislash would otherwise snapshot plain Psycho Cut, gain 9).
+      const own = formId === orig ? FORM_MOVES[orig] ?? {} : {};
+      applyGroupMoveset(q, { fastMove: own[fast] ?? fast, chargedMoves: charged.map((m) => own[m] ?? m) });
       if (formId !== orig) q.changeForm(formId);
       const gmForm = ctx.gm.getPokemonById(formId);
       const nat = gmForm.nativeStatBuffs;

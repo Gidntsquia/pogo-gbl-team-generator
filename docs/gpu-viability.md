@@ -146,7 +146,7 @@ Not ported (named, not approximated):
 
 - AI difficulty other than the level 3 the evolve search uses; simulate-mode ActionLogic inside the 3v3 path.
 - Animations and decision logging (`pushAnimation`, `logDecision`): no effect on results.
-- Residual differences (226 of 89,355 form-changer 1v1 scenarios, mostly `turnsToKO`; 4 of 18 form-changer fixture pairings): not traced to a vendor line.
+- Residual differences (29 of 89,355 form-changer 1v1 scenarios; 3 of 18 form-changer fixture pairings, HP/turn only): not traced to a vendor line.
   Suspects, unconfirmed: the Surf-vs-Dive test at `Battle.js` 1133-1134 and Aegislash move replacement (`Pokemon.js` 2513-2520) persisting across a switch.
 
 Hard parts: RNG draw order (`rng` advances per lookahead sim; `chooseOption`, buff rolls, WAIT_CLOCK, `decideShield` and OVERFARM draws), virtual-timer queue ordering,
@@ -162,8 +162,8 @@ defined by the species, not by the old flag counts).
 
 | set | build | scenarios | rows with a mismatch | notes |
 |---|---|---|---|---|
-| previously flagged (form changers) | double | 89,355 | 226 (0.25%) | rating 25, hp 18/12, energy 13/15, turnsToKO 124/87, rngDraws 7 |
-| previously flagged (form changers) | float32 | 89,355 | 226 (0.25%) | same counts; winner agreement 99.99%, win-rate delta +0.00 pp → PASS |
+| previously flagged (form changers) | double | 89,355 | 29 (0.03%) | rating 25, hp 18/12, energy 13/15, turnsToKO 8/6, rngDraws 7 (was 226, mostly turnsToKO, before the start-form move fix) |
+| previously flagged (form changers) | float32 | 89,355 | 29 (0.03%) | same counts; winner agreement 99.99%, win-rate delta +0.00 pp → PASS |
 | rest | double | 1,103,981 | **0** | |
 | rest | float32 | 1,103,981 | 195 (0.018%) | rating 182 |
 
@@ -175,11 +175,13 @@ rankings-1500 leads: 398 pairs, 0 rating and 0 any-field mismatches (both builds
 |---|---|---|---|---|---|
 | previously flagged (form changers) | 436 | 0 | 0 | 1 | 2 |
 | rest | 1,964 | 0 | 0 | 8 | 8 |
-| fixtures (incl. 18 form-changer lead pairings) | 36 | 0 | 1 | 4 | 5 |
+| fixtures (incl. 18 form-changer lead pairings) | 36 | 0 | 0 | 3 | 3 |
 
-Double build: previously flagged 0/0/0 winner/HP/turn mismatches (435 compared), rest 0/0/0 (1,946 compared), fixtures 1/4/5; no pass bar applied to double.
+Double build: previously flagged 0/0/0 winner/HP/turn mismatches (436 compared), rest 0/0/0 (1,964 compared), fixtures 0/3/3; no pass bar applied to double.
 Float32 (pool 768, 0 flagged; the double row above is from the earlier pool-320 run): team-A win rate pvpoke 49.94% vs kernel 49.94% (+0.00 pp) → PASS; per-matchup winner agreement 100.00% → PASS; previously-flagged subset alone 436 battles, 100.00%, +0.00 pp.
-The fixture mismatches are all in form-changer lead pairings (`forms-02`, `forms-11`, `forms-21`, `forms-mirror-21`; one winner flips in `forms-02`). Flagged invalid
+The fixture mismatches are all HP/turn-only, in form-changer lead pairings (`forms-11`, `forms-21`, `forms-mirror-21`); no winner flips.
+The `forms-02` winner flip is fixed: `gpu/describe.mjs` gave the start form's own snapshot the plain move (shield Aegislash `PSYCHO_CUT`, gain 9) instead of
+its form move (`AEGISLASH_CHARGE_PSYCHO_CUT`, gain 6). In `forms-11` the GPU skips a shield on Morpeko's charged move at turn 28 that pvpoke uses (shield-decision gap, not yet traced). Flagged invalid
 = `POOL_OVERFLOW` (the lookahead pool capacity of the 3v3 kernel), reported in the "flagged invalid" count, distinct from the removed "unsupported" flag.
 
 Earlier-round fix kept for reference: `Battle.js` line 415 `action.priority -= 40` is dead code; the first kernel applied it and gave 96.11% agreement.
