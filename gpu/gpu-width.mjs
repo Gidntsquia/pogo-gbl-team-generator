@@ -85,7 +85,7 @@ function runStats(dir) {
     dir, name, mode: m[1], h: m[2], pop: m[3], rep: +(m[4] ?? 1), key: m[1] === '5g-auto' ? '5g-auto' : `${m[1]}-h${m[2]}-p${m[3]}`,
     label: m[1] === '5g-auto' ? 'auto, halving 3, 5 gens' : SETTING_LABEL(m[1], m[2]), exit: exit == null ? null : +exit, gens: G, total, sat, warm,
     warmPerGen: warm != null ? warm / (G - sat) : null, bps: SW ? N / SW : null, battlesPerGen: G ? sum(gens, (x) => x.sim) / G : null,
-    gpuPerGen: G ? SW / G : null, stepWall: SW, battles: N, rate, tailMean, steps: steps.length, islandSteps, islandChecks, widths,
+    gpuPerGen: G ? SW / G : null, stepWall: SW, battles: N, rate, tailMean, steps: steps.length, launchSteps: steps.filter((x) => x.n > 0).length, islandSteps, islandChecks, widths,
     probe: [...log.matchAll(/gpu probe -- bucket (\S+): tried (.*?) in (\d+) launches; pick G=(\d+) \(default G=(\d+)\)/g)].map((x) => ({ bucket: x[1], tried: x[2], n: +x[3], pick: +x[4], def: +x[5] })),
     steps5: (prof?.steps ?? []).filter((s) => s.gen !== 'final' && s.gen < 5),
   };
@@ -293,7 +293,7 @@ const probeByBucket = BNAMES.map((b) => {
     `${n1(median(P.map((p) => p.n)))}`, `<small>${esc(P[0].tried)}</small>`];
 }).filter(Boolean);
 const islRuns = runs.filter((r) => r.mode === 'isl' && r.exit === 0);
-const islRows = islRuns.map((r) => [esc(r.name), r.gens, r.islandSteps, `${r.steps} profile steps`, r.islandChecks.length ? `${r.islandChecks.length} steps: ${sum(r.islandChecks, (x) => x[0])} cut differently, ${sum(r.islandChecks, (x) => x[1])} extra battles` : '0 mismatches']);
+const islRows = islRuns.map((r) => [esc(r.name), r.gens, r.islandSteps, `${r.launchSteps} with battles (GPU launches), ${r.steps - r.launchSteps} all-memo scoring passes (no launch)`, r.islandChecks.length ? `${r.islandChecks.length} steps: ${sum(r.islandChecks, (x) => x[0])} cut differently, ${sum(r.islandChecks, (x) => x[1])} extra battles` : '0 mismatches']);
 const verify = ['1', '2', '4', '8', '16', '32', 'mix', 'auto'].map((g) => {
   const v3 = txt(`${W}/verify3v3-w${g}.log`) ?? '', v1 = txt(`${W}/verify1v1-w${g}.log`) ?? '';
   const pass3 = (v3.match(/agreement 100\.00% -> PASS/g) ?? []).length, flagged = [...v3.matchAll(/(\d+) flagged invalid/g)].map((x) => +x[1]);
@@ -334,9 +334,9 @@ const islPair = islBest ? settings.find((s) => s.key === `auto-h${islBest.h}-p1`
 const finMean = (k) => (fin?.sets[k] ? sum(fin.sets[k].teams, (t) => t.win) / fin.sets[k].teams.length : null);
 const h3s = (p) => settings.find((s) => s.key === `auto-h3-p${p}`);
 const conclusion = [
-  best ? `<b>Best at pop 1×:</b> ${esc(best.label)}, ${n1(best.warmPerGen)} s per warm generation, total ${mins(best.total)}, ${n0(best.bps)} b/s (${best.bps >= TARGET ? 'above' : 'below'} 1,500).` : 'Best setting: pending (runs not finished).',
+  best ? `<b>Best at pop 1×:</b> ${esc(best.label)}, ${n1(best.warmPerGen)} s per warm generation, total ${mins(best.total)}, ${n0(best.bps)} b/s (${best.bps >= TARGET ? 'above' : 'below'} 1,500)${best.key !== 'auto-h3-p1' && h3s('1') ? `; auto halving 3 ${n1(h3s('1').warmPerGen)} s (${pct(h3s('1').warmPerGen / best.warmPerGen - 1)} slower)` : ''}.` : 'Best setting: pending (runs not finished).',
   `<b>Width picker:</b> auto ${allWithin == null ? 'pending' : allWithin ? 'within 5% of the best fixed width in every bench bucket' : `more than 5% below the best fixed width at ${bucketRows.filter((r) => !r.ok).map((r) => n0(r.size)).join(', ')}`}; 5-gen halving 3 median ${n0(r5med)} b/s vs 1,315 (slice+bin).`,
-  islBest && islPair ? `<b>Island halving:</b> ${esc(islBest.label)} ${n1(islBest.warmPerGen)} vs ${n1(islPair.warmPerGen)} s/warm gen standard (${pct(islBest.warmPerGen / islPair.warmPerGen - 1)}); finalist mean win% ${pct(finMean(islBest.key))} vs ${pct(finMean(islPair.key))}.` : '<b>Island halving:</b> pending.',
+  islBest && islPair ? `<b>Island halving:</b> ${esc(islBest.label)} ${n1(islBest.warmPerGen)} vs ${n1(islPair.warmPerGen)} s/warm gen standard (${pct(islBest.warmPerGen / islPair.warmPerGen - 1)}); finalist mean win% ${pct(finMean(islBest.key))} vs ${pct(finMean(islPair.key))}. Cost: one launch, FIFO tasks, no slicing or length order, so each island round waits on its longest battle.` : '<b>Island halving:</b> pending.',
   `<b>Population:</b> halving 3 b/s ${n0(h3s('1')?.bps)} at 1×, ${n0(h3s('1.5')?.bps)} at 1.5×, ${n0(h3s('2')?.bps)} at 2× (1,500 bar).`,
   '<b>Next:</b> re-add the CPU share at the chosen setting and retire the probe (widths are fixed per bucket in width-table.json).',
 ];
@@ -385,7 +385,7 @@ ${table(['width', '5k b/s', '5k span', '5k idle', '36k b/s', '36k span', '36k id
 <h2>Island halving vs standard: finalists on the full pool (R8)</h2>
 ${finalistTable()}
 <h3>Island runs: launches per step and host check (R7)</h3>
-${islRows.length ? table(['run', 'gens', 'island launches', 'steps', 'host reference check'], islRows) : '<p class="na">no island runs finished yet</p>'}
+${islRows.length ? table(['run', 'gens', 'island launches (log lines)', 'profile steps', 'host reference check'], islRows) : '<p class="na">no island runs finished yet</p>'}
 
 <h2>Probe convergence (R5, POGO_GPU_PROBE=on in the auto grid)</h2>
 ${probeByBucket.length ? table(['bucket', 'formula default', 'probe picks (runs)', 'most common pick', 'vs default', 'launches to converge (median)', 'one run\'s tries'], probeByBucket) : '<p class="na">no probe lines yet</p>'}
