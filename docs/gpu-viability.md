@@ -281,7 +281,9 @@ move-ahead log, determinism). Bench: `gpu/gpu/sched_bench.py`; 5-gen runs `out/g
 - **Bigger launches (fewer halving rounds), slice + bin, 5 runs each:** `--halving-rounds 2` 1,535 b/s, full grid
   (`0`) 1,618 (20-gen: 1,517 / 1,658); v2 1,199 / 1,225. Not v2's command: more battles per generation (28.5k / 35.9k
   vs 21.3k), a different search (top 12 at gen 4: 6 / 2 of 12 shared with halving 3), and more GPU seconds per
-  generation (18.6 / 22.2 vs 16.2).
+  generation (18.6 / 22.2 vs 16.2). 20-gen repeats (2 runs each) match their first runs exactly at gen 19.
+- **Kernel bench rerun (night, current kernel):** 36k-battle launch, slice 1,973 b/s, slice + bin 1,929 (evening:
+  1,810 / 1,737, before the ticket fix that lets idle lanes leave); span ×0.92 / ×0.94 of paired v2.
 - **Idle left:** ~92% of threads on a 5k launch (too small to fill the GPU), ~36% on 36k (tail of longest series).
 - **Flags (experimental, off by default):** `POGO_GPU_KERNEL=slice`, `POGO_GPU_SLICE_TURNS`, `POGO_GPU_SERIES`,
   `POGO_GPU_SLICE_MODE=handoff|requeue`, `POGO_GPU_SPREAD=off`, `POGO_GPU_BIN=on`, `POGO_GPU_STREAMS=N`,

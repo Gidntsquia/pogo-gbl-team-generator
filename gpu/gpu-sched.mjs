@@ -357,11 +357,21 @@ const sameRows = [
   ['slice + bin vs v2, 20 gens', 'g20-v2', 'g20-slice-bin', 19],
   ['slice + bin vs v2, halving 2', 'h2-v2-r1', 'h2-slice-bin-r1', 4],
   ['slice + bin vs v2, full grid', 'h0-v2', 'h0-slice-bin', 4],
+  ['slice + bin vs v2, 20 gens, halving 2', 'g20-h2-v2', 'g20-h2-slice-bin', 19],
+  ['slice + bin vs v2, 20 gens, full grid', 'g20-h0-v2', 'g20-h0-slice-bin', 19],
   ['halving 2 vs halving 3 (v2)', 'v2-share0', 'h2-v2-r1', 4],
   ['full grid vs halving 3 (v2)', 'v2-share0', 'h0-v2', 4],
 ].map(([k, a, b, g]) => [k, sameRun(`${OUT}/evolve-gpu6-${a}`, `${OUT}/evolve-gpu6-${b}`, g), g]).filter((x) => x[1]);
 const sameHtml = sameRows.length ? `<dl class="keys">${sameRows.map(([k, r, g]) => `<dt>${k}</dt><dd>${r.same ? `<span class="pass">same results</span> <small>(gen-${g} checkpoint equal apart from timing)</small>` : `<b>different search</b> <small>(top 12 at gen ${g}: ${r.shared} of 12 shared)</small>`}</dd>`).join('')}</dl>` : '';
-const extraCharts = [stepChart(), bigLaunchChart(), sameHtml, longRunBars(), longRunChart()].filter(Boolean);
+/** Kernel benches rerun at night on the current kernel (after the 2026-10-15 21:49 ET ticket fix), next to the evening runs. */
+function nightBench() {
+  const P = [['slice, requeue + spread', 'i2-requeue-spread', 'i2-night'], ['+ length binning', 'i3-bin', 'i3-night']];
+  const rows = P.map(([k, a, b]) => [k, rd(`${OUT}/gpu/sched/${a}.json`)?.slices?.find((s) => s.size === 36000), rd(`${OUT}/gpu/sched/${b}.json`)?.slices?.find((s) => s.size === 36000)]).filter((r) => r[1] && r[2]);
+  if (!rows.length) return '';
+  const md = (s) => median(s.launches.map((l) => l.bps)), rt = (s) => median(s.launches.map((l) => l.span_ratio));
+  return `<dl class="keys"><dt>Kernel bench, 36,000 battles</dt><dd>${rows.map(([k, a, b]) => `${k}: ${n0(md(a))} → <b>${n0(md(b))}</b> b/s <small>(span ×${rt(b).toFixed(2)} of paired v2; evening run → night rerun on the current kernel)</small>`).join('<br>')}</dd></dl>`;
+}
+const extraCharts = [stepChart(), bigLaunchChart(), sameHtml, nightBench(), longRunBars(), longRunChart()].filter(Boolean);
 const extraHtml = extraCharts.length ? `<h2 id="extra">Extra runs</h2>
 <p class="mut">Overnight runs, 2026-10-16. Same command and seed as the 5-gen runs; only <code>--halving-rounds</code> (3 = normal, 2, 0 = full grid: one launch per generation) and <code>--generations</code> change.</p>
 ${extraCharts.join('\n')}` : '';
