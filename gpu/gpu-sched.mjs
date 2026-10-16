@@ -52,6 +52,8 @@ const repDirs = (dir) => {
   const re = new RegExp(`^${base.replace(/[-.]/g, '\\$&')}-r\\d+$`);
   return [dir, ...readdirSync(parent).filter((f) => re.test(f)).map((f) => `${parent}/${f}`)];
 };
+/** b/s of every finished 5-gen run whose out/ dir name matches re. */
+const bpsOf = (re) => readdirSync('out').filter((f) => re.test(f)).map((f) => run5one(`out/${f}`)).filter((x) => x?.done && x.gens >= 5).map((x) => x.bps);
 /** 5-gen stats over all finished repeats: the median-speed repeat's fields plus `reps` (b/s each), min, max. */
 function run5(dir) {
   const all = repDirs(dir).map((d) => run5one(d)).filter((x) => x && x.gens >= 5 && x.done);
@@ -223,6 +225,8 @@ const keyLines = best ? [
   ['5-gen speed', `<b>${n0(best.r5.bps)} b/s</b>${base ? ` (old kernel at same CPU share: ${n0(base.r5.bps)} → ×${n2(best.r5.bps / base.r5.bps)})` : ''}`],
   ['vs 1,500 target', `${tag(best.r5.bps >= TARGET)} — ${n0((best.r5.bps / TARGET) * 100)}% of the way`],
   [`vs ×10 CPU (${n0(X10)})`, tag(best.r5.bps >= X10)],
+  ...(() => { const h = bpsOf(/^evolve-gpu6-h2-slice-bin-r\d+$/), sr = h.length ? sameRun('out/evolve-gpu6-v2-share0', 'out/evolve-gpu6-h2-v2-r1', 4) : null;
+    return h.length ? [['Same + <code>--halving-rounds 2</code>', `<b>${n0(median(h))} b/s</b> (median of ${h.length}, ${n0(Math.min(...h))}–${n0(Math.max(...h))}) ${tag(median(h) >= TARGET, 'over 1,500', 'under 1,500')} — fewer, bigger launches; not v2's command: it changes the search (top 12 at gen 4: ${sr?.shared ?? '?'} of 12 shared with halving 3)`]] : []; })(),
   ['Idle left', `5k launch ${pct(bS5?.idle_median)} (too few battles to fill the GPU) · 36k launch ${pct(bS36?.idle_median)} (waiting on the longest battles)`],
   ['Did not help', `${esc(dropped.join(', '))} (dropped: idle went up, or a sibling did better)`],
   ['Next step', 'put several small steps into one launch on this kernel; then re-add the CPU share'],
@@ -275,7 +279,7 @@ function bigLaunchChart() {
 /** Per-generation battles/s of a long run: battles ÷ step wall within each generation. */
 const perGen = (dir) => {
   const prof = rd(`${dir}/gpu-profile.json`); if (!prof?.steps?.length) return [];
-  const by = new Map(); for (const st of prof.steps) { const e = by.get(st.gen) ?? { n: 0, w: 0 }; e.n += st.n; e.w += st.wall; by.set(st.gen, e); }
+  const by = new Map(); for (const st of prof.steps.filter((x) => x.gen !== 'final')) { const e = by.get(st.gen) ?? { n: 0, w: 0 }; e.n += st.n; e.w += st.wall; by.set(st.gen, e); }
   return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([gen, e]) => ({ gen, bps: e.n / e.w, n: e.n }));
 };
 function longRunChart() {
@@ -319,7 +323,23 @@ function stepChart() {
   });
   return `<svg viewBox="0 0 900 ${Y0 + 40}" class="fig" role="img" aria-label="seconds per GPU step">${g}</svg>`;
 }
-const extraCharts = [stepChart(), bigLaunchChart(), longRunChart()].filter(Boolean);
+/** Two runs' checkpoints at gen g: equal apart from timing fields, and top-12 teams shared. */
+function sameRun(a, b, g) {
+  const ld = (d) => { const j = rd(`${d}/evolve-gen${g}.json`); if (!j) return null; delete j.runStartedAt; delete j.timing; return j; };
+  const A = ld(a), B = ld(b); if (!A || !B) return null;
+  const top = (c) => c.population.map((p, i) => [p.join('|'), c.fitness[i]]).sort((x, y) => y[1] - x[1]).slice(0, 12).map((x) => x[0]);
+  const ta = new Set(top(A));
+  return { same: JSON.stringify(A) === JSON.stringify(B), shared: top(B).filter((x) => ta.has(x)).length };
+}
+const sameRows = [
+  ['slice + bin vs v2, 5 gens', 'v2-share0', 'slice-bin', 4],
+  ['slice + bin vs v2, 20 gens', 'g20-v2', 'g20-slice-bin', 19],
+  ['slice + bin vs v2, halving 2', 'h2-v2-r1', 'h2-slice-bin-r1', 4],
+  ['slice + bin vs v2, full grid', 'h0-v2', 'h0-slice-bin', 4],
+  ['halving 2 vs halving 3 (v2)', 'v2-share0', 'h2-v2-r1', 4],
+].map(([k, a, b, g]) => [k, sameRun(`${OUT}/evolve-gpu6-${a}`, `${OUT}/evolve-gpu6-${b}`, g), g]).filter((x) => x[1]);
+const sameHtml = sameRows.length ? `<dl class="keys">${sameRows.map(([k, r, g]) => `<dt>${k}</dt><dd>${r.same ? `<span class="pass">same results</span> <small>(gen-${g} checkpoint equal apart from timing)</small>` : `<b>different search</b> <small>(top 12 at gen ${g}: ${r.shared} of 12 shared)</small>`}</dd>`).join('')}</dl>` : '';
+const extraCharts = [stepChart(), bigLaunchChart(), sameHtml, longRunChart()].filter(Boolean);
 const extraHtml = extraCharts.length ? `<h2 id="extra">Extra runs</h2>
 <p class="mut">Same command and seed as the 5-gen runs. "Bigger launches" = <code>--halving-rounds 2</code> (fewer, larger GPU steps; it also changes which teams the search keeps). The 20-gen run shows whether the speed holds as the population changes.</p>
 ${extraCharts.join('\n')}` : '';
