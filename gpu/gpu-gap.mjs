@@ -236,12 +236,12 @@ ${warpGrid(390, 376, warpsUsed(36000, 'warp'), '36k launch, warp-per-battle', `a
 </svg>`;
 /** Dot plot: one row per series, every launch a dot, median as a tick. */
 function dots(rowsIn, { lo, hi, unit, ref, refLabel, w = 360, title }) {
-  const L = 92, R = 30, top = 44, rh = 34, H = top + rowsIn.length * rh + 26;
+  const L = 92, R = 30, top = ref != null ? 62 : 44, rh = 34, H = top + rowsIn.length * rh + 26;
   const X = (v) => L + ((v - lo) / (hi - lo)) * (w - L - R);
   let g = `<text x="8" y="16" class="h">${title}</text>`;
   const step = [0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5].find((x) => (hi - lo) / x <= 7);
   for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) { g += `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 4}" y2="${H - 22}" stroke="var(--line)"/><text x="${X(v)}" y="${H - 8}" text-anchor="middle" class="sub">${unit === '×' ? '×' + v.toFixed(step < 0.1 ? 2 : 1) : v.toFixed(step < 1 ? 1 : 0) + ' s'}</text>`; }
-  if (ref != null) g += `<line x1="${X(ref)}" x2="${X(ref)}" y1="${top - 14}" y2="${H - 22}" stroke="var(--mut)" stroke-dasharray="4 3"/><text x="${X(ref) + 4}" y="${top - 6}" class="sub">${refLabel}</text>`;
+  if (ref != null) g += `<line x1="${X(ref)}" x2="${X(ref)}" y1="${top - 10}" y2="${H - 22}" stroke="var(--mut)" stroke-dasharray="4 3"/><text x="${X(ref) + 4}" y="${top - 12}" class="sub">${refLabel}</text>`;
   rowsIn.forEach((r, i) => {
     const y = top + i * rh + rh / 2;
     g += `<text x="${L - 6}" y="${y + 4}" text-anchor="end" class="lbl">${r.label}</text>`;
