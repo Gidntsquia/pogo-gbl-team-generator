@@ -14,6 +14,10 @@ Requests (op):
     7 BATCH3T  tagged, asynchronous BATCH3 (plans round 6, R2): a = tag, arg / payload as BATCH3. The sidecar starts the launch on
                its own CUDA stream and keeps reading, so several are in flight at once; each reply comes when its launch ends
                (any order) with status TAGGED_OK / TAGGED_ERR and b = tag
+    8 ISLAND   island halving (plans round 7 R7): n = body byte length; body = gpu/gpu/island.py parse() layout (meta i32[8] |
+               team rows | per-battle seeds/canon/known | opponent order | slice sizes | islands). Reply: status 0, n = int32 words,
+               a = 1, b = rows run; payload = info i32[4] (G, span us, rows run, tasks) | status i32[nB] | icut i32[nC] |
+               the run rows (status 2) in battle-id order, B_OUT columns each
     9 QUIT
 Responses: op = status (0 ok, 1 error: payload is the UTF-8 message), n = rows, arg = kernel-side microseconds,
     a = columns per row, b = launch pieces (> 1 means the batch was split), payload = i32[n*a] row-major.
@@ -24,7 +28,7 @@ import struct
 
 MAGIC = 0x31504247
 HDR = struct.Struct("<6I")
-PING, STATIC, BATCH3, BATCH1, FILE, STREAMS, BATCH3T, QUIT = 1, 2, 3, 4, 5, 6, 7, 9
+PING, STATIC, BATCH3, BATCH1, FILE, STREAMS, BATCH3T, ISLAND, QUIT = 1, 2, 3, 4, 5, 6, 7, 8, 9
 TAGGED_OK, TAGGED_ERR = 16, 17
 
 
@@ -58,6 +62,6 @@ def request_payload_size(op, n, arg):
         return n * 6 * 4 + n * 6 * D_N * 8 + n * 4
     if op == BATCH1:
         return n * 2 * 4 + n * 2 * D_N * 8
-    if op == STATIC:
+    if op in (STATIC, ISLAND):
         return n
     return 0

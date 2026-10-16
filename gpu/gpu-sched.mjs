@@ -378,7 +378,7 @@ ${extraCharts.join('\n')}` : '';
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU Scheduler Round 6</title><style>${css}</style></head><body>
 <h1>GPU round 6: does a work queue make the GPU faster?</h1>
-<p class="mut">Built by <code>node gpu/gpu-sched.mjs</code>. Related: <a href="gpu-gap.html">why v2 missed 1,500 b/s</a> · <a href="recipe-ab-gpu.html">CPU-vs-GPU A/B page</a>.</p>
+<p class="mut">Built by <code>node gpu/gpu-sched.mjs</code>. Related: <a href="gpu-gap.html">why v2 missed 1,500 b/s</a> · <a href="recipe-ab-gpu.html">CPU-vs-GPU A/B page</a> · <b>round 7: <a href="gpu-width.html">threads per battle, island halving, population</a></b>.</p>
 ${summaryHtml}
 ${extraHtml}
 

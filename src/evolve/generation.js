@@ -24,6 +24,7 @@ import {
 } from './analytics.js';
 import { evaluateTeamsInOrder } from './evaluate.js';
 import { evaluateWithHalving } from './halving.js';
+import { islandPrepass } from './islandHalving.js';
 import { evaluateWithHoeffding } from './hoeffding.js';
 import { evaluateWithSampling } from './sampled.js';
 import { trimHistory, trimSupersededRecords } from './state.js';
@@ -219,6 +220,7 @@ export async function runGeneration(env, state) {
           keep: config.halvingKeep,
           seed: `${config.seed}-gen${generation}`,
           fitnessOf,
+          prepass: islandPrepass(evaluateParams, `${config.seed}-gen${generation}`) ?? undefined,
         })
       : await evaluateTeamsInOrder(env.ctx, evaluateParams);
   const tEval1 = performance.now();

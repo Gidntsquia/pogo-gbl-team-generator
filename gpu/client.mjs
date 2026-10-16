@@ -11,7 +11,7 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 
 const MAGIC = 0x31504247, HDR = 24, D_N = 17;
-export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, BATCH3T: 7, QUIT: 9 };
+export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, BATCH3T: 7, ISLAND: 8, QUIT: 9 };
 const TAGGED_OK = 16, TAGGED_ERR = 17;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const header = (op, n = 0, arg = 0, a = 0, b = 0) => { const h = Buffer.alloc(HDR); [MAGIC, op, n, arg, a, b].forEach((v, i) => h.writeUInt32LE(v >>> 0, i * 4)); return h; };
@@ -41,6 +41,38 @@ export function packBattles(battles) {
     seeds[i] = b.seed >>> 0;
   });
   return { idx, dyn, seeds };
+}
+
+/**
+ * ISLAND request body (plans round 7 R7; layout = gpu/gpu/island.py parse). `teams`: nC candidate teams then nO opponent teams,
+ * each [mon descriptors] already ordered lead-first. Battle id = (c * nO + o) * 2 + seat (seat 0: candidate is team A).
+ * @param {{teams: object[][], nC: number, nO: number, rounds: number, keep: number, seeds: Uint32Array, canon: Int32Array,
+ *   known: Int32Array, order: number[], sizes: number[], islStart: number[], members: number[]}} job
+ * @returns {Uint8Array}
+ */
+export function packIsland(job) {
+  const { teams, nC, nO, rounds, keep, seeds, canon, known, order, sizes, islStart, members } = job;
+  const nT = nC + nO, nB = nC * nO * 2, nIsl = islStart.length - 1;
+  const pad = (nT * 3) % 2 ? 4 : 0;
+  const bytes = 32 + nT * 12 + pad + nT * 3 * D_N * 8 + nB * 12 + (nO + rounds + nIsl + 1 + nC) * 4;
+  const buf = new ArrayBuffer(bytes);
+  let off = 0;
+  const i32 = (n) => { const a = new Int32Array(buf, off, n); off += n * 4; return a; };
+  const meta = i32(8);
+  meta.set([nC, nO, rounds, nIsl, Math.round(keep * 1e6)]);
+  const tIdx = i32(nT * 3);
+  off += pad;
+  const tDyn = new Float64Array(buf, off, nT * 3 * D_N); off += nT * 3 * D_N * 8;
+  teams.forEach((team, t) => team.forEach((d, k) => { tIdx[t * 3 + k] = d.mon; dynRow(d, tDyn, (t * 3 + k) * D_N); }));
+  new Uint32Array(buf, off, nB).set(seeds); off += nB * 4;
+  i32(nB).set(canon);
+  i32(nB).set(known);
+  i32(nO).set(order);
+  i32(rounds).set(sizes);
+  i32(nIsl + 1).set(islStart);
+  i32(nC).set(members);
+  if (off !== bytes) throw new Error(`packIsland: wrote ${off} of ${bytes} bytes`);
+  return new Uint8Array(buf);
 }
 
 export class GpuSidecar {
@@ -107,6 +139,15 @@ export class GpuSidecar {
     this.#child.stdin.write(Buffer.concat([header(OP.BATCH3T, n, real === 'double' ? 1 : 0, tag), ...body]));
     const r = await p;
     return { out: new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length)), cols: r.cols, kernelUs: r.kernelUs, pieces: 1 };
+  }
+  /**
+   * Island halving job (plans round 7 R7; body layout in gpu/gpu/island.py parse) -> {words: Int32Array, kernelUs, rows}.
+   * words = info[4] (G, span us, rows run, tasks) | status[nB] | icut[nC] | run rows (B_OUT cols each, battle-id order).
+   */
+  async island(body, { real = 'float' } = {}) {
+    const buf = Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+    const r = await this.#call(header(OP.ISLAND, buf.length, real === 'double' ? 1 : 0), buf);
+    return { words: new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length)), kernelUs: r.kernelUs, rows: r.pieces };
   }
   /** One packed 1v1 batch: idx Int32Array(n*2), dyn Float64Array(n*2*17) -> {out: Int32Array(n*18), cols}. */
   async batch1({ idx, dyn }, { real = 'float' } = {}) {

@@ -1,5 +1,6 @@
 """Compile and launch the 3v3 battle kernel (one battle per thread)."""
 import os
+import sys
 import numpy as np
 
 from .cuda_guard import require_cuda
@@ -24,7 +25,9 @@ if os.environ.get("POGO_GPU_KERNEL") == "v1":  # profiling only: the round-3 ker
 BLOCK = 32  # threads per block for every launch
 # EXPERIMENTAL (plans round 5), off by default: POGO_GPU_KERNEL=queue -> work-queue kernel; =warp -> one warp per battle for launches
 # up to POGO_GPU_WARP_BELOW battles (default 5000), thread per battle above.
-PROTO = os.environ.get("POGO_GPU_KERNEL", "")
+# round 7: the default is the slice scheduler with the width picker (POGO_GPU_WIDTH, default auto; gpu/gpu/width.py).
+# POGO_GPU_KERNEL=v2 selects the round-4 thread-per-battle kernel, warp / queue the older prototypes.
+PROTO = os.environ.get("POGO_GPU_KERNEL", "") or "slice"
 WARP_BELOW = int(os.environ.get("POGO_GPU_WARP_BELOW", "5000"))
 QUEUE_GRID_WARPS = 544  # 68 SMs x 8 resident warps at 254 registers (round 4)
 
@@ -204,7 +207,7 @@ SLICE_TURNS = int(os.environ.get("POGO_GPU_SLICE_TURNS", "64"))        # T: loop
 SLICE_SERIES = int(os.environ.get("POGO_GPU_SERIES", "1"))             # K: battles per series (queue item)
 SLICE_MODE = os.environ.get("POGO_GPU_SLICE_MODE", "requeue")          # requeue | handoff (round-6 profile: requeue)
 SLICE_HANDOFF = os.environ.get("POGO_GPU_HANDOFF", "")                 # W: live battles at which thread mode hands off ("" = warps)
-SLICE_BIN = os.environ.get("POGO_GPU_BIN", "") == "on"                 # order the queue by predicted length (longest first)
+SLICE_BIN = os.environ.get("POGO_GPU_BIN", "on") != "off"             # order the queue by predicted length (longest first; round 7: on by default)
 SLICE_SPREAD = os.environ.get("POGO_GPU_SPREAD", "on") != "off"        # launches smaller than the grid: fewer battles per warp
 THREAD_FACTOR = 5.9  # thread-mode (mixed warp) time / solo time, round-5 divergence profile; refit by sched_bench fit
 
@@ -236,14 +239,18 @@ def run_3v3_slice(static, idx, dyn, seeds, real="float", **kw):
 
 
 def slice_launch(static, idx, dyn, seeds, real="float", T=None, K=None, mode=None, W=None, bin_=None, ahead=None, stream=None,
-                 order=None, grid=None, seg_cap=None, stack=65536, spread=None):
+                 order=None, grid=None, seg_cap=None, stack=65536, spread=None, width=None):
     """Time-sliced run of a batch; the rows equal run_3v3's (same battle code, only the scheduling differs).
 
     ahead = (idx, dyn, seeds) of battles of the NEXT launch whose inputs are already fixed (POGO_GPU_AHEAD): idle lanes take them,
     shortest predicted first, only while now + predicted length is before the slowest started main battle's predicted end.
     Returns (out [n,B_OUT], info) where info has ctl counters, segments [m,4] (who|mode<<30, battle, t0, t1 ns), threads,
     and for ahead: 'ahead_out' rows of the taken ones (index into the ahead batch -> row), 'ahead_log' (start, predicted end,
-    actual end, deadline ns) and 'ahead_taken'."""
+    actual end, deadline ns) and 'ahead_taken'.
+
+    width (round 7): lanes per battle, an int G in 1,2,4,..,32 (1 = the round-6 path), or a mix plan
+    {"split": m, "wide": Gw, "narrow": Gn, "warps_wide": w}: the first m battles of the queue order (longest predicted first under
+    bin) run at Gw on warps [0, w), the rest at Gn on the other warps, in the same launch. Rows are identical at every width."""
     cp = require_cuda()
     T = T or SLICE_TURNS
     K = max(1, K or SLICE_SERIES)
@@ -276,6 +283,30 @@ def slice_launch(static, idx, dyn, seeds, real="float", T=None, K=None, mode=Non
     ser[-1] = n
     ser = np.unique(np.minimum(ser, n)).astype(np.int32)
     nser = len(ser) - 1
+    warps = grid_threads // 32
+    wlog = None
+    if width is None:  # production: POGO_GPU_WIDTH (auto by default), logged per launch
+        if mode != 0 or na or K != 1:
+            width, wlog = 1, f"gpu width -- {n} battles, G=1 (fixed: handoff mode, series > 1 or ahead pool)"
+        else:
+            from . import width as WD
+            width, wlog = WD.pick(static, idx, dyn, real)
+        sys.stderr.write(wlog + "\n")
+        sys.stderr.flush()
+    if isinstance(width, dict):
+        if mode != 0 or na or K != 1:
+            raise ValueError("mixed widths need requeue mode, K=1 and no ahead pool")
+        m = max(1, min(nser - 1, int(width["split"]))) if nser > 1 else nser
+        ww = max(1, min(warps - 1, int(width["warps_wide"])))
+        plan = [(0, ww, int(width["wide"]), 0, m), (ww, warps, int(width["narrow"]), m, nser - m)]
+    else:
+        G = int(width or 1)
+        if G not in (1, 2, 4, 8, 16, 32):
+            raise ValueError(f"width must be a power of two 1..32, got {G}")
+        if G > 1 and (mode != 0 or na):
+            raise ValueError("width > 1 needs requeue mode and no ahead pool")
+        plan = [(0, warps, G, 0, nser)]
+    nsets = len(plan)
     s = stream or cp.cuda.Stream.null
     with s:
         d_st = cp.asarray(static)
@@ -285,22 +316,33 @@ def slice_launch(static, idx, dyn, seeds, real="float", T=None, K=None, mode=Non
         d_out = _dz(cp, (n + na, B_OUT), np.int32)
         d_order = cp.asarray(np.ascontiguousarray(order, dtype=np.int32))
         d_ser = cp.asarray(ser)
-        ctl = np.zeros(16, np.uint32)
-        ctl[2] = n
+        ctl = np.zeros(16 * nsets, np.uint32)
         sp = SLICE_SPREAD if spread is None else spread
-        ctl[13] = min(32, max(1, -(-nser // (grid_threads // 32)))) if sp else 32
-        if mode == 0:
-            ctl[1] = nser
-            ctl[12] = grid_threads
+        sets = np.zeros(nsets * 5, np.int32)
+        ring_cap = max(nser, 1) if mode == 0 else 1
+        ring = np.zeros(ring_cap if mode else max(nser, 1) + nsets, np.uint64)
+        roff = 0
+        for si, (wlo, whi, G, s0, ns) in enumerate(plan):
+            c = ctl[16 * si:16 * si + 16]
+            gpw = 32 // G                       # groups (workers) per warp
+            nw = whi - wlo
+            c[2] = int(ser[s0 + ns] - ser[s0])  # battles of this set
+            c[13] = min(gpw, max(1, -(-ns // nw))) if sp else gpw
+            if mode == 0:
+                c[1] = ns
+                c[12] = nw * gpw
+                cap = max(ns, 1)
+                ring[roff:roff + ns] = ((np.arange(ns, dtype=np.uint64) + 1) << np.uint64(32)) | (np.arange(ns, dtype=np.uint64) + np.uint64(s0))
+            else:
+                cap = 1
+            sets[5 * si:5 * si + 5] = (wlo, whi, G, roff, cap)
+            roff += cap
         d_ctl = cp.asarray(ctl)
+        d_sets = cp.asarray(sets)
         d_spos = _dz(cp, max(nser, 1), np.int32)
         d_sstate = _dz(cp, max(nser, 1), np.int32)
         words = _slot_words(real)
         d_save = cp.empty((max(nser, 1) * words,), cp.uint64)
-        ring_cap = max(nser, 1) if mode == 0 else 1
-        ring = np.zeros(ring_cap, np.uint64)
-        if mode == 0:
-            ring[:nser] = ((np.arange(nser, dtype=np.uint64) + 1) << np.uint64(32)) | np.arange(nser, dtype=np.uint64)
         d_ring = cp.asarray(ring)
         d_wq = cp.asarray(np.full((nser + grid_threads // 32 + 1,), -1, np.int32))  # one ticket per push plus one per warp that finds it empty
         seg_cap = seg_cap or int(min(30_000_000, (n + na) * (3 + (0 if mode else 1200 // max(T, 1)))))
@@ -312,10 +354,10 @@ def slice_launch(static, idx, dyn, seeds, real="float", T=None, K=None, mode=Non
         blocks = grid_threads // BLOCK
         k((blocks,), (BLOCK,), (d_st, d_idx, d_dyn, d_seed, d_out, d_order, d_ser, np.int32(nser), np.int32(T), np.int32(mode), np.int32(W),
                                 d_ctl, d_spos, d_sstate, d_save, d_ring, np.uint32(ring_cap), d_wq, d_segs, np.int32(seg_cap),
-                                d_pred, d_ahead, np.int32(na), d_adone, d_alog))
+                                d_pred, d_ahead, np.int32(na), d_adone, d_alog, d_sets, np.int32(nsets)))
     return {"n": n, "na": na, "stream": s, "d_out": d_out, "d_ctl": d_ctl, "d_segs": d_segs, "seg_cap": seg_cap, "threads": grid_threads,
             "T": T, "K": K, "mode": mode, "W": W, "series": nser, "spread": int(ctl[13]), "d_adone": d_adone, "d_alog": d_alog,
-            "asort": asort if na else None, "keep": (d_st, d_idx, d_dyn, d_seed, d_order, d_ser, d_spos, d_sstate, d_save, d_ring, d_wq, d_pred, d_ahead)}
+            "asort": asort if na else None, "nsets": nsets, "plan": plan, "width": width, "picked": wlog is not None, "keep": (d_sets, d_st, d_idx, d_dyn, d_seed, d_order, d_ser, d_spos, d_sstate, d_save, d_ring, d_wq, d_pred, d_ahead)}
 
 
 def slice_collect(h):
@@ -326,14 +368,21 @@ def slice_collect(h):
     n, na, seg_cap = h["n"], h["na"], h["seg_cap"]
     h["stream"].synchronize()
     out = cp.asnumpy(h["d_out"])
-    ctl = cp.asnumpy(h["d_ctl"])
+    ctl_all = cp.asnumpy(h["d_ctl"]).reshape(-1, 16)
+    ctl = ctl_all[0].copy()
+    ctl[2] = ctl_all[:, 2].sum()
+    ctl[8] = ctl_all[:, 8].sum()
     nseg = min(int(ctl[5]), seg_cap)
     sg = cp.asnumpy(h["d_segs"][: nseg * 6]).reshape(-1, 6).astype(np.int64)
     if int(ctl[2]) != 0:
-        raise RuntimeError(f"slice kernel ended with {int(ctl[2])} battles unfinished (ctl {ctl.tolist()})")
+        raise RuntimeError(f"slice kernel ended with {int(ctl[2])} battles unfinished (ctl {ctl_all.tolist()})")
     segs = np.stack([sg[:, 0], sg[:, 1], sg[:, 2] | (sg[:, 3] << 32), sg[:, 4] | (sg[:, 5] << 32)], 1) if nseg else np.zeros((0, 4), np.int64)
     info = {"ctl": ctl.tolist(), "segments": segs, "segments_dropped": max(0, int(ctl[5]) - seg_cap), "threads": h["threads"],
-            "T": h["T"], "K": h["K"], "mode": h["mode"], "W": h["W"], "series": h["series"], "handoffs": int(ctl[8]), "spread": h["spread"]}
+            "T": h["T"], "K": h["K"], "mode": h["mode"], "W": h["W"], "series": h["series"], "handoffs": int(ctl[8]), "spread": h["spread"],
+            "plan": h.get("plan"), "width": h.get("width")}
+    if h.get("picked") and nseg:
+        from . import width as WD
+        WD.probe_report(n, h["width"], float(segs[:, 3].max() - segs[:, 2].min()) / 1e9)
     if na:
         asort = h["asort"]
         done = cp.asnumpy(h["d_adone"])[:na].astype(bool)

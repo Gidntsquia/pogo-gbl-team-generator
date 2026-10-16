@@ -32,6 +32,10 @@ def serve_binary():
     from .pack import D_N, pack_static
     from . import kernel3v3 as K
     fin, fout = sys.stdin.buffer, sys.stdout.buffer
+    if K.PROTO == "slice":  # round 7 R4: the width picker's device capacity, logged once at start
+        from . import width as WD
+        sys.stderr.write(WD.device_line() + f"; POGO_GPU_WIDTH={WD.MODE}" + (", probe on" if WD.PROBE else "") + "\n")
+        sys.stderr.flush()
     state = {"static": None, "streams": 1}
     inbox = queue.Queue()
 
@@ -82,6 +86,16 @@ def serve_binary():
             else:
                 out, pieces = K.run_3v3_split(state["static"], idx, dyn, seeds, real, nstreams=state["streams"])
             cols = K.B_OUT
+        elif op == wire.ISLAND:
+            from . import island as IS
+            job = IS.parse(body)
+            if int(job["tIdx"].max(initial=0)) >= state["static"].shape[0]:
+                raise RuntimeError("island: mon index beyond the static table: send STATIC first")
+            out, status, icut, info = IS.run_island(state["static"], job, real)
+            ran = np.nonzero(status == 2)[0]
+            head = np.array([info["width"], int(info["span_s"] * 1e6), len(ran), info["tasks"]], np.int32)
+            words = np.concatenate([head, status.astype(np.int32), icut.astype(np.int32), out[ran].reshape(-1).astype(np.int32)])
+            return words.size, int((time.perf_counter() - t) * 1e6), 1, len(ran), np.ascontiguousarray(words, "<i4").tobytes()
         elif op == wire.BATCH1:
             idx = np.frombuffer(body, "<i4", n * 2, 0).reshape(n, 2)
             dyn = np.frombuffer(body, "<f8", n * 2 * D_N, n * 2 * 4).reshape(n, 2, D_N)

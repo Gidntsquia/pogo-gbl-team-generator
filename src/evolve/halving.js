@@ -68,11 +68,14 @@ function withOverflowMemo(shared) {
  *
  * @param {object} ctx
  * @param {object} params - evaluateTeamsInOrder's params
- * @param {{ rounds: number, keep?: number, seed: string, fitnessOf: (r: object) => number }} halving
+ * @param {{ rounds: number, keep?: number, seed: string, fitnessOf: (r: object) => number, prepass?: Function }} halving
+ *   `prepass` (optional; island halving, src/evolve/islandHalving.js): `({cache, order, sizes, keep}) ->
+ *   {aliveByRound, battleCount, cachedCount} | null`. It runs the step's battles itself and fixes each round's alive set;
+ *   the rounds below then only score those sets (memo hits) and its counts replace theirs.
  */
 export async function evaluateWithHalving(ctx, params, halving) {
   const { teams, opponents } = params;
-  const { rounds, keep = 0.5, seed, fitnessOf } = halving;
+  const { rounds, keep = 0.5, seed, fitnessOf, prepass } = halving;
   // Later rounds replay earlier rounds' pairings, so a real memo is required even under --no-battle-cache.
   const cache = params.cache && !params.cache.disabled ? withOverflowMemo(params.cache) : createBattleCache(BATTLE_CACHE_MAX_ENTRIES);
   const order = shuffled(opponents.map((_, j) => j), `${seed}-halving`);
@@ -88,6 +91,12 @@ export async function evaluateWithHalving(ctx, params, halving) {
   let startedAt = null;
   let alive = teams.map((_, i) => i);
   let seen = 0;
+  const pre = prepass ? await prepass({ cache, order, sizes, keep }) : null;
+  if (pre) {
+    battleCount = pre.battleCount;
+    cachedCount = pre.cachedCount;
+    alive = pre.aliveByRound[0];
+  }
 
   for (let r = 0; r < rounds; r++) {
     const slice = order.slice(0, sizes[r]);
@@ -104,7 +113,7 @@ export async function evaluateWithHalving(ctx, params, halving) {
     startedAt ??= sub.startedAt;
     battleCount += sub.battleCount;
     // Pairings replayed from earlier rounds are memo hits by construction, not saved work.
-    cachedCount += Math.max(0, sub.cachedCount - alive.length * seen * 2);
+    if (!pre) cachedCount += Math.max(0, sub.cachedCount - alive.length * seen * 2);
     errorCount += sub.errorCount;
     alive.forEach((teamIdx, k) => { results[teamIdx] = sub.results[k]; });
     // An opponent's ledger comes from the round that first revealed it (against
@@ -115,7 +124,11 @@ export async function evaluateWithHalving(ctx, params, halving) {
       opponentStrength[slice[k]] = sub.opponentStrength[k];
     }
     seen = slice.length;
-    if (r < rounds - 1) {
+    if (r < rounds - 1 && pre) {
+      const next = new Set(pre.aliveByRound[r + 1]);
+      for (const teamIdx of alive) if (!next.has(teamIdx)) cutAtRound[teamIdx] = r;
+      alive = pre.aliveByRound[r + 1];
+    } else if (r < rounds - 1) {
       const ranked = alive
         .map((teamIdx, k) => ({ teamIdx, f: fitnessOf(sub.results[k]) }))
         .sort((a, b) => b.f - a.f || a.teamIdx - b.teamIdx);

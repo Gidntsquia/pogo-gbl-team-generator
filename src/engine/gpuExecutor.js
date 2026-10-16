@@ -15,7 +15,7 @@ import { hashSeed } from './battle/virtualClock.js';
 import { applyGroupMoveset } from '../scoring/index.js';
 import { UserError } from '../util/userError.js';
 import { makeDescriber } from '../../gpu/describe.mjs';
-import { GpuSidecar, packBattles } from '../../gpu/client.mjs';
+import { GpuSidecar, packBattles, packIsland } from '../../gpu/client.mjs';
 
 /**
  * Default `--gpu-cpu-share`: 0, the GPU runs every battle and the CPU workers only re-run flagged rows (plans round 6, R5).
@@ -251,6 +251,86 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       log(`evolve: gpu step -- ${memo} memo hits, ${gpuI.length - nRedo} battles on GPU in ${(g.ms / 1000).toFixed(1)}s, ${cpuI.length + nRedo} on CPU in ${(cpuMs / 1000).toFixed(1)}s` +
         `${nRedo ? ` (${nRedo} GPU rows flagged invalid, re-run on CPU)` : ''}, share ${cpuShare} (${cpuI.length} CPU), wall ${(wallMs / 1000).toFixed(1)}s`);
       return slots;
+    },
+    /**
+     * EXPERIMENTAL (plans round 7 R7, POGO_GPU_ISLAND=on): every halving round of one generation step in ONE kernel launch
+     * (gpu/gpu/island.py). Battle id = (c * nO + o) * 2 + seat; seat 0 = candidate c as team A against opponent o.
+     * Rows the kernel flags invalid are re-run on the CPU executor. Logs one `evolve: gpu island step -- ...` line.
+     * @param {{cand: object[][], opp: object[][], candLead: number, oppLeads: number[], difficulty?: number, known: Int32Array,
+     *   canon: Int32Array, order: number[], sizes: number[], keep: number, islStart: number[], members: number[]}} job
+     * @returns {Promise<{results: Map<number, object>, status: Int32Array, icut: Int32Array, info: object}>}
+     */
+    async runIsland(job) {
+      const t0 = performance.now();
+      const { cand, opp, candLead, oppLeads, known, canon, order, sizes, keep, islStart, members } = job;
+      const diff = job.difficulty ?? DEFAULT_DIFFICULTY;
+      if (diff !== DEFAULT_DIFFICULTY) throw new UserError(`gpu: kernel supports difficulty ${DEFAULT_DIFFICULTY} only, got ${diff}`, 'run without --gpu', 1);
+      const nC = cand.length, nO = opp.length, nB = nC * nO * 2;
+      const leadFirst = (team, lead) => [lead, ...[0, 1, 2].filter((j) => j !== lead)].map((j) => team[j]);
+      const cD = cand.map((t) => t.map(descFor)), oD = opp.map((t) => t.map(descFor));
+      if (monTable.length !== sentStatic) { await sc.setStatic(monTable); sentStatic = monTable.length; }
+      const ids = (D) => D.map((d) => d.builtId).join(',');
+      const cIds = cD.map(ids), oIds = oD.map(ids);
+      const seeds = new Uint32Array(nB);
+      for (let c = 0; c < nC; c++) {
+        for (let o = 0; o < nO; o++) {
+          const b = (c * nO + o) * 2;
+          if (canon[b] === b && !known[b]) seeds[b] = hashSeed(`${cIds[c]}|${oIds[o]}|${candLead}:${oppLeads[o]}:${diff}`) >>> 0;
+          if (canon[b + 1] === b + 1 && !known[b + 1]) seeds[b + 1] = hashSeed(`${oIds[o]}|${cIds[c]}|${oppLeads[o]}:${candLead}:${diff}`) >>> 0;
+        }
+      }
+      const teams = [...cD.map((t) => leadFirst(t, candLead)), ...oD.map((t, o) => leadFirst(t, oppLeads[o]))];
+      const body = packIsland({ teams, nC, nO, rounds: sizes.length, keep, seeds, canon, known, order, sizes, islStart, members });
+      const packMs = performance.now() - t0;
+      const ts = performance.now();
+      let r;
+      try { r = await sc.island(body); } catch (err) { throw gpuError(err); }
+      const sidecarMs = performance.now() - ts;
+      const w = r.words;
+      const [G, spanUs, nRan, tasks] = w.subarray(0, 4);
+      const status = w.slice(4, 4 + nB), icut = w.slice(4 + nB, 4 + nB + nC);
+      const rows = w.subarray(4 + nB + nC);
+      const cols = rows.length / Math.max(1, nRan);
+      const results = new Map();
+      const flagged = [];
+      let k = 0;
+      for (let b = 0; b < nB; b++) {
+        if (status[b] !== 2) continue;
+        const o = k++ * cols;
+        if (rows[o + 10] & INVALID) flagged.push(b);
+        else results.set(b, rowToResult(rows, o));
+      }
+      const specOf = (b) => {
+        const c = Math.floor(b / 2 / nO), o = (b >> 1) % nO;
+        return b & 1
+          ? { teamA: opp[o], teamB: cand[c], leadA: oppLeads[o], leadB: candLead, difficulty: diff }
+          : { teamA: cand[c], teamB: opp[o], leadA: candLead, leadB: oppLeads[o], difficulty: diff };
+      };
+      let cpuMs = 0;
+      if (flagged.length) {
+        const tc = performance.now();
+        const slots = await cpuExecutor.run(flagged.map(specOf));
+        slots.forEach((slot, i) => { if (slot.ok) results.set(flagged[i], slot.value); });
+        cpuMs = performance.now() - tc;
+      }
+      const memo = status.reduce((a, v) => a + (v === 3 ? 1 : 0), 0);
+      const dups = status.reduce((a, v) => a + (v === 4 ? 1 : 0), 0);
+      const wallMs = performance.now() - t0;
+      totals.steps += 1; totals.gpuBattles += nRan - flagged.length; totals.cpuBattles += flagged.length;
+      totals.flagged += flagged.length; totals.gpuMs += packMs + sidecarMs; totals.cpuMs += cpuMs;
+      const info = { width: G, spanS: spanUs / 1e6, ran: nRan, tasks, memo, dups, flagged: flagged.length, islands: islStart.length - 1, rounds: sizes.length, wallS: wallMs / 1000 };
+      if (profile) {
+        profile.step({
+          n: nRan, memoHits: memo, gpu: nRan - flagged.length, cpu: 0, flaggedRows: flagged.length, share: 0, cpuCount: 0, cpuShareS: 0,
+          gpuPathS: (packMs + sidecarMs) / 1000, cpuIdleS: (packMs + sidecarMs) / 1000, wall: wallMs / 1000, island: info,
+          buckets: { plan: 0, pack: packMs / 1000, transport: Math.max(0, sidecarMs / 1000 - spanUs / 1e6), kernel: spanUs / 1e6, tail: 0, waitCpu: 0, flagged: cpuMs / 1000, map: 0, accumulate: 0 },
+          launches: [{ n: nRan, flagged: flagged.length, packMs, staticMs: 0, sidecarMs, kernelUs: r.kernelUs, pieces: 1, spanMs: spanUs / 1000, bodyMs: spanUs / 1000, tailMs: 0, width: G, island: true }],
+        });
+      }
+      log(`evolve: gpu island step -- 1 launch, ${info.islands} islands x ${info.rounds} rounds, ${tasks} pairings planned, ${memo} memo hits, ` +
+        `${dups} duplicate keys, ${nRan - flagged.length} battles on GPU (G=${G}) in ${(sidecarMs / 1000).toFixed(1)}s (kernel ${(spanUs / 1e6).toFixed(1)}s), ` +
+        `${flagged.length} on CPU${flagged.length ? ` (GPU rows flagged invalid, re-run) in ${(cpuMs / 1000).toFixed(1)}s` : ''}, wall ${(wallMs / 1000).toFixed(1)}s`);
+      return { results, status, icut, info };
     },
     totals: () => ({ ...totals }),
     stats: () => cpuExecutor.stats(),

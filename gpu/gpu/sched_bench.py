@@ -48,7 +48,7 @@ def metrics(segs, streams, threads, n):
     """segs: rows (who|mode<<30, battle, t0, t1); streams: stream id per row. -> dict incl. a busy-lane timeline per stream."""
     who, t0, t1 = segs[:, 0], segs[:, 2].astype(np.int64), segs[:, 3].astype(np.int64)
     mode = (who >> 30) & 3
-    lanes = np.where(mode == 1, 32, 1)
+    lanes = np.where(mode == 1, 32, 1 << ((who >> 24) & 7))  # round 7: a width-G group's segment holds G lanes
     a, z = int(t0.min()), int(t1.max())
     span = (z - a) / 1e9
     dur = (t1 - t0) / 1e9
@@ -96,6 +96,11 @@ def run_cfg(static, sl, cfg):
         sg = v2_segments(out)
         return out, sg, part, extra
     kw = {k: cfg[k] for k in ("T", "K", "mode", "W", "spread") if k in cfg}
+    kw["width"] = cfg.get("width", 1)
+    if cfg.get("width") in ("mix", "auto"):  # round 7: resolved per launch by gpu/gpu/width.py
+        from . import width as WD
+        kw["width"] = WD.resolve(cfg["width"], static, idx, dyn, cfg)
+        extra["width"] = kw["width"]
     kw["bin_"] = bool(cfg.get("bin", False))
     if cfg.get("ahead"):
         t = time.perf_counter()
@@ -127,10 +132,10 @@ def run_cfg(static, sl, cfg):
     return out, np.concatenate(sgs), np.concatenate(sid), extra
 
 
-def bench(static, batches, cfg, reps, ref_cache):
+def bench(static, batches, cfg, reps, ref_cache, sizes=None):
     threads = resident_threads()
     rows = []
-    for size in SIZES:
+    for size in sizes or SIZES:
         sl = slice_of(batches, size)
         if size not in ref_cache:
             K.PROTO = ""
@@ -138,7 +143,7 @@ def bench(static, batches, cfg, reps, ref_cache):
         ref = ref_cache[size]
         run_cfg(static, tuple(x[:256] for x in sl), cfg)  # compile / warm
         launches = []
-        paired = cfg.get("kernel", "v2") != "v2" or int(cfg.get("streams", 1) or 1) > 1
+        paired = (cfg.get("kernel", "v2") != "v2" or int(cfg.get("streams", 1) or 1) > 1) and not cfg.get("no_pair")
         for r in range(reps):
             pv = None
             if paired:  # a v2 launch right before, so the GPU's other load (desktop, games) hits both alike
@@ -156,6 +161,8 @@ def bench(static, batches, cfg, reps, ref_cache):
                 m["ahead_late"] = int(sum(1 for x in lg if x["end"] > x["deadline"]))
             m["same_results"] = bool((out[:, :20] == ref[:, :20]).all())
             m["flagged"] = int(((out[:, 10] & 0x6E) != 0).sum())
+            if "width" in extra:
+                m["width"] = extra["width"]
             launches.append(m)
             print(json.dumps({"size": size, "rep": r, "span_s": round(m["span_s"], 3), "bps": round(m["bps"], 1),
                               "idle": round(m["idle_share"], 4), "same": m["same_results"], "handoffs": m.get("handoffs"),
@@ -221,6 +228,8 @@ def main():
     ap.add_argument("--cfg", default="{}")
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--out")
+    ap.add_argument("--sizes", default="", help="comma-separated launch sizes (default 5000,36000)")
+    ap.add_argument("--no-pair", action="store_true", help="skip the paired v2 launch before each launch")
     a = ap.parse_args()
     require_cuda()
     static, batches = load_dump(a.dump)
@@ -228,7 +237,9 @@ def main():
         fit(static, batches, a.out or os.path.join(OUT, "predictor.json"))
         return
     cfg = json.loads(a.cfg)
-    rows = bench(static, batches, cfg, a.reps, {})
+    if a.no_pair:
+        cfg["no_pair"] = True
+    rows = bench(static, batches, cfg, a.reps, {}, [int(x) for x in a.sizes.split(",") if x] or None)
     res = {"name": a.name, "cfg": cfg, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "slices": rows}
     if cfg.get("kernel") == "slice":
         res["state_bytes_per_series"] = K.slice_sizes()[0] * 8
