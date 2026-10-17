@@ -459,11 +459,20 @@ const h2 = (id, n, t) => `<h2 id="${id}"><span class="n">${n}</span>${t}</h2>`;
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU width round 7</title><style>${css}</style></head><body>
 <h1>GPU round 7: can the GPU reach 1,500 battles/s?</h1>
 <p class="mut">Built ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} ET by <code>node gpu/gpu-width.mjs</code> · ${esc(dev.replace(/^gpu device -- /, ''))} · <a href="gpu-sched.html">round 6</a></p>
+<div class="box" id="conclusion"><p><b>Conclusion.</b> ${best ? `The fastest setting is ${esc(best.label)}: ${n1(best.warmPerGen)} s per warm generation, ${n0(best.bps)} b/s. ` : ''}The width (threads per battle) barely matters: every width is within a few percent of the best at each launch size. Island halving is slower. Only bigger launches (more battles per generation) pass 1,500 b/s.</p>
+<p><b>Superseded:</b> the width question is replaced by the round-8 study, which measured where GPU time goes and ranks what to change next: <a href="gpu-study.html">gpu-study.html</a>.</p></div>
+<div class="box" id="terms"><p><b>Words used on this page.</b></p><ul class="find">
+<li><b>Thread</b> (also called a <b>lane</b>): the GPU's smallest worker; it runs one copy of the battle code.</li>
+<li><b>Warp</b>: 32 threads that always execute the same instruction at the same time; if their battles need different steps, they take turns (that waiting is <b>divergence</b>).</li>
+<li><b>Width, G</b>: how many threads of a warp run one battle together. G=1: each thread runs its own battle (32 battles per warp). G=32: the whole warp runs one battle. The G threads repeat the same work, so a wider battle is not split up; it only avoids waiting on other battles.</li>
+<li><b>Launch</b>: one batch of battles sent to the GPU at once; it ends when its slowest battle ends.</li>
+<li><b>b/s</b>: battles finished per second. <b>Warm generation</b>: a generation after the battle cache has filled up (the steady state).</li>
+</ul></div>
 <p class="q">Round 6 ran halving 3 at <b>${n0(R6_H3)} b/s</b>. The bar is <b>${n0(TARGET)}</b>. Round 7 tried three ways to close the gap, in this order:</p>
 <ol class="story">${steps.map(([id, t, s]) => `<li><a href="#${id}">${t}</a><span>${s}</span></li>`).join('')}</ol>
 
-${h2('width', 1, 'Width: how many lanes run one battle')}
-<p class="q">Round 6 gave each battle one lane. Big launches left most lanes idle. Would giving each battle more lanes help?</p>
+${h2('width', 1, 'Width: how many threads run one battle')}
+<p class="q">Round 6 gave each battle one thread (G=1). Small launches left most threads idle. Would giving each battle more threads (a wider G) help?</p>
 ${widthPicture()}
 ${ul([
     big ? `At ${n0(big.size)} battles, idle lanes drop from ${pct(idleOf(big, 1), 0)} (G=1) to ${pct(idleOf(big, 32), 0)} (G=32)…` : null,
@@ -487,7 +496,7 @@ ${table(['bench size', 'bucket', 'best fixed', 'auto', 'auto / best', 'within 5%
 ${picker ? `<p class="mut">Recheck at 2.5k, two passes × 10 launches: ${picker.re.map(([g, v]) => `${g === 'auto' ? 'auto' : `G=${g}`} ${v.map(n0).join(' / ')}`).join(', ')}.</p>` : ''}
 <p class="mut">Occupancy (busy lanes ÷ resident lanes) over one launch; grey = each launch, blue = median launch.</p>
 <div class="tlpair"><figure>${timeline(benches.auto, 5000)}<figcaption>5,000 battles, idle ${pct(sl(benches.auto, 5000)?.idle_median)}</figcaption></figure><figure>${timeline(benches.auto, 36000)}<figcaption>36,000 battles, idle ${pct(sl(benches.auto, 36000)?.idle_median)}</figcaption></figure></div>
-<p class="mut">Probe (POGO_GPU_PROBE=on): tries neighbouring widths per bucket and keeps the fastest.</p>
+<p class="mut">Probe (round 7 debug flag, removed in round 8): tried neighbouring widths per bucket and kept the fastest.</p>
 ${probeByBucket.length ? table(['bucket', 'formula default', 'probe picks (runs)', 'most common pick', 'vs default', 'launches to converge (median)', 'one run\'s tries'], probeByBucket) : '<p class="na">no probe lines yet</p>'}
 </details>
 <p class="so">Auto ${r5med > R6_H3 ? 'edges past' : 'stays below'} round 6 (${pct(r5med / R6_H3 - 1)}), far from 1,500. The next cost is between launches: each halving round waits for the host.</p>
@@ -540,6 +549,7 @@ ${h2('answer', 7, 'Answer')}
     best ? `<p>The fastest setting at today's population, ${esc(best.label)}, runs <b>${n0(best.bps)} b/s</b>: ${best.bps >= TARGET ? 'above' : 'below'} the 1,500 bar, yet its generations are the shortest (${n1(best.warmPerGen)} s warm) because halving 3 runs the fewest battles.</p>` : '',
     crossed ? `<p>Halving 3 clears 1,500 at ${crossed[0]}× population (<b>${n0(crossed[1])} b/s</b>${popTop && popTop[0] !== crossed[0] ? `; ${popTop[0]}×: ${n0(popTop[1])}` : ''}); halving 2 and the full grid clear it at 1×. Bigger launches are what lift b/s, not width or islands.</p>` : '',
     '<p><b>Next:</b> add the CPU share back at the chosen setting, and retire the probe (width-table.json fixes each bucket\'s width).</p>',
+    '<p><b>Superseded by round 8:</b> the width question is closed; <a href="gpu-study.html">gpu-study.html</a> profiles the kernel and ranks the changes that would shorten a generation.</p>',
   ].join('')}</div>
 </body></html>
 `;
