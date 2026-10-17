@@ -334,10 +334,13 @@ Bench: `gpu/gpu/width_bench.py` (writes `gpu/gpu/width-table.json`); runs: `out/
 
 ## Round 8: profile-first study
 
-Report: `node gpu/gpu-study.mjs` → `out/gpu-study.html` (linked from `out/gpu-width.html`): recommendation box and
-ranked change list first, then seven steps (time split, profile, width, chain runs, correctness, literature, forks),
-each with one picture and a "supports: recommendation line N" tag. `python3 gpu/gpu/study/check_page.py` re-derives
-every number on the page (`out/gpu/study/check.log`, 0 mismatches). Research forks live in `gpu/gpu/study/<fork>/`
+Report: `node gpu/gpu-study.mjs` → `out/gpu-study.html` (linked from `out/gpu-width.html`): a five-point summary,
+then the recommendation box (each line's runs table sits above its gain), the ranked change list (plain-words meaning,
+data table, gain beside both run-to-run spreads, one-line "Do next"), then eight steps (time split, profile, width,
+chain runs, morning A/B, correctness, literature, forks), each with one picture and a "supports: summary point N /
+recommendation line N" tag; glossary last. `python3 gpu/gpu/study/check_page.py` re-derives every number on the page
+(`out/gpu/study/check.log`, 0 mismatches); `node gpu/gpu/study/phone.mjs` renders every section at 390 px
+(`out/gpu/study/phone/*.png`) and fails on any "…", clipped text, block over 3 lines or horizontal scroll. Research forks live in `gpu/gpu/study/<fork>/`
 (`variant.py`, selected by `POGO_GPU_STUDY=<fork>`, off by default) with their data in `out/gpu/study/<fork>/`; the
 timed runs ran one at a time in `out/gpu/study/chain.sh` (52 stages, all exit 0, 10-gen standard halving-3 runs).
 
@@ -355,7 +358,11 @@ timed runs ran one at a time in `out/gpu/study/chain.sh` (52 stages, all exit 0,
 - **Faster, verified (100% winner agreement, 0 flagged, checkpoints identical to production):** cold helpers as real
   function calls (`occ` fork, 11 `__noinline__` edits, −0.6 s/gen: 11.52 vs 12.16 in the same hour) and battle state
   in compact on-chip form (`stack` fork, −0.6 s/gen). Both are study variants; production is unchanged. A run of the
-  production path with only a timing log (`streams-time`) also read −0.6 against its neighbours, so confirm both in one A/B.
+  production path with only a timing log (`streams-time`) also read −0.6 against its neighbours.
+- **Morning A/B (`out/gpu/study/ab.sh`, 3 interleaved rounds of defaults / `stack` / `occ`, 08:37–08:57 ET).** Defaults
+  11.76 / 11.66 / 11.69 (spread 0.11); compact on-chip state 11.04 / 11.06 / 11.39 (−0.5 s, spread 0.34: beats both
+  spreads, not noise); cold helpers as calls 11.38 / 12.19 / 11.32 (−0.1 s, spread 0.88: within noise, needs a longer
+  A/B). The recommendation box therefore turns on `stack` only (11.7 → 11.2 s per warm generation).
 - **Slower or no gain:** plain work-queue kernel +7.3 s/gen, lockstep one-slice-per-launch +6.2, smaller search pool
   with rare re-run +4.4, two-stream overlap +2.0, register caps for more warps +0.3 (any cap spills ~1 KB per thread),
   splitting one battle's look-ahead over its threads 2.4–4× slower in the bench. A CPU share of 0.003–0.01 gives no
@@ -368,5 +375,5 @@ timed runs ran one at a time in `out/gpu/study/chain.sh` (52 stages, all exit 0,
   supersedes round 7's width question.
 - **Correctness.** A CPU-only 2-gen run and a default-GPU 5-gen run with round-8 code write checkpoints identical to
   round 7's (`out/gpu/study/det-r7.txt`).
-- **Next:** port the two verified kernel changes into `gpu/gpu/kernels` and A/B them together; build early release of
+- **Next:** port the `stack` change into `gpu/gpu/kernels`; re-A/B `occ` over more rounds; build early release of
   sure next-round winners only together with an in-kernel append queue for the tail.

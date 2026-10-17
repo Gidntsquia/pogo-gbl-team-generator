@@ -58,8 +58,12 @@ def run_stats(d):
 
 
 chain = txt(f'{S}/chain.log')
-stages = [dict(k=int(a), kind=b, fork=c, name=d, rc=int(e), at=f) for a, b, c, d, e, f in re.findall(r'^== done (\d+) (\w+) (\S+) (\S+) exit (\d+) (.*)$', chain, re.M)]
-names = {s['name'] for s in stages if s['kind'] == 'run'}
+def parse_stages(log, k0=0):
+    return [dict(k=k0 + int(a), kind=b, fork=c, name=d, rc=int(e), at=f) for a, b, c, d, e, f in re.findall(r'^== done (\d+) (\w+) (\S+) (\S+) exit (\d+) (.*)$', log, re.M)]
+stages = parse_stages(chain)  # overnight chain only (chain.* keys)
+ab_stages = parse_stages(txt(f'{S}/ab.log'), 1000)  # morning interleaved A/B (ab.* keys)
+stages_all = stages + ab_stages
+names = {s['name'] for s in stages_all if s['kind'] == 'run'}
 RUNS = {}
 for d in sorted(glob.glob(f'{OUT}/evolve-gpu8-*')):
     if os.path.isdir(d) and os.path.basename(d)[len('evolve-gpu8-'):] in names:
@@ -67,14 +71,14 @@ for d in sorted(glob.glob(f'{OUT}/evolve-gpu8-*')):
         if r:
             RUNS[r['name']] = r
 ok = lambda rs: [r for r in rs if r['exit'] == 0 and r['warm'] is not None]
-setof = lambda n: re.sub(r'-[a-z]$', '', n)
+setof = lambda n: re.sub(r'-([a-z]|\d+)$', '', n)
 SETS = {}
 for r in RUNS.values():
     SETS.setdefault(setof(r['name']), []).append(r)
 base = ok(SETS.get('base', []))
 base_warm = mean([r['warm'] for r in base])
-CTRL_PAT = r'^base-[a-z]$|.*-prod-[a-z]$|^cpushare-share0-[a-z]$'
-STAGEK = {s_['name']: s_['k'] for s_ in stages}
+CTRL_PAT = r'^base-[a-z]$|.*-prod-[a-z]$|^cpushare-share0-[a-z]$|^ab-base-\d+$'
+STAGEK = {s_['name']: s_['k'] for s_ in stages_all}
 CTRL = sorted(ok([r for r in RUNS.values() if re.match(CTRL_PAT, r['name'])]), key=lambda r: STAGEK[r['name']])
 def near_ctrl(ns):
     pick = {}
@@ -102,9 +106,23 @@ for f, r in results.items():
         rs = ok([RUNS[n] for n in c.get('runs', []) if n in RUNS and not re.match(CTRL_PAT, n)])
         mw = mean([x['warm'] for x in rs])
         cw = mean([x['warm'] for x in near_ctrl([x['name'] for x in rs])]) if rs else None
-        c = dict(c, fork=f, nruns=len(rs), mw=mw, cw=cw, measured=mw - cw if mw is not None and cw is not None else None)
+        ctrl = near_ctrl([x['name'] for x in rs]) if rs else []
+        spread = lambda xs: max(xs) - min(xs) if len(xs) >= 2 else 0
+        c = dict(c, fork=f, nruns=len(rs), mw=mw, cw=cw, measured=mw - cw if mw is not None and cw is not None else None,
+                 ownspread=spread([x['warm'] for x in rs]), ctrlspread=spread([x['warm'] for x in ctrl]))
         c['verified'] = bool(re.match(r'^100(\.0+)?%.*\b0 flagged', c.get('verify_agreement') or ''))
         CARDS[c['id']] = c
+AB_SET = {'compact-state': 'ab-stack', 'noinline-cold': 'ab-occni'}
+AB_BASE = ok(SETS.get('ab-base', []))
+def ab_set(st):
+    rs = ok(SETS.get(st, []))
+    if not rs or not AB_BASE:
+        return None
+    spread = lambda xs: max(xs) - min(xs) if len(xs) >= 2 else 0
+    w, bw = mean([r['warm'] for r in rs]), mean([r['warm'] for r in AB_BASE])
+    return dict(warm=w, base=bw, delta=w - bw, spread=spread([r['warm'] for r in rs]), basespread=spread([r['warm'] for r in AB_BASE]), rounds=min(len(rs), len(AB_BASE)),
+                clears=abs(w - bw) > max(spread([r['warm'] for r in rs]), spread([r['warm'] for r in AB_BASE])))
+ABW = {cid: ab_set(st) for cid, st in AB_SET.items()}
 prof = rd(f'{S}/prof/metrics.json') or {}
 PM = {m['id']: m for m in prof.get('metrics', [])}
 LID = [l['id'] for l in prof.get('launches', [])]
@@ -158,6 +176,8 @@ def gen_key(run, what):
         return (sp['host'] + sp['post'] + sp['ga']) / wall
     if what == 'tailshare':
         return sp['tail'] / wall
+    if what == 'tail':
+        return sp['tail']
     if what == 'ex':
         return next(g['gen'] for g in warm if g.get('steps') == 3)
     raise KeyError(what)
@@ -207,6 +227,17 @@ def value(k):
             return b['ratio_to_g1_median'][p[3]]
     if p[0] == 'run':
         return RUNS[p[1]][{'sat': 'sat', 'warm': 'warm', 'total': 'total', 'bps': 'bps'}[p[2]]]
+    if p[0] == 'ab':  # ab.<set>.<warm|spread|delta|rounds> or ab.rounds
+        if k == 'ab.rounds':
+            return len(AB_BASE)
+        st = p[1]
+        if st == 'ab-base':
+            rs = AB_BASE
+            spread = lambda xs: max(xs) - min(xs) if len(xs) >= 2 else 0
+            return {'warm': mean([r['warm'] for r in rs]), 'spread': spread([r['warm'] for r in rs])}[p[2]]
+        return ab_set(st)[p[2]]
+    if p[0] == 'r7' and p[1] == 'run':
+        return r7warm(p[2])
     if p[0] == 'delta':  # a tested setting's mean warm minus its nearest production runs' mean
         rs = ok(SETS[p[1]])
         return mean([r['warm'] for r in rs]) - mean([x['warm'] for x in near_ctrl([r['name'] for r in rs])])
@@ -225,15 +256,19 @@ def value(k):
         order = {s['name']: s['k'] for s in stages}
         b = sorted(base, key=lambda r: order.get(r['name'], 0))
         return mean([r['warm'] for r in b[-2:]]) / mean([r['warm'] for r in b[:2]]) - 1
-    if k == 'rec.after':
+    if k in ('rec.after', 'rec.before'):
+        # the change to turn on: the A/B's larger verified win that clears both spreads, else the overnight best win
+        abw = sorted([(ABW[c['id']]['delta'], c['id']) for c in CARDS.values() if ABW.get(c['id']) and c['verified'] and ABW[c['id']]['delta'] < 0 and ABW[c['id']]['clears']])
+        if abw:
+            a = ABW[abw[0][1]]
+            return a['warm'] if k == 'rec.after' else a['base']
         wins = sorted([c for c in CARDS.values() if c['measured'] is not None and c['verified'] and c['measured'] < -(noise or 0)], key=lambda c: c['measured'])
-        return wins[0]['mw'] if wins else base_warm
-    if k == 'rec.before':
-        wins = sorted([c for c in CARDS.values() if c['measured'] is not None and c['verified'] and c['measured'] < -(noise or 0)], key=lambda c: c['measured'])
+        if k == 'rec.after':
+            return wins[0]['mw'] if wins else base_warm
         return wins[0]['cw'] if wins else base_warm
     if p[0] == 'card':
         c = CARDS[p[1]]
-        return {'lo': (c.get('predicted_s_per_gen') or [None, None])[0], 'hi': (c.get('predicted_s_per_gen') or [None, None])[1], 'measured': c['measured'], 'nruns': c['nruns']}[p[2]]
+        return {'lo': (c.get('predicted_s_per_gen') or [None, None])[0], 'hi': (c.get('predicted_s_per_gen') or [None, None])[1], 'measured': c['measured'], 'nruns': c['nruns'], 'ownspread': c['ownspread'], 'ctrlspread': c['ctrlspread']}[p[2]]
     if k == 'cards.n':
         return min(12, len(CARDS))
     if k in ('lit.tail', 'lit.maxp50'):
