@@ -48,6 +48,9 @@ export function runStats(dir) {
     launches: tl.length, pool: sum(tl, (x) => +x[1]), speculated: sum(tl, (x) => +x[2]), certain: sum(tl, (x) => +x[3]),
     kept: sum(tl, (x) => +x[4]), discarded: sum(tl, (x) => +x[5]), served: sum(tl, (x) => +x[7]) + sum(served2, (x) => +x[1]),
   } : null;
+  // waits for late lanes of the previous tail launch (variant.py _drain), seconds over the run
+  const lateWait = [...log.matchAll(/gpu tail late -- waited ([\d.]+)ms/g)];
+  if (tailLog) Object.assign(tailLog, { lateWaits: lateWait.length, lateWaitS: sum(lateWait, (x) => +x[1]) / 1e3 });
   const fork = name.split('-')[0];
   return {
     name, fork, env, exit: exit == null ? null : +exit, gens: G, sat, tailMean, rate, genWalls,

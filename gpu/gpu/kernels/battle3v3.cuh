@@ -134,7 +134,24 @@ __device__ __noinline__ void queueAction(B3* b, int actor, int type, int value);
 
 // ------------------------------------------------------------------ TrainingAI.runScenario
 
+#ifdef TAIL
+// Round 9 study only (POGO_GPU_STUDY=tail, gpu/gpu/study/tail/tail.cuh; production never defines TAIL). A lane running a POOL
+// battle (g_tailPoolLane[thread] = 1) stops its lookahead as soon as the launch's last main battle has ended (live == 0): the
+// rest of the step then runs on stale lookahead results and is cheap, and tail.cuh discards that pool battle (it writes a pool
+// row only if live is still > 0 after the step, so an aborted battle is never kept). Main battles never take this path.
+__device__ const unsigned* g_tailLive = 0;
+__device__ const int* g_tailPoolLane = 0;
+static __device__ __forceinline__ bool tail_abort() {
+  const int* pl = g_tailPoolLane;
+  return pl && *(volatile const int*)(pl + blockIdx.x * blockDim.x + threadIdx.x) && *(volatile const unsigned*)g_tailLive == 0u;
+}
+#define TAIL_ABORT_RET(v) do { if (tail_abort()) return (v); } while (0)
+#else
+#define TAIL_ABORT_RET(v) do { } while (0)
+#endif
+
 __device__ __noinline__ double runScenario(B3* b, int type, int gi, int gj) {
+  TAIL_ABORT_RET(0.0);
   Mon* A = &b->mon[gi];
   Mon* O = &b->mon[gj];
   int sbait0 = A->bait, sfarm0 = A->farm, sprio0 = A->priority;
@@ -159,6 +176,7 @@ __device__ __noinline__ double runScenario(B3* b, int type, int gi, int gj) {
     for (int n = 0; n <= sh1; n++) {
       s->m[0].startShields = i; s->m[1].startShields = n;
       s->flags = 0; s->poolMax = 0;
+      TAIL_ABORT_RET(0.0);
       simulate1v1(s);
       b->flags |= (s->flags & F_INVALID_MASK);
       if (s->poolMax > b->poolMax) b->poolMax = s->poolMax;

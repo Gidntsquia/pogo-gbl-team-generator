@@ -64,6 +64,7 @@ def tail_launch(static, idx, dyn, seeds, pool, meta, real="float", stream=None, 
     idle = TAIL_IDLE if idle is None else idle
     order_mode = order or TAIL_ORDER
     k = _kernel(real)
+    _drain()
     K._set_stack(cp, 65536)
     n = idx.shape[0]
     pidx, pdyn, pseeds = pool
@@ -116,25 +117,30 @@ def tail_launch(static, idx, dyn, seeds, pool, meta, real="float", stream=None, 
             "chosen": K._dz(cp, max(nT, 1), np.int32), "spec": K._dz(cp, max(nP, 1), np.int32), "pclaim": K._dz(cp, max(nP, 1), np.int32),
             "pdone": K._dz(cp, max(nP, 1), np.int32), "cq": K._dz(cp, max(nP, 1), np.int32), "tctl": K._dz(cp, NT, np.uint32),
             "wmain": K._dz(cp, max(warps, 256), np.int32), "mdone": K._dz(cp, max(n, 1), np.int32),
+            "plane": K._dz(cp, grid_threads, np.int32),
         }
         spec_on = ((1 if meta.get("spec", True) else 0) | (2 if meta.get("certain") else 0)) if nP else 0
+        # side-stream reads (done/peek/tail_collect) and writes (feed) wait for these uploads: without it a snapshot could read
+        # ctl before its upload (live 0 -> "done" before any battle ran) and feed's tail word could be zeroed by tctl's fill
+        up = s.record()
         if n:
             k((grid_threads // K.BLOCK,), (K.BLOCK,), (
                 d["st"], d["idx"], d["dyn"], d["seed"], d["out"], d["order"], d["ser"], np.int32(nser), np.int32(T),
                 d["ctl"], d["spos"], d["sstate"], d["save"], d["ring"], np.uint32(max(nser, 1)), d["segs"], np.int32(seg_cap), d["pred"],
                 np.int32(n), np.int32(nP), d["mainTag"], d["poolTeam"], d["porder"], np.int32(nT), np.int32(meta["keepK"]), np.uint32(thr),
                 d["tPts"], d["tN"], d["priorPts"], d["priorN"], d["chosen"], d["spec"], d["pclaim"], d["pdone"],
-                d["cq"], d["tctl"], d["wmain"], np.int32(ts), np.int32(spec_on), d["mdone"]))
+                d["cq"], d["tctl"], d["wmain"], np.int32(ts), np.int32(spec_on), d["mdone"], d["plane"]))
     ev = s.record()
     return {"n": n, "nP": nP, "nT": nT, "stream": s, "event": ev, "d": d, "seg_cap": seg_cap, "threads": grid_threads,
             "workers": workers, "thr": thr, "spread": spread, "cq_n": 0, "spec_on": spec_on, "ts": ts, "idle": idle,
-            "order": order_mode, "side": None}
+            "order": order_mode, "side": None, "up": up}
 
 
 def _side(h):
     cp = _K.require_cuda()
     if h["side"] is None:
         h["side"] = cp.cuda.Stream(non_blocking=True)
+        h["side"].wait_event(h["up"])
     return h["side"]
 
 
@@ -200,6 +206,26 @@ def _reap():
             h["d"] = None
 
 
+def _drain():
+    """Wait for the late lanes of earlier launches before a new one starts. Late lanes that ran on beside the next launch slowed
+    its battles, which kept the late lanes alive longer still (full 100-gen runs grew to 2 min/gen by gen 79). The wait is the
+    real cost of the late lanes, so it is logged ("gpu tail late -- waited"), and counted in WAITED_US."""
+    global WAITED_US
+    _reap()
+    if not _ZOMBIES:
+        return
+    t = time.perf_counter()
+    for z in list(_ZOMBIES):
+        z["h"]["event"].synchronize()
+    _reap()
+    us = (time.perf_counter() - t) * 1e6
+    WAITED_US += us
+    print(f"gpu tail late -- waited {us / 1e3:.1f}ms for late lanes of the previous launch (total {WAITED_US / 1e6:.2f}s)", file=sys.stderr, flush=True)
+
+
+WAITED_US = 0.0
+
+
 def _snap(h, name, nbytes, ptr_off=0):
     """Device -> pinned host copy of h["d"][name] on the side stream (runs while the grid still runs)."""
     import cupyx
@@ -250,9 +276,13 @@ def tail_collect(h):
         ctl, tc = np.array(cb), np.array(tb).astype(np.int64)
         pdone_raw = np.array(pd)
         segs_raw = np.array(sb)
-        _ZOMBIES.append({"h": h})
         returned_early = True
-    else:
+        if n and int(ctl[2]) != 0:  # should not happen since the side stream waits for the uploads; wait for the grid instead
+            print(f"gpu tail -- early read saw {int(ctl[2])} main battles live; waited for the grid", file=sys.stderr, flush=True)
+            returned_early = False
+        else:
+            _ZOMBIES.append({"h": h})
+    if not returned_early:
         h["stream"].synchronize()
         if h["side"] is not None:
             h["side"].synchronize()

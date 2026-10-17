@@ -11,10 +11,11 @@
 //                 partial win rate ((prior + this launch's finished main battles) points / battles), keeps the top keepK and
 //                 lists their pool battles in host order. Lanes take them by ticket.
 // A pool battle is claimed with atomicCAS (the two tiers can list the same one). Every lane leaves as soon as the last main
-// battle ends (C_LIVE == 0): pool battles still running are discarded. A lane notices only between battle steps, and one
-// step can take over a second (2.4 s measured on a main battle of the 5k launch), so the host does not wait for the grid to
-// exit: it reads the rows the moment C_LIVE is 0 (variant.py done / tail_collect) and the late lanes finish in the
-// background. Pool lanes run only on an SM with no main battle (wmain is per SM) and hold at most
+// battle ends (C_LIVE == 0): pool battles still running are discarded. One battle step can take over a second (2.4 s measured
+// on a main battle of the 5k launch), nearly all of it in the AI lookahead, so a pool lane also checks C_LIVE before each
+// lookahead sim (runScenario hook, battle3v3.cuh under TAIL) and its step then ends at once. The host reads the rows the moment
+// C_LIVE is 0 (variant.py done / tail_collect); the late lanes end in the background, and the next launch waits for them
+// (variant.py _drain, logged as "gpu tail late -- waited"). Pool lanes run only on an SM with no main battle (wmain is per SM) and hold at most
 // (lanes alive - main battles left) battles, so a requeued main slice always finds a free lane. Battle math is the same code; a finished pool row equals the row the next round would compute.
 #ifdef TAIL
 #define T_STATE 0     // spec tier: 0 not started, 1 being ranked, 2 list ready
@@ -94,13 +95,15 @@ extern "C" __global__ void battle3v3_tail(
     unsigned* segs, int segCap, const float* predNs,
     int nMain, int nPool, const int* mainTag, const int* poolTeam, const int* poolOrder, int nT, int keepK, unsigned thr,
     float* tPts, float* tN, const float* priorPts, const float* priorN, int* chosen, int* specList, int* pclaim, int* pdone,
-    const int* cq, unsigned* tctl, int* wmain, int TS, int specOn, int* mdone) {
+    const int* cq, unsigned* tctl, int* wmain, int TS, int specOn, int* mdone, int* plane) {
   const int lane = threadIdx.x & 31;
   const int gtid = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned smid_;
   asm volatile("mov.u32 %0, %%smid;" : "=r"(smid_));
   const int gwarp = (int)(smid_ & 255u);  // wmain is per SM: pool warps share the SM's issue slots and L1 with its main warps
   const int segWho = gtid | ((int)(smid_ & 255u) << 20);  // segment record: thread | SM id (bits 20-27), for the SM timeline
+  g_tailLive = ctl + C_LIVE;  // runScenario's abort hook (battle3v3.cuh); tail grids never overlap (variant.py _drain)
+  g_tailPoolLane = plane;
   B3 b;
   Run r;
   if (lane >= (int)ctl[C_SPREAD]) { atomicSub(&ctl[C_ALIVE], 1u); return; }  // spare lanes leave, as in production
@@ -213,10 +216,14 @@ extern "C" __global__ void battle3v3_tail(
     }
     if (*(volatile int*)(wmain + gwarp) != 0) { __nanosleep(2000); continue; }  // a main battle came to this warp: wait, state kept
     bool done = false, stop = false;
+    *(volatile int*)(plane + gtid) = 1;  // from here the lookahead stops once live is 0 (runScenario hook)
     for (int k = 0; k < TS; k++) {
       if (vload(&ctl[C_LIVE]) == 0u) { stop = true; break; }
       if (battle_steps(b, r, 1)) { done = true; break; }
     }
+    *(volatile int*)(plane + gtid) = 0;
+    // an aborted step saw live == 0, and live never rises again: so "live > 0 now" proves no step of this battle was cut short
+    if (done && vload(&ctl[C_LIVE]) == 0u) { done = false; stop = true; }
     if (done) {
       battle_write(b, r, out, nMain + held);
       __threadfence();  // the host may read the pool rows while late lanes still run (variant.py done/tail_collect)

@@ -279,6 +279,8 @@ ${sup(1, 2, 3)}
 <p>A generation runs about ${num('ab.default.launches', mean(ST.default.runs.map((r) => r.gpuPerGen != null ? (rd(`${r.dir}/gpu-profile.json`)?.steps ?? []).filter((x) => x.gen !== 'final').reduce((a, x) => a + (x.launches?.length ?? 0), 0) / r.gens : 0)), 0)} GPU launches. Each one ends with a tail, when most SMs wait for the last slow battles.</p>
 <p>The tail filler gives idle SMs the next round's battles of the teams most likely to pass the cut.</p>
 <p>A result is used only if the next round asks for that battle.</p>
+<p>It starts once half the GPU's workers are idle (<code>POGO_GPU_TAIL_IDLE=0.5</code>, the default).</p>
+<p>Starting earlier would slow this round's own battles; starting later leaves too little time to finish.</p>
 <p>The certain feed adds the battles of teams that are already sure to pass, sent into the running launch through a queue.</p>
 <h3>Same results</h3>
 <ul>
@@ -295,8 +297,9 @@ ${table(['variant', ...rounds.map((i) => `round ${i}`), 'mean', 'spread', 'vs de
 <p>Per launch the filler ran ${num('ab.tail.spec', TLg.tail.speculated / Math.max(1, TLg.tail.launches), 0)} battles early on average; ${pct('ab.tail.keptpct', 100 * TLg.tail.kept / Math.max(1, TLg.tail.speculated), 0)} finished before the launch ended and ${pct('ab.tail.servedpct', 100 * TLg.tail.served / Math.max(1, TLg.tail.speculated), 0)} were later used.</p>
 ${timelinePicture('10k')}
 <p class="cap">${tlCaption}</p>
+<p class="more">More: <a href="gpu/study/detail/round9-runs.html">every round-9 run, log and count</a></p>
 <h3>Full runs</h3>
-${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each (r9-full-*, recipes/standard.json generation count), back to back after the A/B')}
+${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), back to back after the A/B (r9-full-*)')}
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 1, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 1, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
 </section>
 
@@ -306,6 +309,7 @@ ${sup(3, 4)}
 <p>The filler fills idle SMs, but it cannot make the longest battle finish sooner.</p>
 <p>On the 10k launch it raised SM-active share by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
 <p>The extra battles share L1, L2 and main memory with this round's battles, so they compete for the same waits of fact 2.</p>
+<p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
 <p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory. Nsight Compute shows what that costs:</p>
 ${stallBars()}
@@ -314,7 +318,7 @@ ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
 <h3>3. Width does not matter</h3>
 <p>Giving one battle several threads did not help: the width picker chooses G=1 at every launch size on this GPU.</p>
-<p class="mut">Round-8 width runs: <a href="gpu/study/detail/round8-prototypes.html">What the prototypes changed</a>.</p>
+<p class="more">More: <a href="gpu/study/detail/round8-prototypes.html">round 8 prototype runs, width included</a></p>
 </section>
 
 <section id="todo"><h2>What to do 🚀</h2>
@@ -324,17 +328,12 @@ ${sup(5)}
 <li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8). The tail flags stay off.</li>
 <li>Build next: keep each battle's hot state in on-chip shared memory, to cut the memory waits of fact 2.</li>
 </ul>
+<p class="more">More: <a href="gpu/study/detail/round8-decide.html">round 8 candidate changes</a></p>
 </section>
 
-<section id="glossary"><h2>Glossary 📚</h2><dl class="gl">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('')}</dl></section>
+<section id="glossary"><h2>Glossary 📚</h2><dl class="gl">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('')}</dl>
+<p class="more">More: <a href="gpu/study/detail/round8-background.html">round 8 sources and terms</a></p></section>
 
-<section id="more"><h2>More detail</h2><ul class="links">
-<li><a href="gpu/study/detail/round8-decide.html">Round 8 candidate changes</a></li>
-<li><a href="gpu/study/detail/round8-time.html">Round 8: where the time goes</a></li>
-<li><a href="gpu/study/detail/round8-prototypes.html">Round 8 prototype runs</a></li>
-<li><a href="gpu/study/detail/round8-background.html">Round 8 sources and terms</a></li>
-<li><a href="gpu/study/detail/round9-runs.html">Round 9 runs, logs and counts</a></li>
-</ul></section>
 <footer><p class="mut" id="indep">${esc(txt(`${S}/review/footer.txt`).trim() || 'independent check: not run yet')}</p></footer>`;
 
 const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f4f6f9;--ok:#157347;--bad:#b42318;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c4:#9aa3b2}
@@ -344,7 +343,7 @@ const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d
 h1{font-size:1.4rem;margin:.2rem 0 .4rem}h2{font-size:1.2rem;margin:2rem 0 .3rem;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:1.05rem;margin:1.3rem 0 .3rem}
 p{margin:.4rem 0}ul,ol{padding-left:1.3rem;margin:.3rem 0}li{margin:.35rem 0}.mut,.cap{color:var(--mut)}.cap{font-size:13.5px}.na{color:var(--mut)}
 code{font-size:.85em;background:var(--card);padding:1px 4px;border-radius:3px;word-break:break-word}
-.sup{display:inline-block;font-size:13px;color:var(--mut);border:1px solid var(--line);border-radius:12px;padding:1px 9px;margin:.2rem 0}
+.more{font-size:14px}.sup{display:inline-block;font-size:13px;color:var(--mut);border:1px solid var(--line);border-radius:12px;padding:1px 9px;margin:.2rem 0}
 #summary{background:var(--card);border-radius:10px;padding:4px 14px 8px}#summary h2{border:0;margin-top:.6rem}
 .vd{white-space:nowrap}.vd-faster{color:var(--ok)}.vd-slower{color:var(--bad)}.ok{color:var(--ok)}.bad{color:var(--bad)}
 svg.fig{width:100%;height:auto;background:var(--card);border-radius:8px;margin:.5rem 0 .2rem;display:block}svg.fig text{fill:var(--fg);font-size:12px}svg.fig .s{font-size:11.5px}

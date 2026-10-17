@@ -126,9 +126,22 @@ def main():
             var[name] = summarize(name, m, used)
         else:
             log = os.path.join(R, "out/gpu/study/prof/ncu-tail.log")
-            err = [l.strip() for l in open(log)] if os.path.exists(log) else []
+            lines = [l.strip() for l in open(log)] if os.path.exists(log) else []
+            blk, on = [], False  # this variant's block of the log: "== <name> start" .. "== <name> exit"
+            for l in lines:
+                if l.startswith(f"== {name} start"):
+                    on = True
+                if on:
+                    blk.append(l)
+                if l.startswith(f"== {name} exit"):
+                    on = False
+            err = [l for l in blk if l.startswith("==ERROR==") or l.startswith(f"== {name} exit")]
             var[name] = {"launch": VARIANTS[name], "tool": "no Nsight", "command": "bash out/gpu/study/prof/ncu-tail.sh",
-                         "error": next((l for l in err if "ERROR" in l), "no report written (see ncu-tail.log)")}
+                         "error": " | ".join(err) if err else "no report written (see ncu-tail.log)"}
+            if err:
+                var[name]["error"] += ("; Windows logged 'Display driver nvlddmkm stopped responding and has successfully recovered' "
+                                       "(event 4101) at 13:35:53, 13:36:07 and 13:36:16 ET on 2026-10-17, during these two runs, "
+                                       "so they were not retried")
     out["variants"] = var
     out["variants_not_profiled"] = VARIANT_BLOCKED
     json.dump(out, open(os.path.join(D, "summary.json"), "w"), indent=1)
