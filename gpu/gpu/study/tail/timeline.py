@@ -8,7 +8,7 @@ through the in-kernel queue after the first finished main row). Pool stand-in: t
 (5k: batch 6, 10k: batch 7, 36k: batch 3). From the segment records (thread | SM id, mode, battle, t0, t1), up to the last
 main battle's end (when the host gets its rows): SM-active share (mean over SMs of the time any battle runs on it), the busy-SM
 count per time bin split main / pool, and the tail share (time after half the main battles ended / main span).
--> out/gpu/study/prof/tail-timeline.json
+-> out/gpu/study/prof/tail-timeline.json. Nsight (out/gpu/study/prof/ncu-tail.sh): --only 5k --modes off|tail --reps 1.
 """
 import argparse
 import json
@@ -120,15 +120,20 @@ def main():
     ap.add_argument("--out", default="../out/gpu/study/prof/tail-timeline.json")
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--np", type=int, default=6000)
+    ap.add_argument("--only", default="", help="comma list of launches (default all three); for Nsight runs")
+    ap.add_argument("--modes", default="off,tail,certain")
     a = ap.parse_args()
     T = K.TAIL
     static, batches = load_dump(a.dump)
     doc = {"note": __doc__.split("\n\n", 2)[2].strip(), "reps": a.reps, "launches": {}}
+    only = set(a.only.split(",")) if a.only else set(LAUNCH)
     for name, (mb, pb) in LAUNCH.items():
+        if name not in only:
+            continue
         main_ = tuple(np.concatenate([batches[i][j] for i in mb]) for j in range(3))
         pool = tuple(x[: a.np] for x in batches[pb])
         doc["launches"][name] = {}
-        for mode in ("off", "tail", "certain"):
+        for mode in a.modes.split(","):
             r = describe(run(T, static, main_, pool, mode, a.reps), len(main_[2]))
             doc["launches"][name][mode] = r
             print(json.dumps({"launch": name, "mode": mode, **{k: v for k, v in r.items() if not k.startswith("busy")}}), flush=True)

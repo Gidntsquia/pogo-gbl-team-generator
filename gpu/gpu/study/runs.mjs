@@ -17,7 +17,7 @@ const sum = (a, f = (x) => x) => a.reduce((s, x) => s + f(x), 0);
 /**
  * Score one round-8 run directory (out/evolve-gpu8-<name>).
  * @param {string} dir run directory; its log is `${dir}.log`
- * @returns {object|null} row with name, env, exit, gens, sat, warmPerGen, total, bps, genWalls, rate, battles
+ * @returns {object|null} row with name, env, exit, gens, sat, warmPerGen, total, bps, genWalls, rate, battles, tailShare, tailLog, start
  */
 export function runStats(dir) {
   const name = path.basename(dir).replace(/^evolve-gpu8-/, '');
@@ -38,11 +38,21 @@ export function runStats(dir) {
   const warm = sat >= 0 && genWalls.length >= G ? sum(genWalls.slice(sat, G)) : null;
   const steps = (prof?.steps ?? []).filter((s) => s.gen !== 'final');
   const N = sum(steps, (s) => s.n), SW = sum(steps, (s) => s.wall);
+  // tail share (round 9): time after half a launch's main battles ended (gpu-profile buckets.tail) / gen wall, warm gens
+  const warmG = sat >= 0 ? (prof?.generations ?? []).slice(sat, G) : [];
+  const tailShare = warmG.length ? sum(warmG, (g) => g.buckets?.tail ?? 0) / sum(warmG, (g) => g.wall) : null;
+  // tail-filler log lines (POGO_GPU_STUDY=tail[,certain]): totals over the run
+  const tl = [...log.matchAll(/gpu tail -- pool (\d+), speculated (\d+) \((\d+) certain\), kept (\d+), discarded (\d+), overrun (-?\d+)us, served (\d+)/g)];
+  const served2 = [...log.matchAll(/gpu tail -- served (\d+) from the previous launch \(no pool/g)];
+  const tailLog = tl.length ? {
+    launches: tl.length, pool: sum(tl, (x) => +x[1]), speculated: sum(tl, (x) => +x[2]), certain: sum(tl, (x) => +x[3]),
+    kept: sum(tl, (x) => +x[4]), discarded: sum(tl, (x) => +x[5]), served: sum(tl, (x) => +x[7]) + sum(served2, (x) => +x[1]),
+  } : null;
   const fork = name.split('-')[0];
   return {
     name, fork, env, exit: exit == null ? null : +exit, gens: G, sat, tailMean, rate, genWalls,
     warmPerGen: warm != null ? warm / (G - sat) : null, total, bps: SW ? N / SW : null, battles: N, stepWall: SW,
-    gpuPerGen: G ? SW / G : null, dir,
+    gpuPerGen: G ? SW / G : null, tailShare, tailLog, start, dir,
   };
 }
 

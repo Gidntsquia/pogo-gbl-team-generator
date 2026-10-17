@@ -135,7 +135,7 @@ export function createTail({ log }) {
   /** Certain tier: every POLL_MS read the finished main rows, run the certainty test, feed new certain teams' pool battles. */
   async function pollCertain(sc, tag, doneP, isDone, j, cert, n) {
     certainMod ??= await import('../../gpu/gpu/study/tail/certainty.mjs');
-    const { prepareRound, bounds, certainTeams } = certainMod;
+    const { prepareRound, bounds, certainTeams, rowView } = certainMod;
     // the cut ranks by blendFitness under --fitness battle-reality, else by winRate (all blend weights 0 -> bounds = win rate)
     const zero = { snowball: 0, closer: 0, consistency: 0, sharedWeakness: 0 };
     const R = prepareRound(j.blend === false ? { ...cert.plan, weights: zero } : cert.plan);
@@ -149,8 +149,8 @@ export function createTail({ log }) {
       if (v) return candidateView(v, seat);
       const k = rowOfSpec.get(ix);
       if (k === undefined || !rows || k >= rows.length / 4 || !rows[k * 4 + 3]) return null;
-      const lfA = rows[k * 4 + 1], lfB = rows[k * 4 + 2];
-      return candidateView({ winner: WINNER[rows[k * 4]], summary: { leadFaintTurnA: lfA < 0 ? null : lfA, leadFaintTurnB: lfB < 0 ? null : lfB } }, seat);
+      // a peeked row holds winner and lead-faint turns only (no HP): read it with the port's rowView
+      return rowView(rows[k * 4], rows[k * 4 + 1], rows[k * 4 + 2], seat);
     };
     const stop = new Promise((res) => doneP.then(res));
     while (!isDone()) {

@@ -52,3 +52,13 @@ test('pool rows finished in one launch are served to the next call, which launch
   assert.ok(logs.some((l) => /gpu tail -- pool 3, speculated 3 \(0 certain\), kept 2, discarded 1/.test(l)), logs.join('\n'));
   assert.ok(logs.some((l) => /served 1 from the previous launch/.test(l)), logs.join('\n'));
 });
+
+test('a peeked kernel row (winner + lead-faint turns) reads the same as the memo-shaped result it becomes', async () => {
+  const { candidateView } = await import('../src/engine/gpuTail.js');
+  const { rowView } = await import('../gpu/gpu/study/tail/certainty.mjs');
+  const hp = { a: 1, b: 2, aPerMon: [1, 0, 0], bPerMon: [0, 2, 0] };
+  for (const w of [0, 1, 2]) for (const lfA of [-1, 3, 5]) for (const lfB of [-1, 3, 5]) for (const seat of [0, 1]) {
+    const value = { winner: ['a', 'b', 'tie'][w], survivorsHp: hp, summary: { leadFaintTurnA: lfA < 0 ? null : lfA, leadFaintTurnB: lfB < 0 ? null : lfB } };
+    assert.deepEqual(rowView(w, lfA, lfB, seat), candidateView(value, seat), JSON.stringify({ w, lfA, lfB, seat }));
+  }
+});
