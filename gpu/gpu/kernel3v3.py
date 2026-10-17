@@ -502,3 +502,24 @@ def write_ahead_log(rec, path=None):
     r = {k: v for k, v in rec.items() if k != "segments"}
     with open(path, "a") as f:
         f.write(json.dumps(r) + "\n")
+
+
+# ---------------------------------------------------------------------------------------------- round 8 study variants
+# EXPERIMENTAL, off by default (plans round 8 R6/R7). POGO_GPU_STUDY=<name>[,<name>] selects research prototypes from the
+# fixed list below; each lives in this repo at gpu/gpu/study/<name>/variant.py and its apply(module) replaces functions of
+# this module (kernel source, launch or scheduler). Names outside STUDY_VARIANTS are rejected. Unset = production path.
+STUDY_VARIANTS = ("prof", "width", "stack", "pool", "split", "lockstep", "streams", "cpushare", "queue", "early", "occ")
+STUDY = [f for f in os.environ.get("POGO_GPU_STUDY", "").split(",") if f]
+
+
+def _apply_study():
+    from .study import variants
+    for name in STUDY:
+        if name not in STUDY_VARIANTS:
+            raise ValueError(f"POGO_GPU_STUDY: unknown variant {name!r} (known: {', '.join(STUDY_VARIANTS)})")
+        getattr(variants, name)().apply(sys.modules[__name__])
+        sys.stderr.write(f"gpu study -- variant {name} applied\n")
+
+
+if STUDY:
+    _apply_study()
