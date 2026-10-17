@@ -38,7 +38,7 @@ const report = await page.evaluate(() => {
     for (const t of s.querySelectorAll('text')) { const b = t.getBBox(); if (b.x + b.width > vb.width + 0.5 || b.x < -0.5) out.svgOver.push(`${t.textContent.slice(0, 60)} (${(b.x + b.width).toFixed(0)} > ${vb.width})`); }
   }
   // leaf text blocks only: a block that holds other blocks is a list item or card, judged by its parts
-  for (const p of document.querySelectorAll('p, li, li > div, .next, .data, .mean, .rec li > div, dd, .defs span, .why, .says')) {
+  for (const p of document.querySelectorAll('p, li, li > div, .next, .data, .mean, .rec li > div, dd, .defs span, .why, .says, .concl div')) {
     if (!vis(p) || p.classList.contains('defs') || p.closest('details:not([open])') || p.querySelector('table, svg, ol, ul, p, div, dl')) continue;
     const lh = parseFloat(getComputedStyle(p).lineHeight) || 24, h = p.getBoundingClientRect().height;
     if (h > lh * 3.3) out.tall.push(`${p.tagName.toLowerCase()}.${p.className} ${(h / lh).toFixed(1)} lines: ${p.textContent.trim().slice(0, 70)}`);

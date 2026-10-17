@@ -188,7 +188,9 @@ const css = `ol.src{font-size:.9em;padding-left:2em}ol.src .says,ol.src .why{mar
 :root[data-theme="dark"]{--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--warn:#e3b341;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea;--c4:#77808f}
 *{box-sizing:border-box}a{color:var(--link)}body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;margin:0 auto;max-width:860px;padding:16px}
 h1{font-size:1.45rem;margin:.2rem 0}h2{font-size:1.2rem;margin-top:2.2rem;border-bottom:1px solid var(--line);padding-bottom:4px}
-h2 .n{display:inline-block;background:var(--c0);color:var(--bg);border-radius:50%;width:1.6em;height:1.6em;text-align:center;line-height:1.6em;font-size:.8em;margin-right:.4em}
+h3{font-size:1.1rem;margin-top:1.8rem;border-bottom:1px solid var(--line);padding-bottom:4px}h2.pt{font-size:1.3rem;margin-top:2.6rem;border:0;border-top:4px solid var(--c0);padding-top:10px}.part>p.mut{margin-top:.2rem}
+.concl{border:2px solid var(--c0);border-radius:10px;padding:8px 12px;margin:1.2rem 0 .4rem;background:var(--card)}.concl .cl{font-weight:700;color:var(--c0);margin-bottom:.2rem}.concl div{margin:.2rem 0}
+h3 .n{display:inline-block;background:var(--c0);color:var(--bg);border-radius:50%;width:1.6em;height:1.6em;text-align:center;line-height:1.6em;font-size:.8em;margin-right:.4em}
 p{margin:.4rem 0}.mut,small{color:var(--mut)}.na{color:var(--mut)}code{font-size:.85em;background:var(--card);padding:1px 4px;border-radius:3px;word-break:break-word}
 .rec{background:var(--card);border:2px solid var(--c0);border-radius:10px;padding:10px 14px;margin:1rem 0}.rec h2{margin:.2rem 0 .4rem;border:0;font-size:1.15rem}
 .rec ol{padding-left:1.3rem;margin:.3rem 0}.rec li{margin:.55rem 0}.rec .gain{color:var(--ok);font-weight:700}.rec .cmd{display:block;margin-top:2px}
@@ -228,7 +230,7 @@ const seen = new Set();
 const T = (term, shown = term) => shown;
 const TERMS = Object.keys(GLOSS).sort((a, b) => b.length - a.length);
 const termRe = new RegExp(`\\b(${TERMS.map((t) => t.replace(/ /g, '\\s+')).join('|')})(e?s)?\\b`, 'gi');
-const SKIP = new Set(['svg', 'code', 'h1', 'h2', 'summary', 'th', 'a', 'title', 'style', 'dt', 'dd', 'script']);
+const SKIP = new Set(['svg', 'code', 'h1', 'h2', 'h3', 'summary', 'th', 'a', 'title', 'style', 'dt', 'dd', 'script']);
 /**
  * Walk the page HTML in document order and give each glossary term its plain-words definition, in brackets, at its
  * first appearance in running text (not inside charts, code, headings, links or the glossary).
@@ -269,7 +271,10 @@ const ul = (items) => `<ul class="find">${items.filter(Boolean).slice(0, 3).map(
 const sup = (...ids) => `<p class="sup">supports: ${ids.map((n) => (String(n).startsWith('s') ? `<a href="#sum-${String(n).slice(1)}">summary point ${String(n).slice(1)}</a>` : `<a href="#rec-${n}">recommendation line ${n}</a>`)).join(', ')}</p>`;
 const table = (head, rows) => `<div class="tw"><table><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${c ?? ''}</td>`).join('')}</tr>`).join('')}</table></div>`;
 const STEPS = [];
-const step = (id, title, body) => { STEPS.push({ id, title }); return `<section id="${id}"><h2><span class="n">${STEPS.length}</span>${title}</h2>${body}</section>`; };
+const step = (id, title, body) => { STEPS.push({ id, title }); return `<section id="${id}" class="step"><h3><span class="n">${STEPS.length}</span>${title}</h3>${body}</section>`; };
+const PARTS = [];
+/** A part: related steps grouped under one heading, closed by that part's own conclusion (user request 2026-10-17). */
+const part = (id, title, lead, inner, concl) => { const stepIds = STEPS.length; const body = inner.map((f) => autoDefine(f())).join('\n'); PARTS.push({ id, title, steps: STEPS.slice(stepIds) }); return `<section id="${id}" class="part"><h2 class="pt">${title}</h2><p class="mut">${lead}</p>${body}<div class="concl"><div class="cl">Conclusion of this part</div>${concl.filter(Boolean).map((c) => `<div>${c}</div>`).join('')}</div></section>`; };
 const W = 360; // every chart is drawn 360 units wide so it is legible at 390 px without zoom
 const svg = (h, inner, label) => `<svg viewBox="0 0 ${W} ${h}" class="fig" role="img" aria-label="${esc(label)}">${inner}</svg>`;
 const tx = (x, y, s, cls = '', anchor = 'start', extra = '') => `<text x="${x}" y="${y}" text-anchor="${anchor}"${cls ? ` class="${cls}"` : ''}${extra}>${s}</text>`;
@@ -754,8 +759,8 @@ const recBox = () => `<div class="rec" id="rec"><h2>Recommendation for the stand
 
 // ---------------------------------------------------------------- summary (amendment 2026-10-17): <= 5 one-line points, first on the page
 const SCHED = ['queue', 'lockstep', 'streams', 'cpushare-auto', 'pool', 'lockstep-t128'];
+const sched = deltaRows.filter((r) => SCHED.includes(r.s)).sort((a, b) => a.d - b.d);
 const summary = () => {
-  const sched = deltaRows.filter((r) => SCHED.includes(r.s)).sort((a, b) => a.d - b.d);
   const abList = abWins.map((c) => `${esc(SHORT[c.id] ?? c.name.toLowerCase())} ${num(`ab.${c.ab.set}.delta`, c.ab.d, 1, { sign: true })} s`).join(', ');
   // plain words only: no glossary term, so each point stays one short sentence (terms are defined where the steps use them)
   const pts = [
@@ -773,11 +778,30 @@ const rankList = () => `<section id="ranked"><h2>Changes to pick from, fastest f
 ${extraCards.length ? `<details><summary>Also looked at (${extraCards.length}, lower ranked)</summary><ul>${extraCards.map((c) => `<li><b>${esc(c.name)}</b> <span class="mut">(${esc(c.fork)}${c.tested ? ', tested' : ''})</span>: ${esc(c.do_next)}</li>`).join('')}</ul></details>` : ''}</section>`;
 
 // ---------------------------------------------------------------- assemble
-const order = [stepTime, stepProf, stepWidth, stepRuns, stepAB, stepCheck, stepLit, stepForks];
-const top = summary() + autoDefine(recBox() + rankList());
-const body = order.map((f) => autoDefine(f())).join('\n');
+const nm = (c) => esc(SHORT[c.id] ?? c.name.toLowerCase());
+const decideConcl = [
+  turnOn ? `Turn on <b>${nm(turnOn)}</b> and nothing else: ${num('rec.before', before, 1)} → ${num('rec.after', after, 1)} s per warm generation.` : 'Keep today\'s defaults; no change earned its place.',
+  'Every other card stays off until a longer A/B or the next round says otherwise.',
+];
+const top = `<section id="decide" class="part"><h2 class="pt">Part A · What to do</h2>${summary()}${autoDefine(recBox() + rankList())}<div class="concl"><div class="cl">Conclusion of this part</div>${decideConcl.map((c) => `<div>${c}</div>`).join('')}</div></section>`;
+const body = [
+  part('why', 'Part B · Where the time goes', 'Steps 1–3 measure today\'s sim as it is: nothing changed, only timed.', [stepTime, stepProf, stepWidth], [
+    `The GPU is the bottleneck: ${num(`gen.${profRun?.name}.mean.gpushare`, gpuShare, '%')} of a generation, ${num(`gen.${profRun?.name}.mean.tailshare`, tailShare, '%')} of it waiting on a batch's last battles.`,
+    occA(lastI) != null ? `Per-battle memory keeps the GPU ${num(`prof.achieved_occupancy.${profLaunchIds[lastI]}`, occA(lastI), 1)}% filled; that, not width, is what to change.` : 'Width (threads per battle) does not matter.',
+  ]),
+  part('tried', 'Part C · What the prototypes changed', 'Steps 4–6 time each code change against production runs made at the same hour, then re-check the wins.', [stepRuns, stepAB, stepCheck], [
+    abWins.length ? `Real win: ${abWins.map((c) => `${nm(c)} ${num(`ab.${c.ab.set}.delta`, c.ab.d, 1, { sign: true })} s`).join(', ')}, beyond both spreads.` : 'No prototype beat the defaults beyond run-to-run spread.',
+    Object.values(AB).some((a) => !a.clears) ? `Noise: ${Object.values(AB).filter((a) => !a.clears).map((a) => { const c = allCards.find((x) => x.ab === a); return `${c ? nm(c) : esc(a.set)} ${num(`ab.${a.set}.delta`, a.d, 1, { sign: true })} s`; }).join(', ')}.` : '',
+    sched.length ? `Every scheduling idea ran slower (${num(`delta.${sched[0].s}`, sched[0].d, 1, { sign: true })} to ${num(`delta.${sched.at(-1).s}`, sched.at(-1).d, 1, { sign: true })} s).` : '',
+    `Results stay exact: ${num('check.verified', protoCards.filter((c) => c.verified).length, 0)} of ${num('check.tested', protoCards.length, 0)} prototypes match the CPU engine on every battle.`,
+  ]),
+  part('context', 'Part D · Background', 'Steps 7–8 are context, not measurements of our sim: what others found, and how the night ran.', [stepLit, stepForks], [
+    'Other simulators hit our two costs, uneven run lengths and big per-thread state; their fixes do not transfer as-is.',
+    `The search ran clean: ${num('forks.n', forks.length, 0)} forks, ${num('chain.stages', nightStages.length, 0)} chain stages, ${num('chain.failed', nightStages.filter((c) => c.rc).length, 0)} failed.`,
+  ]),
+].join('\n');
 const gloss = `<section id="glossary"><h2>Glossary</h2><dl class="gl">${Object.entries(GLOSS).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></section>`;
-const nav = `<nav class="mut">Steps: <ol class="nav">${STEPS.map((s) => `<li><a href="#${s.id}">${plain(s.title)}</a></li>`).join('')}<li><a href="#glossary">Glossary</a></li></ol></nav>`;
+const nav = `<nav class="mut">Parts: <ul class="nav"><li><a href="#decide">Part A · What to do</a>: <a href="#summary">summary</a> · <a href="#rec">recommendation</a> · <a href="#ranked">ranked changes</a></li>${PARTS.map((p) => `<li><a href="#${p.id}">${plain(p.title)}</a><ul>${p.steps.map((s) => `<li><a href="#${s.id}">${plain(s.title)}</a></li>`).join('')}</ul></li>`).join('')}<li><a href="#glossary">Glossary</a></li></ul></nav>`;
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GPU Study Round8</title><style>${css}</style></head><body>
 <h1>GPU round 8: where the time goes and what to change</h1>
