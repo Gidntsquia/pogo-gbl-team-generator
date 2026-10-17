@@ -53,6 +53,10 @@ for (const [file, prefix] of [[resolve('out/gpu-study.html'), ''], [EXPL, 'expla
   await page.goto(`file://${file}`);
   await page.waitForLoadState('networkidle');
   await page.evaluate(() => document.fonts.ready);
+  // the emoji font comes in unicode-range slices that load on first use: ask for each emoji on the page, then let them land
+  await page.evaluate(() => Promise.all([...new Set(document.body.innerText.match(/\p{Extended_Pictographic}/gu) ?? [])].map((c) => document.fonts.load("16px 'Noto Color Emoji'", c))));
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(() => document.fonts.ready);
   const r = await page.evaluate(({ SCREEN, MAX, MIN }) => {
     const out = { ellipsis: [], clipped: [], svgOver: [], tall: [], htmlInSvg: [...document.querySelectorAll('svg *')].filter((e) => e.namespaceURI !== 'http://www.w3.org/2000/svg').map((e) => e.outerHTML.slice(0, 60)), scroll: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     const vis = (e) => e.getClientRects().length > 0;
@@ -91,10 +95,16 @@ for (const [file, prefix] of [[resolve('out/gpu-study.html'), ''], [EXPL, 'expla
     out.cuts = cuts;
     return out;
   }, { SCREEN, MAX, MIN });
+  // a fullPage shot resizes the viewport mid-capture and Chrome then drops emoji glyphs from late font slices: grow the
+  // viewport to the whole page first, let the slices land, rebuild the body, and clip from that one layout
+  await page.setViewportSize({ width: 390, height: Math.ceil(r.cuts.at(-1)[1]) });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { document.body.innerHTML = document.body.innerHTML; return new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))); });
+  await page.waitForTimeout(500);
   const shots = [];
   for (const [i, [a, b, err]] of r.cuts.entries()) {
     const f = `${DIR}/${prefix}${String(i + 1).padStart(2, '0')}.png`;
-    await page.screenshot({ path: f, fullPage: true, clip: { x: 0, y: a, width: 390, height: b - a } });
+    await page.screenshot({ path: f, clip: { x: 0, y: a, width: 390, height: b - a } });
     shots.push(`${f} (${Math.round(b - a)} px${err ? `, ${err}` : ''})`);
     if (b - a > MAX || err) bad += 1;
   }

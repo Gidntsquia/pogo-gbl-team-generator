@@ -8,7 +8,7 @@
 // gpu/gpu/study/check_page.py recomputes them from the raw files. Round-8 material lives in out/gpu/study/detail/ (written
 // by gpu/gpu/study/round8-page.mjs).
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { runStats } from './gpu/study/runs.mjs';
+import { runStats, compareRuns } from './gpu/study/runs.mjs';
 
 const S = 'out/gpu/study';
 const rd = (p) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null);
@@ -156,6 +156,7 @@ const tl10 = TL['10k'] ?? {};
 const activeGain = tl10.tail && tl10.off ? tl10.tail.sm_active_share_pct - tl10.off.sm_active_share_pct : null;
 const spanGain = tl10.tail && tl10.off ? tl10.tail.main_span_s - tl10.off.main_span_s : null;
 
+const fullD = (id) => (full[id]?.total && full.default?.total ? (full[id].total - full.default.total) / 60 : null);
 const verdictLine = (id, v) => `${VARIANTS.find((x) => x.id === id).label}: ${delta(id)} per warm generation, ${verdict(`ab.${id}.delta`, v.word)}${v.beats ? ' (beats both spreads)' : ' (within the spread)'}.`;
 
 const summary = [
@@ -163,22 +164,27 @@ const summary = [
   `Warm time per generation: default ${s('default')}, tail filler ${s('tail')} (${verdict('ab.tail.delta', vT.word)}), certain feed ${s('certain')} (${verdict('ab.certain.delta', vC.word)}).`,
   `Idle SMs get busier (${num('tl.10k.default.active', tl10.off?.sm_active_share_pct, 1, { unit: '%' })} to ${num('tl.10k.tail.active', tl10.tail?.sm_active_share_pct, 1, { unit: '%' })} on a 10k launch); launches still end with their longest battle.`,
   `Each battle spends most of its time waiting on its own memory: ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp waits are memory loads.`,
-  `Keep the default. The next build is battle state in fast on-chip memory.`,
+  `Keep the default (100-gen runs: tail ${num('full.tail.dmin', fullD('tail'), 1, { sign: true, unit: ' min' })}, certain ${num('full.certain.dmin', fullD('certain'), 1, { sign: true, unit: ' min' })}). Build on-chip battle state next.`,
 ];
 const sup = (...k) => `<p class="sup">Supports summary point${k.length > 1 ? 's' : ''} ${k.join(' and ')}.</p>`;
 
 const abRows = VARIANTS.map((v) => {
   const st = ST[v.id];
   return [v.label, ...rounds.map((i) => { const r = ab[v.id][i - 1]; return okRun(r) ? num(`run.r9-ab-${v.id}-${i}.warm`, r.warmPerGen, 2) : `exit ${r?.exit ?? '-'}`; }),
-    num(`ab.${v.id}.mean`, st.mean, 2, { unit: ' s' }), num(`ab.${v.id}.spread`, st.spread, 2, { unit: ' s' }), v.id === 'default' ? '' : delta(v.id)];
+  ];
 });
+const abSum = VARIANTS.map((v) => [v.label, num(`ab.${v.id}.mean`, ST[v.id].mean, 2, { unit: ' s' }), num(`ab.${v.id}.spread`, ST[v.id].spread, 2, { unit: ' s' }), v.id === 'default' ? '' : delta(v.id)]);
 const fullRows = VARIANTS.map((v) => {
   const r = full[v.id];
   if (!r) return [v.label, 'not run', '', '', ''];
   const end = fullEnd(v.id);
   return [v.label, r.exit === 0 ? num(`full.${v.id}.min`, r.total / 60, 1) : `exit ${r.exit}`, `${et(r.start)}-${end ? et(end) : '?'}`, num(`full.${v.id}.warm`, r.warmPerGen, 2), num(`full.${v.id}.gens`, r.gens, 0)];
 });
-const fullD = (id) => (full[id]?.total && full.default?.total ? (full[id].total - full.default.total) / 60 : null);
+const fullSame = (id) => {
+  if (!full[id] || !full.default) return '<b class="bad">not run</b>';
+  const c = compareRuns(full.default.dir, full[id].dir);
+  return c.same ? `<b class="ok">identical</b> (${c.files} checkpoints)` : `<b class="bad">differ</b> (${c.differ.length} of ${c.files} checkpoints)`;
+};
 
 const ncuRow = (label, o, f, key, col) => ({ label, v: has(o) ? f(o) : null, why: has(o) ? null : 'no Nsight', key, col });
 const metrics = [
@@ -270,7 +276,7 @@ const tlCaption = `Replay of a 10k launch dumped from a round-8 run, through the
 const ncuCaption = `Nsight Compute on dumped 5k and 10k launches (summary.json). 36k and the certain feed: no Nsight (see glossary).`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
-<p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). Numbers in a captioned table or chart come from the run its caption names.</p></header>
+<p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). A captioned table or chart uses the runs its caption names.</p></header>
 
 <section id="summary"><h2>Summary 📌</h2><ol>${summary.map((x, i) => `<li id="s${i + 1}">${x}</li>`).join('')}</ol></section>
 
@@ -285,11 +291,20 @@ ${sup(1, 2, 3)}
 <h3>Same results</h3>
 <ul>
 <li>Checkpoints of a 5-generation run with the same seed: tail filler ${detOk('tail') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'} to default, certain feed ${detOk('tail,certain') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'}.</li>
+<li>100-generation runs vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
 <li>Winner check against the CPU engine: tail filler ${verifyOk('tail') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}, certain feed ${verifyOk('tail-certain') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}.</li>
 </ul>
+<h3>Four bugs the long runs found</h3>
+<p>The first long runs failed or slowed down, so all four were fixed. Every tail and certain-feed run here was made after the fixes.</p>
+<p>A read of the launch's state could run before its upload, see stale rows, and use them. The read now waits for the upload.</p>
+<p>Unfinished early battles ran on past the launch end and slowed the next launch. They now stop within one lookahead.</p>
+<p>A new GPU stream per launch blocked memory reuse, so late generations took minutes. Now one stream serves all.</p>
+<p>Timing records read while late battles ran could hold old bytes, which crashed a run. The buffer is now cleared each launch.</p>
+<p>The next launch waits for unfinished early battles: ${num('ab.tail.latewait', ST.tail.runs.length ? mean(ST.tail.runs.map((r) => (r.tailLog?.lateWaitS ?? 0) / r.gens)) : null, 2, { unit: ' s' })} per generation with the tail filler.</p>
 <h3>Time per generation</h3>
 <p>${num('ab.rounds', rounds.length, 0)} rounds, each running default, tail filler and certain feed back to back, 10 generations each.</p>
-${table(['variant', ...rounds.map((i) => `round ${i}`), 'mean', 'spread', 'vs default'], abRows, 'Warm seconds per generation, reference A/B')}
+${table(['variant', ...rounds.map((i) => `round ${i}`)], abRows, 'Warm seconds per generation, one run per round')}
+${table(['variant', 'mean', 'spread', 'vs default'], abSum, 'The same runs: mean, spread and change')}
 <ul><li>${verdictLine('tail', vT)}</li><li>${verdictLine('certain', vC)}</li></ul>
 <p class="mut">A change counts as a gain only if it is larger than both its own spread and the default's.</p>
 <h3>Tail share</h3>
@@ -299,7 +314,7 @@ ${timelinePicture('10k')}
 <p class="cap">${tlCaption}</p>
 <p class="more">More: <a href="gpu/study/detail/round9-runs.html">every round-9 run, log and count</a></p>
 <h3>Full runs</h3>
-${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), back to back after the A/B (r9-full-*)')}
+${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default); tail filler and certain feed back to back after the A/B (r9-full-*)')}
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 1, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 1, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
 </section>
 
@@ -325,7 +340,7 @@ ${metrics.map(metricCard).join('\n')}
 ${sup(5)}
 <ul>
 <li>Run today with the default: <code>bash scripts/sim.sh &lt;csv&gt; --gpu</code> (halving 3, island halving off).</li>
-<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8). The tail flags stay off.</li>
+<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8). Tail flags stay off (point 5).</li>
 <li>Build next: keep each battle's hot state in on-chip shared memory, to cut the memory waits of fact 2.</li>
 </ul>
 <p class="more">More: <a href="gpu/study/detail/round8-decide.html">round 8 candidate changes</a></p>

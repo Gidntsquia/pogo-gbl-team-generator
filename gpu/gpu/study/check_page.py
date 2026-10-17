@@ -48,11 +48,12 @@ def run(name):
     total = os.path.getmtime(os.path.join(d, f"evolve-gen{G - 1}.json")) - start if G else None
     tl = re.findall(r"gpu tail -- pool (\d+), speculated (\d+) \((\d+) certain\), kept (\d+), discarded (\d+), overrun (-?\d+)us, served (\d+)", log)
     sv2 = re.findall(r"gpu tail -- served (\d+) from the previous launch \(no pool", log)
+    late = sum(float(x) for x in re.findall(r"gpu tail late -- waited ([\d.]+)ms", log)) / 1e3
     steps = [s for s in prof.get("steps", []) if s.get("gen") != "final"]
     return {"exit": int(ex[-1]) if ex else None, "gens": G, "warm": warm, "tail": tail, "total": total, "start": start,
             "launches": sum(len(s.get("launches", [])) for s in steps) / G if G else None,
             "spec": sum(int(x[1]) for x in tl), "kept": sum(int(x[3]) for x in tl), "served": sum(int(x[6]) for x in tl) + sum(int(x) for x in sv2),
-            "nl": len(tl)}
+            "nl": len(tl), "late": late}
 
 
 def expected():
@@ -85,6 +86,7 @@ def expected():
         ok = st["tail"]["runs"]
         nl = sum(r["nl"] for r in ok)
         spec = sum(r["spec"] for r in ok)
+        E["ab.tail.latewait"] = sum(r["late"] / r["gens"] for r in ok) / len(ok)
         E["ab.tail.spec"] = spec / max(1, nl)
         E["ab.tail.keptpct"] = 100 * sum(r["kept"] for r in ok) / max(1, spec)
         E["ab.tail.servedpct"] = 100 * sum(r["served"] for r in ok) / max(1, spec)

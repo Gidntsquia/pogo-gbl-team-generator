@@ -37,3 +37,8 @@ they don't say.
   with `cd gpu && uv run python -m gpu.verify_3v3` (100% winner, 0 flagged) and `gpu.verify_1v1`.
 - `--gpu` launch span equals the longest single battle (one thread per battle), so a work queue cannot shorten a launch;
   only fewer/bigger launches or more parallelism per battle can (`out/gpu-gap.html`, `docs/gpu-viability.md` round 5).
+- cupy keeps freed device blocks per stream: a sidecar path that makes a new `cp.cuda.Stream` per launch and allocates
+  under it never reuses them, the pool grows every launch, and on this WSL box late generations then run up to 150x
+  slower (round 9 tail variant, fixed by one long-lived stream; `POGO_GPU_TAIL_MEMLOG=1` shows the pool per launch).
+- Once a pool reuses blocks, a `cp.empty` buffer holds old bytes: anything the host reads while a kernel may still be
+  writing it (early reads of a running grid) must be zeroed at allocation (`K._dz`) and its unwritten rows filtered.
