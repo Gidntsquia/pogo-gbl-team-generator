@@ -70,3 +70,18 @@ test('halving is on by default (R=3) and --halving-rounds 0 restores the pre-hal
   assert.equal(on.halvingRounds, 3);
   assert.ok(!('halvingRounds' in buildRunConfig(csv, { halvingRounds: 0 })));
 });
+
+test('tail speculation job (round 9 study): main = the round\'s fresh battles, pool restricted to survivors = the next round\'s', async () => {
+  const keyOf = (s) => JSON.stringify([s.teamA.map((m) => m.speciesId), s.leadA, s.teamB.map((m) => m.speciesId), s.leadB]);
+  const jobs = [], runs = [];
+  const spy = { ...executor, speculate: (j) => jobs.push(j), run: async (specs) => { runs.push(specs.map(keyOf)); return executor.run(specs); } };
+  const run = await evaluateWithHalving({}, { ...params, executor: spy }, halving);
+  assert.deepEqual(run.results, (await evaluateWithHalving({}, params, halving)).results);
+  assert.equal(jobs.length, 2); // rounds 0 and 1 of 3
+  jobs.forEach((j, r) => {
+    assert.deepEqual(j.main.map((m) => keyOf(m.spec)), runs[r]);
+    const next = new Set(runs[r + 1]);
+    assert.deepEqual(j.pool.map((p) => keyOf(p.spec)).filter((k) => next.has(k)), runs[r + 1]);
+    assert.equal(j.keepK, Math.ceil(j.priorPts.length * 0.5));
+  });
+});

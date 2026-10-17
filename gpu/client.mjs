@@ -11,7 +11,7 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 
 const MAGIC = 0x31504247, HDR = 24, D_N = 17;
-export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, BATCH3T: 7, ISLAND: 8, QUIT: 9 };
+export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, BATCH3T: 7, ISLAND: 8, QUIT: 9, TAIL: 10, PEEK: 11, FEED: 12 };
 const TAGGED_OK = 16, TAGGED_ERR = 17;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const header = (op, n = 0, arg = 0, a = 0, b = 0) => { const h = Buffer.alloc(HDR); [MAGIC, op, n, arg, a, b].forEach((v, i) => h.writeUInt32LE(v >>> 0, i * 4)); return h; };
@@ -72,6 +72,33 @@ export function packIsland(job) {
   i32(nIsl + 1).set(islStart);
   i32(nC).set(members);
   if (off !== bytes) throw new Error(`packIsland: wrote ${off} of ${bytes} bytes`);
+  return new Uint8Array(buf);
+}
+
+/**
+ * TAIL request body (EXPERIMENTAL, round 9 study POGO_GPU_STUDY=tail; layout = gpu/gpu/study/tail/variant.py parse): this round's
+ * battles plus the next round's pool, both as packBattles output.
+ * @param {{main: {idx: Int32Array, dyn: Float64Array, seeds: Uint32Array}, pool: {idx: Int32Array, dyn: Float64Array, seeds: Uint32Array},
+ *   mainTag: Int32Array, poolTeam: Int32Array, priorPts: Float32Array, priorN: Float32Array, keepK: number, spec: boolean, certain: boolean}} job
+ * @returns {Uint8Array}
+ */
+export function packTail(job) {
+  const { main, pool, mainTag, poolTeam, priorPts, priorN, keepK } = job;
+  const n = main.seeds.length, nP = pool.seeds.length, nT = priorPts.length;
+  let ints = 8 + n * 6 + nP * 6 + n + nP + n + nP + nT + nT;
+  const pad = ints % 2 ? 4 : 0;
+  const bytes = ints * 4 + pad + (n + nP) * 6 * D_N * 8;
+  const buf = new ArrayBuffer(bytes);
+  let off = 0;
+  const put = (Ctor, src, cnt) => { const a = new Ctor(buf, off, cnt); a.set(src); off += cnt * Ctor.BYTES_PER_ELEMENT; };
+  put(Int32Array, [n, nP, nT, keepK, (job.spec === false ? 0 : 1) | (job.certain ? 2 : 0), 0, 0, 0], 8);
+  put(Int32Array, main.idx, n * 6); put(Int32Array, pool.idx, nP * 6);
+  put(Int32Array, mainTag, n); put(Int32Array, poolTeam, nP);
+  put(Uint32Array, main.seeds, n); put(Uint32Array, pool.seeds, nP);
+  put(Float32Array, priorPts, nT); put(Float32Array, priorN, nT);
+  off += pad;
+  put(Float64Array, main.dyn, n * 6 * D_N); put(Float64Array, pool.dyn, nP * 6 * D_N);
+  if (off !== bytes) throw new Error(`packTail: wrote ${off} of ${bytes} bytes`);
   return new Uint8Array(buf);
 }
 
@@ -148,6 +175,32 @@ export class GpuSidecar {
     const buf = Buffer.from(body.buffer, body.byteOffset, body.byteLength);
     const r = await this.#call(header(OP.ISLAND, buf.length, real === 'double' ? 1 : 0), buf);
     return { words: new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length)), kernelUs: r.kernelUs, rows: r.pieces };
+  }
+  /**
+   * EXPERIMENTAL (round 9 study, POGO_GPU_STUDY=tail): start one TAIL launch (packTail body). Returns {tag, done} at once; `done`
+   * resolves to {words: Int32Array, kernelUs} when the launch ends (words = info[16] | pool done[nPool] | rows). While it runs,
+   * peek(tag) / feed(tag, idx) talk to it.
+   */
+  async tailStart(body, { real = 'float' } = {}) {
+    if (this.#dead) throw this.#dead;
+    const tag = this.#nextTag++;
+    const buf = Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+    const p = new Promise((resolve, reject) => this.#tagged.set(tag, { resolve, reject }));
+    await this.#chain.catch(() => {});
+    this.#child.stdin.write(Buffer.concat([header(OP.TAIL, buf.length, real === 'double' ? 1 : 0, tag), buf]));
+    const done = p.then((r) => ({ words: new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length)), kernelUs: r.kernelUs }));
+    return { tag, done };
+  }
+  /** Main rows finished so far in TAIL launch `tag` -> Int32Array(n*4): winner, leadFaintA, leadFaintB, done (0/1). */
+  async peek(tag) {
+    const r = await this.#call(header(OP.PEEK, 0, 0, tag));
+    return new Int32Array(r.payload.buffer.slice(r.payload.byteOffset, r.payload.byteOffset + r.payload.length));
+  }
+  /** Append pool indices to TAIL launch `tag`'s certain queue -> count fed. */
+  async feed(tag, poolIdx) {
+    const a = Int32Array.from(poolIdx);
+    const r = await this.#call(header(OP.FEED, a.length, 0, tag), Buffer.from(a.buffer));
+    return r.n;
   }
   /** One packed 1v1 batch: idx Int32Array(n*2), dyn Float64Array(n*2*17) -> {out: Int32Array(n*18), cols}. */
   async batch1({ idx, dyn }, { real = 'float' } = {}) {

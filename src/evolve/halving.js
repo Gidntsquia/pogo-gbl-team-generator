@@ -19,6 +19,7 @@
 import { rngFromSeed } from '../util/rng.js';
 import { createBattleCache, BATTLE_CACHE_MAX_ENTRIES } from './cache.js';
 import { evaluateTeamsInOrder } from './evaluate.js';
+import { tailJob } from './tailSpec.js';
 
 /** Opponent-slice sizes per round: doubling up to the full pool, e.g. 3 rounds of 40 -> [10, 20, 40]. */
 export function halvingSlices(total, rounds) {
@@ -100,6 +101,9 @@ export async function evaluateWithHalving(ctx, params, halving) {
 
   for (let r = 0; r < rounds; r++) {
     const slice = order.slice(0, sizes[r]);
+    // EXPERIMENTAL (round 9 GPU study, POGO_GPU_STUDY=tail): offer the next round's battles to this round's launch tail.
+    // They come back only as memo hits for exactly the specs round r+1 asks for, so nothing below changes.
+    if (params.executor?.speculate && !pre && r < rounds - 1) params.executor.speculate({ ...tailJob(cache, params, alive, order, sizes, r, keep), blend: fitnessOf({ blendFitness: 1, winRate: 0 }) === 1 });
     const sub = await evaluateTeamsInOrder(ctx, {
       ...params,
       cache,

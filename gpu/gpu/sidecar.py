@@ -112,14 +112,19 @@ def serve_binary():
     def err_bytes(e):
         return f"{type(e).__name__}: {e}".encode()
 
-    inflight = []  # (tag, handle, t0)
+    inflight = []  # (tag, handle, t0, kind): kind "batch" (BATCH3T) or "tail" (TAIL, round 9 study)
 
     def poll(block=False):
         for item in list(inflight):
-            tag, h, t0 = item
-            if block or K.launch_done(h):
+            tag, h, t0, kind = item
+            done = K.TAIL.done(h) if kind == "tail" else K.launch_done(h)
+            if block or done:
                 inflight.remove(item)
                 try:
+                    if kind == "tail":
+                        words = K.TAIL.reply_words(K.TAIL.tail_collect(h))
+                        reply(wire.TAGGED_OK, words.size, int((time.perf_counter() - t0) * 1e6), 1, tag, words.tobytes())
+                        continue
                     out = K.launch_collect(h)
                     reply(wire.TAGGED_OK, out.shape[0], int((time.perf_counter() - t0) * 1e6), K.B_OUT, tag, np.ascontiguousarray(out, "<i4").tobytes())
                 except Exception as e:  # noqa: BLE001
@@ -155,13 +160,31 @@ def serve_binary():
                 import cupy as cp
                 idx, dyn, seeds = batch3_arrays(n, body)
                 inflight.append((a, K.launch_async(state["static"], idx, dyn, seeds, "double" if arg else "float",
-                                                   stream=cp.cuda.Stream(non_blocking=True), share=state["streams"]), time.perf_counter()))
+                                                   stream=cp.cuda.Stream(non_blocking=True), share=state["streams"]), time.perf_counter(), "batch"))
+            elif op == wire.TAIL:
+                if state["static"] is None:
+                    raise RuntimeError("no static table: send STATIC first")
+                if getattr(K, "TAIL", None) is None:
+                    raise RuntimeError("TAIL needs POGO_GPU_STUDY=tail")
+                job = K.TAIL.parse(body)
+                if int(max(job["idx"].max(initial=0), job["pool"][0].max(initial=0))) >= state["static"].shape[0]:
+                    raise RuntimeError("tail: mon index beyond the static table: send STATIC first")
+                inflight.append((a, K.TAIL.tail_launch(state["static"], job["idx"], job["dyn"], job["seeds"], job["pool"], job["meta"],
+                                                       "double" if arg else "float"), time.perf_counter(), "tail"))
+            elif op in (wire.PEEK, wire.FEED):
+                h = next((it[1] for it in inflight if it[0] == a and it[3] == "tail"), None)
+                if op == wire.PEEK:
+                    rows = K.TAIL.peek(h) if h is not None else np.zeros((0, 4), np.int32)
+                    reply(0, rows.shape[0], 0, 4, 0, np.ascontiguousarray(rows, "<i4").tobytes())
+                else:
+                    fed = K.TAIL.feed(h, np.frombuffer(body, "<i4", n)) if h is not None else 0
+                    reply(0, fed, 0, 0, 0, b"")
             else:
                 rn, us, cols, pieces, out = handle(op, n, arg, body)
                 reply(0, rn, us, cols, pieces, out)
         except Exception as e:  # noqa: BLE001
             m = err_bytes(e)
-            if op == wire.BATCH3T:
+            if op in (wire.BATCH3T, wire.TAIL):
                 reply(wire.TAGGED_ERR, len(m), 0, 0, a, m)
             else:
                 reply(1, n=len(m), payload=m)

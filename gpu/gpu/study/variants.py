@@ -55,3 +55,13 @@ def early():
 def occ():
     from .occ import variant
     return variant
+
+
+def tail():
+    from .tail import variant
+    return variant
+
+
+def certain():
+    from .tail import certain as c
+    return c

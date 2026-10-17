@@ -168,6 +168,38 @@ export async function evaluateTeamsInOrder(ctx, params) {
     }
   }
 
+  /** Round 9 study (certain tier): per planned pairing [team, opp, fwd fresh idx | -1, rev fresh idx | -1, memo wp/ex x2]. */
+  function planRecord() {
+    const fresh = new Map(pendingKeys.map((k, i) => [k, i]));
+    const view = (v, mirror) => {
+      const r = mirror ? mirrorBattleResult(v) : v;
+      const e = leadExchangeLoser(r.summary);
+      return [r.winner === 'a' ? 1 : r.winner === 'tie' ? 0.5 : 0, e === 'b' ? 1 : e === 'a' ? -1 : 0];
+    };
+    const plan = [];
+    let c = 0;
+    prepared.forEach(({ oppPlans }, t) => {
+      for (const { oppIndex, pairings } of oppPlans) {
+        for (let q = 0; q < pairings.length; q++) {
+          const { fwdKey, revKey } = planKeys[c++];
+          const fi = fresh.has(fwdKey) ? fresh.get(fwdKey) : -1, vi = fresh.has(revKey) ? fresh.get(revKey) : -1;
+          const fv = fi < 0 ? cache.get(fwdKey) : undefined, rv = vi < 0 ? cache.get(revKey) : undefined;
+          const [fwp, fex] = fv !== undefined ? view(fv, false) : [0, 0];
+          const [vwp, vex] = rv !== undefined ? view(rv, true) : [0, 0];
+          plan.push([t, oppIndex, fi, vi, fwp, fex, vwp, vex]);
+        }
+      }
+    });
+    return {
+      plan, nTeams: teams.length, nOpp: opponents.length, gamma: opponentStrengthGamma,
+      weights: { snowball: snowballWeight, closer: closerWeight, consistency: consistencyWeight, sharedWeakness: sharedWeaknessWeight },
+      oppWeights: opponentWeights ? opponents.map((_, j) => opponentWeights[j] ?? 1) : null,
+      oppGroups: opponentArchetypeGroups ? opponents.map((_, j) => opponentArchetypeGroups[j] ?? null) : null,
+      closer: prepared.map(({ members }) => computeCloserScore(members, roleScores)),
+      shared: prepared.map(({ members }) => (typeCoverageContext ? computeSharedWeaknessScore(members, typeCoverageContext).score : null)),
+    };
+  }
+
   // ---- (2) run only the distinct, uncached pairings -----------------------
   /** @type {Map<string, {ok:true, value:object}|{ok:false, message:string}>} */
   const outcomes = new Map();
@@ -178,6 +210,9 @@ export async function evaluateTeamsInOrder(ctx, params) {
     if (pendingSpecs.length > 0) {
       try {
         executor.noteMemoHits?.(memoHits);
+        // EXPERIMENTAL (round 9 GPU study, POGO_GPU_STUDY=tail,certain): the plan the certainty test reads during the launch.
+        // Only the GPU executor under that flag has notePlan; nothing here feeds a result.
+        if (executor.notePlan) executor.notePlan(planRecord());
         ranStep = true;
         slots = await executor.run(pendingSpecs);
       } catch (err) {

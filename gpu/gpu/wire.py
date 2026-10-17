@@ -19,6 +19,11 @@ Requests (op):
                a = 1, b = rows run; payload = info i32[4] (G, span us, rows run, tasks) | status i32[nB] | icut i32[nC] |
                the run rows (status 2) in battle-id order, B_OUT columns each
     9 QUIT
+   10 TAIL     EXPERIMENTAL (round 9, POGO_GPU_STUDY=tail): tagged like BATCH3T (a = tag), n = body byte length; body =
+               gpu/gpu/study/tail/variant.py parse() layout (meta i32[8] | main and pool battles | tags | priors). Reply status
+               TAGGED_OK, n = int32 words, a = 1, b = tag; payload = info i32[16] | pool done i32[nPool] | rows (n + nPool) x B_OUT
+   11 PEEK     a = tag of a running TAIL launch -> status 0, n = main rows, a = 4: winner, leadFaintA, leadFaintB, done
+   12 FEED     a = tag of a running TAIL launch, n = count, payload i32[n] = pool indices for its certain queue -> status 0, n = fed
 Responses: op = status (0 ok, 1 error: payload is the UTF-8 message), n = rows, arg = kernel-side microseconds,
     a = columns per row, b = launch pieces (> 1 means the batch was split), payload = i32[n*a] row-major.
     Replies to BATCH3T: status 16 ok / 17 error, b = the request's tag (no split: pieces = 1).
@@ -29,6 +34,7 @@ import struct
 MAGIC = 0x31504247
 HDR = struct.Struct("<6I")
 PING, STATIC, BATCH3, BATCH1, FILE, STREAMS, BATCH3T, ISLAND, QUIT = 1, 2, 3, 4, 5, 6, 7, 8, 9
+TAIL, PEEK, FEED = 10, 11, 12
 TAGGED_OK, TAGGED_ERR = 16, 17
 
 
@@ -62,6 +68,8 @@ def request_payload_size(op, n, arg):
         return n * 6 * 4 + n * 6 * D_N * 8 + n * 4
     if op == BATCH1:
         return n * 2 * 4 + n * 2 * D_N * 8
-    if op in (STATIC, ISLAND):
+    if op in (STATIC, ISLAND, TAIL):
         return n
+    if op == FEED:
+        return n * 4
     return 0
