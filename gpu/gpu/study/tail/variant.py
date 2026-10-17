@@ -65,6 +65,12 @@ def tail_launch(static, idx, dyn, seeds, pool, meta, real="float", stream=None, 
     order_mode = order or TAIL_ORDER
     k = _kernel(real)
     _drain()
+    if os.environ.get("POGO_GPU_TAIL_MEMLOG"):
+        import gc
+        mp, pp = cp.get_default_memory_pool(), cp.get_default_pinned_memory_pool()
+        nst = sum(1 for o in gc.get_objects() if type(o).__name__ in ("Stream", "ExternalStream"))
+        print(f"gpu tail mem -- pool used {mp.used_bytes() >> 20}MB held {mp.total_bytes() >> 20}MB, pinned free blocks "
+              f"{pp.n_free_blocks()}, zombies {len(_ZOMBIES)}, streams {nst}, launches {len(LATE)}", file=sys.stderr, flush=True)
     K._set_stack(cp, 65536)
     n = idx.shape[0]
     pidx, pdyn, pseeds = pool
@@ -100,7 +106,13 @@ def tail_launch(static, idx, dyn, seeds, pool, meta, real="float", stream=None, 
     ctl[13] = spread
     ring = ((np.arange(nser, dtype=np.uint64) + 1) << np.uint64(32)) | np.arange(nser, dtype=np.uint64)
     seg_cap = int(min(30_000_000, (n + nP) * 6 + 1024))
-    s = stream or cp.cuda.Stream(non_blocking=True)
+    # one stream for every tail launch: cupy keeps freed device blocks per stream, so a new stream per launch never reused
+    # them and the pool grew ~7 MB a launch (3.3 GB by gen 35, past the card's free memory late in a 100-gen run, where
+    # Windows paged it and every battle ran up to 150x slower). Tail launches never overlap (_drain), so one stream is safe.
+    global _STREAM
+    if stream is None and _STREAM is None:
+        _STREAM = cp.cuda.Stream(non_blocking=True)
+    s = stream or _STREAM
     words = K._slot_words(real)
     D = lambda a, dt: cp.asarray(np.ascontiguousarray(a, dtype=dt))
     with s:
@@ -190,6 +202,7 @@ def feed(h, pool_idx):
     return int(len(ix))
 
 
+_STREAM = None
 _ZOMBIES = []  # (handle, t_main_end) of launches returned at main end whose late lanes still run
 LATE = []      # late-lane times of finished zombies, us after the last main battle (diagnostic, tail.cuh header)
 LIVE_POLL_S = 0.002
