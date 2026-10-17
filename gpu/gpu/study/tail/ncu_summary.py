@@ -19,6 +19,13 @@ D = os.path.join(R, "out/gpu/study/prof/ncu")
 STALL = "smsp__average_warps_issue_stalled_"
 TB = {"byte": 1, "Kbyte": 1e3, "Mbyte": 1e6, "Gbyte": 1e9, "Tbyte": 1e12}
 LAUNCHES = {"5k": "batch 7 (4,788 battles)", "10k": "batch 6 (10,920 battles)", "36k": "gen 0's three launches merged (36,000 battles)"}
+# R3 (out/gpu/study/prof/ncu-tail.sh): the 5k launch through the round-9 tail kernel, filler off and on (pool = batch 6[:6000])
+VARIANTS = {"5k-tailoff": "batch 7 through the tail kernel, filler off", "5k-tailon": "batch 7 + pool of 6,000 (batch 6) through the tail kernel, POGO_GPU_STUDY=tail"}
+VARIANT_BLOCKED = {
+    "tail,certain": "not profiled: its host feeds the in-kernel queue while the kernel runs, and kernel replay reruns the "
+                    "kernel with no host on the other side; SM-active for it comes from the clock-timer timeline (tail-timeline.json)",
+    "10k, 36k": "not profiled with the tail kernel: the baseline ncu runs of these launches reset the display driver (BLOCKED above)",
+}
 # launches tried here; key = launch, value = (files, note); 36k: every try died at pass 1 (see BLOCKED)
 BLOCKED = {
     "36k": {
@@ -80,7 +87,7 @@ def summarize(name, m, used):
     act, ela = g("sm__cycles_active.avg"), g("gpc__cycles_elapsed.avg") or g("sm__cycles_elapsed.avg")
     r = lambda x, d=1: None if x is None else round(x, d)
     return {
-        "launch": LAUNCHES[name], "tool": "Nsight Compute 2025.4.1, kernel replay, base clocks", "files": used,
+        "launch": {**LAUNCHES, **VARIANTS}[name], "tool": "Nsight Compute 2025.4.1, kernel replay, base clocks", "files": used,
         "kernel_s_at_base_clock": r(g("gpu__time_duration.sum"), 3),
         "warp_cycles_per_issued_instruction": r(tot, 2),
         "top5_stalls": [{"reason": k, "cycles_per_issued_instruction": r(v, 2), "share_pct": r(100 * v / tot)} for k, v in top],
@@ -112,6 +119,18 @@ def main():
                          "sm_active_share_pct": round(100 * tl[name]["sm_active_share_mean"], 1)}
         if name in tl:
             out[name]["sm_active_share_clock_timer_pct"] = round(100 * tl[name]["sm_active_share_mean"], 1)
+    var = {}
+    for name in VARIANTS:
+        m, used = merged(name)
+        if m and num(m, "gpu__time_duration.sum"):
+            var[name] = summarize(name, m, used)
+        else:
+            log = os.path.join(R, "out/gpu/study/prof/ncu-tail.log")
+            err = [l.strip() for l in open(log)] if os.path.exists(log) else []
+            var[name] = {"launch": VARIANTS[name], "tool": "no Nsight", "command": "bash out/gpu/study/prof/ncu-tail.sh",
+                         "error": next((l for l in err if "ERROR" in l), "no report written (see ncu-tail.log)")}
+    out["variants"] = var
+    out["variants_not_profiled"] = VARIANT_BLOCKED
     json.dump(out, open(os.path.join(D, "summary.json"), "w"), indent=1)
     json.dump(out, sys.stdout, indent=1)
 

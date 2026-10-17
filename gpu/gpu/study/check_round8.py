@@ -1,6 +1,7 @@
-"""Round 8 R12: re-derive every number on out/gpu-study.html from its source files, independently of gpu/gpu-study.mjs.
+"""Round 8 R12: re-derive every number on the round-8 pages from their source files, independently of the page script.
+Round 9 moved those pages to out/gpu/study/detail/round8-*.html (gpu/gpu/study/round8-page.mjs); this checks them there.
 
-    python3 gpu/gpu/study/check_page.py            # prints one line per number, writes out/gpu/study/check.log
+    python3 gpu/gpu/study/check_round8.py          # prints one line per number, writes out/gpu/study/detail/check-round8.log
 
 Reads the page's <span|tspan data-k="key" data-f="fmt">text</...> elements, recomputes each key from the raw files
 (run logs, gpu-profile.json, checkpoints, prof/metrics.json, width-calib-*.json, fork result.json, sources.json,
@@ -317,7 +318,7 @@ def fmt(v, f):
     return t.replace('-', '−', 1) if t.startswith('-') else t
 
 
-page = txt(f'{OUT}/gpu-study.html')
+page = ''.join(txt(f) for f in sorted(glob.glob(f'{S}/detail/round8-*.html')))
 items = re.findall(r'<(?:span|tspan) class="v" data-k="([^"]+)" data-f="([^"]+)">([^<]*)</', page)
 lines, bad = [], 0
 for k, f, shown in items:
@@ -344,6 +345,6 @@ for c in CARDS.values():
         bad += not good
         lines.append(f"{'ok      ' if good else 'MISMATCH'} card.{c['id']}.{fld} text present")
 lines.append(f'{len(items)} numbers + {2 * len(CARDS)} card texts checked, {bad} mismatches')
-open(f'{S}/check.log', 'w').write('\n'.join(lines) + '\n')
+open(f'{S}/detail/check-round8.log', 'w').write('\n'.join(lines) + '\n')
 print('\n'.join(lines))
 sys.exit(1 if bad else 0)

@@ -1,14 +1,15 @@
-// Round 8 report (plans round 8 R10/R12): profile-first GPU study -> out/gpu-study.html.
+// Round 8 report (plans round 8 R10/R12), kept as detail pages by round 9 (R9): the round-8 study, one page per part ->
+// out/gpu/study/detail/round8-{decide,time,prototypes,background}.html. The round-9 main page is gpu/gpu-study.mjs.
 //
-//   node gpu/gpu-study.mjs
+//   node gpu/gpu/study/round8-page.mjs
 //
 // Reads only out/gpu/study/ (fork results, prof metrics, lit sources, chain log, fork log), the chain's runs
 // out/evolve-gpu8-*, the width calibration out/gpu/width-calib-*.json and the round-7 island/auto runs it cites.
 // Every number on the page is emitted through num(key, value) as <span data-k="key" data-v="raw">; it is also written to
-// out/gpu/study/page-numbers.json. gpu/gpu/study/check_page.py recomputes each key from the source files on its own and
+// out/gpu/study/detail/round8-numbers.json. gpu/gpu/study/check_round8.py recomputes each key from the source files on its own and
 // fails on any mismatch (out/gpu/study/check.log).
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
-import { allRuns, runStats, compareRuns } from './gpu/study/runs.mjs';
+import { allRuns, runStats, compareRuns } from './runs.mjs';
 
 const OUT = 'out', S = 'out/gpu/study';
 const rd = (p) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null);
@@ -20,8 +21,8 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // ---------------------------------------------------------------- numbers: every page number goes through num()
 const NUMS = {};
 /**
- * Format a number for the page and register it for check_page.py.
- * @param {string} key source key (see check_page.py for each family)
+ * Format a number for the page and register it for check_round8.py.
+ * @param {string} key source key (see check_round8.py for each family)
  * @param {number|null} v raw value
  * @param {number|string} [fmt] decimals, or '%' (v is a 0..1 share, 0 decimals) / '%1' (1 decimal) / ',' (thousands, 0 decimals)
  * @param {object} [o] {sign: true} prints a leading + for positives
@@ -784,7 +785,7 @@ const decideConcl = [
   'Every other card stays off until a longer A/B or the next round says otherwise.',
 ];
 const top = `<section id="decide" class="part"><h2 class="pt">Part A · What to do</h2>${summary()}${autoDefine(recBox() + rankList())}<div class="concl"><div class="cl">Conclusion of this part</div>${decideConcl.map((c) => `<div>${c}</div>`).join('')}</div></section>`;
-const body = [
+const bodyParts = [
   part('why', 'Part B · Where the time goes', 'Steps 1–3 measure today\'s sim as it is: nothing changed, only timed.', [stepTime, stepProf, stepWidth], [
     `The GPU is the bottleneck: ${num(`gen.${profRun?.name}.mean.gpushare`, gpuShare, '%')} of a generation, ${num(`gen.${profRun?.name}.mean.tailshare`, tailShare, '%')} of it waiting on a batch's last battles.`,
     occA(lastI) != null ? `Per-battle memory keeps the GPU ${num(`prof.achieved_occupancy.${profLaunchIds[lastI]}`, occA(lastI), 1)}% filled; that, not width, is what to change.` : 'Width (threads per battle) does not matter.',
@@ -799,19 +800,27 @@ const body = [
     'Other simulators hit our two costs, uneven run lengths and big per-thread state; their fixes do not transfer as-is.',
     `The search ran clean: ${num('forks.n', forks.length, 0)} forks, ${num('chain.stages', nightStages.length, 0)} chain stages, ${num('chain.failed', nightStages.filter((c) => c.rc).length, 0)} failed.`,
   ]),
-].join('\n');
+];
 const gloss = `<section id="glossary"><h2>Glossary</h2><dl class="gl">${Object.entries(GLOSS).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></section>`;
-const nav = `<nav class="mut">Parts: <ul class="nav"><li><a href="#decide">Part A · What to do</a>: <a href="#summary">summary</a> · <a href="#rec">recommendation</a> · <a href="#ranked">ranked changes</a></li>${PARTS.map((p) => `<li><a href="#${p.id}">${plain(p.title)}</a><ul>${p.steps.map((s) => `<li><a href="#${s.id}">${plain(s.title)}</a></li>`).join('')}</ul></li>`).join('')}<li><a href="#glossary">Glossary</a></li></ul></nav>`;
-const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GPU Study Round8</title><style>${css}</style></head><body>
-<h1>GPU round 8: where the time goes and what to change</h1>
-<p class="mut">Built ${esc(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }))} ET · numbers re-checked: <code>out/gpu/study/check.log</code> · <a href="gpu-width.html">round 7 page</a></p>
-${top}
-${nav}
-${body}
+// round 9: one detail page per part; links to an anchor on another part's page get that page's file name
+const DET = `${S}/detail`;
+mkdirSync(DET, { recursive: true });
+const pages = [['decide', 'What to do (round 8)', top], ['time', 'Where the time goes (round 8)', bodyParts[0]],
+  ['prototypes', 'What the prototypes changed (round 8)', bodyParts[1]], ['background', 'Background (round 8)', bodyParts[2]]];
+const fileOf = {};
+for (const [id, , h] of pages) for (const m of h.matchAll(/ id="([^"]+)"/g)) fileOf[m[1]] ??= `round8-${id}.html`;
+for (const [id, title, h] of pages) {
+  const own = `round8-${id}.html`;
+  const fixed = h.replace(/href="#([^"]+)"/g, (m, a) => (fileOf[a] && fileOf[a] !== own ? `href="${fileOf[a]}#${a}"` : m));
+  const others = pages.filter(([o]) => o !== id).map(([o, t]) => `<a href="round8-${o}.html">${t}</a>`).join(' · ');
+  writeFileSync(`${DET}/${own}`, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPU Round8 ${esc(id)}</title><style>${css}</style></head><body>
+<p class="mut"><a href="../../../gpu-study.html">Round 9 page</a> · ${others}</p>
+<h1>${esc(title)}</h1>
+<p class="mut">Round 8 material (overnight chain 2026-10-16 21:18 to 2026-10-17 04:47 ET and the morning A/B), moved off the main page in round 9.</p>
+${fixed}
 ${gloss}
-</body></html>`;
-writeFileSync(`${OUT}/gpu-study.html`, html);
-writeFileSync(`${S}/page-numbers.json`, JSON.stringify(NUMS, null, 1));
-writeFileSync(`${S}/runs.json`, JSON.stringify(runs.map(({ rate, genWalls, ...r }) => ({ ...r, rate, genWalls })), null, 1));
-console.log(`wrote ${OUT}/gpu-study.html: ${cards.length} cards, ${runs.length} runs, ${Object.keys(NUMS).length} checked numbers, ${STEPS.length} steps`);
+</body></html>`);
+}
+writeFileSync(`${DET}/round8-numbers.json`, JSON.stringify(NUMS, null, 1));
+console.log(`wrote ${DET}/round8-*.html: ${cards.length} cards, ${runs.length} runs, ${Object.keys(NUMS).length} checked numbers, ${STEPS.length} steps`);
