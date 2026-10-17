@@ -265,6 +265,7 @@ def tail_collect(h):
     cp = K.require_cuda()
     n, nP = h["n"], h["nP"]
     d = h["d"]
+    returned_early = False
     if h.get("early") and not h["event"].done:
         pd = _snap(h, "pdone", max(nP, 1) * 4)
         ob = _snap(h, "out", (n + nP) * K.B_OUT * 4)
