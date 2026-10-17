@@ -68,12 +68,28 @@ const r7 = Object.fromEntries(['isl-h3-p1', 'isl-h3-p1-r2', 'auto-h3-p1', 'auto-
 const r7isl = mean(['isl-h3-p1', 'isl-h3-p1-r2'].map((n) => r7[n]?.warmPerGen).filter((x) => x != null));
 const r7auto = mean(['auto-h3-p1', 'auto-h3-p1-r2'].map((n) => r7[n]?.warmPerGen).filter((x) => x != null));
 
-// cards: every fork's cards; measured = mean warm of the card's runs minus base mean
+// controls: production-path runs (same checkpoints as base-a). The GPU got faster through the night (base-a 21:18 vs runs
+// after 23:30 ~1.3 s/gen apart), so each card is compared with the 2 control runs nearest in chain order to each of its runs.
+const CTRL_RE = /^base-[a-z]$|-prod-[a-z]$|^cpushare-share0-[a-z]$/;
+const stageK = Object.fromEntries(chainStages.map((c) => [c.name, c.k]));
+const ctrlRuns = okRuns(runs.filter((r) => CTRL_RE.test(r.name))).sort((a, b) => stageK[a.name] - stageK[b.name]);
+const nearCtrl = (names) => {
+  const pick = new Set();
+  for (const n of names) [...ctrlRuns].sort((a, b) => Math.abs(stageK[a.name] - stageK[n]) - Math.abs(stageK[b.name] - stageK[n]) || stageK[a.name] - stageK[b.name]).slice(0, 2).forEach((r) => pick.add(r));
+  return [...pick];
+};
+const ctrlSets = {};
+for (const r of ctrlRuns) (ctrlSets[setOf(r.name)] ??= []).push(r.warmPerGen);
+// noise = largest spread between same-setting control runs made back to back
+const ctrlNoise = Object.values(ctrlSets).filter((v) => v.length >= 2).map((v) => Math.max(...v) - Math.min(...v));
+// cards: every fork's cards; measured = mean warm of the card's runs minus the mean of its nearest control runs
 const cards = Object.entries(results).flatMap(([fork, r]) => (r.cards ?? []).map((c) => ({ ...c, fork })));
 for (const c of cards) {
-  const rs = okRuns(runs.filter((r) => (c.runs ?? []).includes(r.name)));
+  const rs = okRuns(runs.filter((r) => (c.runs ?? []).includes(r.name) && !CTRL_RE.test(r.name))); // a card's own -prod- runs are controls
   c.measuredWarm = rs.length ? mean(rs.map((r) => r.warmPerGen)) : null;
-  c.measured = c.measuredWarm != null && baseWarm != null ? c.measuredWarm - baseWarm : null;
+  c.ctrl = rs.length ? nearCtrl(rs.map((r) => r.name)) : [];
+  c.ctrlWarm = c.ctrl.length ? mean(c.ctrl.map((r) => r.warmPerGen)) : null;
+  c.measured = c.measuredWarm != null && c.ctrlWarm != null ? c.measuredWarm - c.ctrlWarm : null;
   c.nRuns = rs.length;
   c.verified = /^100(\.0+)?%.*\b0 flagged/.test(c.verify_agreement ?? '');
   const p = c.predicted_s_per_gen ?? [];
@@ -81,7 +97,16 @@ for (const c of cards) {
   c.rankKey = c.measured != null ? c.measured : c.mid ?? 99;
 }
 cards.sort((a, b) => a.rankKey - b.rankKey || a.id.localeCompare(b.id));
-const noise = baseRuns.length >= 2 ? Math.max(...baseRuns.map((r) => r.warmPerGen)) - Math.min(...baseRuns.map((r) => r.warmPerGen)) : null;
+// R5: 6-12 cards on the page. The six candidates the plan names always stay; the rest fill up to 12 in rank order, and
+// lower-ranked ones move to a collapsed "Also looked at" list (name, verdict and do-next only).
+const NAMED = ['compact-state', 'queue-kernel', 'route-longest-to-cpu', 'two-stream-overlap', 'lockstep', 'width-calib'];
+const MAXC = 12;
+const shownSet = new Set(cards.filter((c) => NAMED.includes(c.id)));
+for (const c of cards) { if (shownSet.size >= MAXC) break; shownSet.add(c); }
+const allCards = [...cards];
+const extraCards = cards.filter((c) => !shownSet.has(c));
+cards.splice(0, cards.length, ...cards.filter((c) => shownSet.has(c)));
+const noise = ctrlNoise.length ? Math.max(...ctrlNoise) : null;
 const wins = cards.filter((c) => c.measured != null && c.verified && c.measured < -(noise ?? 0));
 const bestWin = wins[0] ?? null;
 const topUntested = cards.find((c) => !c.tested) ?? null;
@@ -353,13 +378,15 @@ ${c.tested ? `<p><b>Check:</b> verify_3v3 ${esc(c.verify_agreement || 'not run')
 }
 
 // ---------------------------------------------------------------- step: profiler readout (R1/R2)
+const sass = rd(`${S}/prof/sass/sass-counts.json`);
+const sassRes = (k) => { const m = (sass?.res_usage ?? '').match(new RegExp(`battle3v3_slice:\\s*\\n?\\s*.*?\\b${k}:(\\d+)`)); return m ? +m[1] : null; };
 const noNsight = /ERR_NVGPUCTRPERM/.test(txt(`${S}/prof/ncu-attempt.log`)) || /no counters|ERR_NVGPUCTRPERM/.test(JSON.stringify(prof?.stalls ?? ''));
 const occA = (i) => mv('achieved_occupancy', i), wee = (i) => mv('warp_exec_efficiency', i), sma = (i) => mv('sm_active_share', i);
 const stepProf = () => step('profile', 'What the GPU profile says', `
 <p class="q">Three real launches (${profLaunchIds.map(esc).join(', ')} battles) were replayed with timers in the ${T('kernel')}. How busy is the GPU?</p>
 ${noNsight ? `<p class="mut">No Nsight: Windows blocks its counters (ERR_NVGPUCTRPERM). Clock timers stand in; the rest says "not measured".</p>` : ''}
 ${ul([
-    occA(lastI) != null ? `${T('occupancy', 'Occupancy')}: only ${num(`prof.achieved_occupancy.${profLaunchIds[lastI]}`, occA(lastI), 1)}% of the possible ${T('warp')}s are loaded on the 36k launch; NVIDIA calls under 60% low. The cap is the 254 ${T('register')}s and ${num('fact.local', rd(`${OUT}/gpu/prof-resources.json`)?.variants?.[0]?.local_bytes, ',')} bytes of ${T('local memory')} per ${T('thread')}.` : '',
+    occA(lastI) != null ? `${T('occupancy', 'Occupancy')}: only ${num(`prof.achieved_occupancy.${profLaunchIds[lastI]}`, occA(lastI), 1)}% of the possible ${T('warp')}s are loaded on the 36k launch; NVIDIA calls under 60% low. The cap: ${num('sass.reg', sassRes('REG'), 0)} ${T('register')}s and ${num('sass.stack', sassRes('STACK'), ',')} bytes of ${T('local memory')} per ${T('thread')}; ${num('sass.localshare', sass?.local_share_of_static_instr, '%')} of its instructions move local memory.` : '',
     wee(lastI) != null ? `Threads per warp step: ${num(`prof.warp_exec_efficiency.${profLaunchIds[0]}`, wee(0), 1)} to ${num(`prof.warp_exec_efficiency.${profLaunchIds[lastI]}`, wee(lastI), 1)} of 32 do useful work (healthy: 24 or more). Most of every warp waits on battles at other turns.` : '',
     sma(1) != null ? `The SMs (the GPU's 68 cores) are busy for ${num(`prof.sm_active_share.${profLaunchIds[1]}`, sma(1), 0)}% of the 10k launch: the rest is tail, waiting on the last battles.` : '',
   ])}
@@ -453,7 +480,7 @@ ${sup(3, 4)}
 <details><summary>Chain stages</summary>${table(['#', 'kind', 'name', 'exit', 'done at'], chainStages.map((c) => [c.k, c.kind, esc(c.name), c.rc, esc(c.at)]))}</details>`);
 
 // ---------------------------------------------------------------- step: correctness (R7 gate, R14)
-const protoCards = cards.filter((c) => c.tested);
+const protoCards = allCards.filter((c) => c.tested); // every prototype, also ones in "Also looked at"
 const detRows = runs.filter((r) => r.name !== baseRuns[0]?.name && r.exit === 0).map((r) => ({ r, c: baseRuns[0] ? compareRuns(baseRuns[0].dir, r.dir) : null }));
 const detSame = detRows.filter((d) => d.c?.same).length;
 const r7det = txt(`${S}/det-r7.txt`).trim();
@@ -508,7 +535,8 @@ const recBox = () => `<div class="rec" id="rec"><h2>Recommendation for the stand
 <p class="mut">A warm generation is one after the battle cache has filled. Halving rounds stay at 3, as asked.</p></div>`;
 const rankList = () => `<section id="ranked"><h2>Changes to pick from, fastest first</h2>
 <p class="mut">${num('cards.n', cards.length, 0)} candidates, by measured gain, else by the middle of the predicted range. Tap one for its evidence.</p>
-<ol class="rank">${cards.map(cardLi).join('')}</ol></section>`;
+<ol class="rank">${cards.map(cardLi).join('')}</ol>
+${extraCards.length ? `<details><summary>Also looked at (${extraCards.length}, lower ranked)</summary><ul>${extraCards.map((c) => `<li><b>${esc(c.name)}</b> <span class="mut">(${esc(c.fork)}${c.tested ? ', tested' : ''})</span>: ${esc(c.do_next)}</li>`).join('')}</ul></details>` : ''}</section>`;
 
 // ---------------------------------------------------------------- assemble
 const order = [stepTime, stepProf, stepWidth, stepRuns, stepCheck, stepLit, stepForks];

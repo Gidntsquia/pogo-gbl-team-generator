@@ -73,7 +73,20 @@ for r in RUNS.values():
     SETS.setdefault(setof(r['name']), []).append(r)
 base = ok(SETS.get('base', []))
 base_warm = mean([r['warm'] for r in base])
-noise = max(r['warm'] for r in base) - min(r['warm'] for r in base) if len(base) >= 2 else None
+CTRL_PAT = r'^base-[a-z]$|.*-prod-[a-z]$|^cpushare-share0-[a-z]$'
+STAGEK = {s_['name']: s_['k'] for s_ in stages}
+CTRL = sorted(ok([r for r in RUNS.values() if re.match(CTRL_PAT, r['name'])]), key=lambda r: STAGEK[r['name']])
+def near_ctrl(ns):
+    pick = {}
+    for n in ns:
+        for r in sorted(CTRL, key=lambda r: (abs(STAGEK[r['name']] - STAGEK[n]), STAGEK[r['name']]))[:2]:
+            pick[r['name']] = r
+    return list(pick.values())
+CS = {}
+for r in CTRL:
+    CS.setdefault(setof(r['name']), []).append(r['warm'])
+_sp = [max(v) - min(v) for v in CS.values() if len(v) >= 2]
+noise = max(_sp) if _sp else None
 
 # ---------------------------------------------------------------- cards
 results = {}
@@ -82,9 +95,10 @@ for p in sorted(glob.glob(f'{S}/*/result.json')):
 CARDS = {}
 for f, r in results.items():
     for c in r.get('cards', []):
-        rs = ok([RUNS[n] for n in c.get('runs', []) if n in RUNS])
+        rs = ok([RUNS[n] for n in c.get('runs', []) if n in RUNS and not re.match(CTRL_PAT, n)])
         mw = mean([x['warm'] for x in rs])
-        c = dict(c, fork=f, nruns=len(rs), measured=mw - base_warm if mw is not None and base_warm is not None else None)
+        cw = mean([x['warm'] for x in near_ctrl([x['name'] for x in rs])]) if rs else None
+        c = dict(c, fork=f, nruns=len(rs), measured=mw - cw if mw is not None and cw is not None else None)
         c['verified'] = bool(re.match(r'^100(\.0+)?%.*\b0 flagged', c.get('verify_agreement') or ''))
         CARDS[c['id']] = c
 prof = rd(f'{S}/prof/metrics.json') or {}
@@ -152,6 +166,8 @@ def r7warm(n):
 # ---------------------------------------------------------------- one recomputation per key family
 def value(k):
     p = k.split('.')
+    if p[0] in ('run', 'set') and len(p) > 3:
+        p = [p[0], '.'.join(p[1:-1]), p[-1]]
     if p[0] == 'gen':
         return gen_key(p[1], p[3] if p[2] == 'mean' else p[2])
     if p[0] == 'launch':  # launch.<run>.<gen>.<i>.<n|wall>
@@ -161,8 +177,12 @@ def value(k):
         return PM[p[1]]['values'][LID.index(p[2])]
     if p[0] == 'stall':
         return prof['stalls'][int(p[1])]['share'][LID.index(p[2])]
-    if k == 'fact.local':
-        return rd(f'{OUT}/gpu/prof-resources.json')['variants'][0]['local_bytes']
+    if p[0] == 'sass':
+        sc = rd(f'{S}/prof/sass/sass-counts.json')
+        if p[1] == 'localshare':
+            return sc['local_share_of_static_instr']
+        line = next(l for l in sc['res_usage'].split('Function battle3v3_slice:')[1].splitlines() if l.strip())
+        return int(re.search(rf'\b{p[1].upper()}:(\d+)', line).group(1))
     if p[0] == 'calib':
         if p[1] == 'nbuckets':
             return len(CB)
@@ -203,7 +223,7 @@ def value(k):
         c = CARDS[p[1]]
         return {'lo': (c.get('predicted_s_per_gen') or [None, None])[0], 'hi': (c.get('predicted_s_per_gen') or [None, None])[1], 'measured': c['measured'], 'nruns': c['nruns']}[p[2]]
     if k == 'cards.n':
-        return len(CARDS)
+        return min(12, len(CARDS))
     if p[0] == 'lit':
         return sum(1 for s in sources if s.get('applies') == p[1])
     if k == 'forks.n':
