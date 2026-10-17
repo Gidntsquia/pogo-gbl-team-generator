@@ -1,34 +1,35 @@
-"""Threads-per-battle picker (plans round 7, R1/R2/R4/R5).
+"""Threads-per-battle picker (plans round 7, R1/R2/R4/R5; round 8 R9: per-GPU width calibration).
 
 POGO_GPU_WIDTH picks how many lanes of a warp run one battle in the slice kernel (gpu/gpu/kernels/battle3v3.cuh, width sets):
     1,2,4,8,16,32  fixed width G for every launch (1 = the round-6 slice+bin path)
     mix            two widths in one launch: the top POGO_GPU_MIX_Q share of battles by predicted length (default 0.1) run
                    at POGO_GPU_MIX_WIDE lanes (default 8), the rest at POGO_GPU_MIX_NARROW (default 1); warps are split by
                    predicted work (solo-time sum per width, scaled by the width's warps per battle)
-    auto           (the --gpu default) per launch: the fill formula below, bounded by the bench table width-table.json
-POGO_GPU_PROBE=on (debug, off by default): per launch-size bucket the first launches try the default width and one step
-above and below, keep the fastest, and log the convergence.
+    auto           (the --gpu default) per launch: the calibration file's pick for the launch's size bucket
 
-Fill formula: G_fill = clamp(pow2_floor(resident threads / battles), 1, 32), i.e. the widest power of two at which the
-launch's battles still cover every resident lane once. Resident threads = SMs x resident warps per SM x 32 at the slice
-kernel's occupancy, queried when the sidecar starts.
-Table bound: width-table.json holds, per size bucket measured on this GPU (gpu.width_bench), each width's median b/s. Widths
-within TABLE_TOL of the bucket's best are "good"; the pick is G_fill when it is good, else the good width closest to G_fill
-(log2 distance, ties to the higher b/s). Every launch logs `gpu width -- N battles, G=<g> (<rule>)` on stderr.
+Calibration file: POGO_GPU_WIDTH_CALIB, else <repo>/out/gpu/width-calib-<GPU name>.json. It holds, per size bucket, each width's
+b/s on identical battle sets ("same batch, twice": gpu/gpu/study/width/calib.py replays real launches at every width) and the
+pick: the best width only when it beats G=1 by more than PICK_MARGIN on the same battles, else G=1 ("width does not matter here").
+When the file is absent or lacks a bucket, the first auto launch of that bucket calibrates it: the identical battle set runs once
+at every width G != 1 before the real launch (rows discarded; rows are identical at every width), the real launch runs at G=1
+and supplies G=1's time, and the bucket's row is written to the file (logged `gpu width -- calibrating width for <GPU>… <n> s`).
+Every launch logs `gpu width -- N battles, G=<g> (<rule>)` on stderr.
 """
 import json
-import math
 import os
 import sys
+import time
 
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
+# round-7 bench table (gpu/gpu/width_table.py, shown by gpu/gpu-width.mjs); auto no longer reads it
 TABLE_PATH = os.environ.get("POGO_GPU_WIDTH_TABLE", os.path.join(HERE, "width-table.json"))
+TABLE_TOL = 0.02
 WIDTHS = (1, 2, 4, 8, 16, 32)
-TABLE_TOL = 0.02  # 5% let auto sit 6% under the best at 2.5k (G=4 vs G=16, out/gpu/width/recheck.log); 2% keeps it near the top
+PICK_MARGIN = 0.03  # a width is picked only when it beats G=1 by more than this (plans round 8 R9)
 MODE = os.environ.get("POGO_GPU_WIDTH", "auto")
-PROBE = os.environ.get("POGO_GPU_PROBE", "") == "on"
 MIX_Q = float(os.environ.get("POGO_GPU_MIX_Q", "0.1"))
 MIX_WIDE = int(os.environ.get("POGO_GPU_MIX_WIDE", "8"))
 MIX_NARROW = int(os.environ.get("POGO_GPU_MIX_NARROW", "1"))
@@ -37,7 +38,7 @@ BUCKETS = (1500, 3500, 7000, 14000, 26000, 10 ** 9)
 BUCKET_NAMES = ("<=1.5k", "1.5-3.5k", "3.5-7k", "7-14k", "14-26k", ">26k")
 
 _dev = {}
-_table = [None]
+_calib = {"rows": None, "file": None, "path": None, "pending": {}}
 
 
 def log(msg):
@@ -73,49 +74,65 @@ def bucket_of(n):
     return len(BUCKETS) - 1
 
 
-def fill_width(n, threads):
-    """Widest power of two G (1..32) with n * G <= threads (1 when the launch already covers every lane)."""
-    if n <= 0:
-        return 32
-    g = 2 ** int(math.floor(math.log2(max(1.0, threads / n))))
-    return int(min(32, max(1, g)))
+def calib_path(dev_name):
+    """Calibration file for a GPU name: POGO_GPU_WIDTH_CALIB, else out/gpu/width-calib-<name, spaces as dashes>.json."""
+    p = os.environ.get("POGO_GPU_WIDTH_CALIB")
+    if p:
+        return p
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in dev_name.replace(" ", "-"))
+    return os.path.join(REPO, "out", "gpu", f"width-calib-{safe}.json")
 
 
-def load_table(path=None):
-    """width-table.json -> {bucket index: {G: b/s}} (empty when absent)."""
-    if path is None and _table[0] is not None:
-        return _table[0]
-    p = path or TABLE_PATH
-    t = {}
-    if os.path.exists(p):
-        raw = json.load(open(p))
-        for row in raw.get("buckets", []):
-            t[int(row["bucket"])] = {int(g): float(v) for g, v in row["bps"].items()}
-    if path is None:
-        _table[0] = t
-    return t
+def calib_row(bps, b, n, source):
+    """One bucket's calibration row from {G: b/s} on identical battle sets -> dict with winner, spread %, pick and rule."""
+    best = max(bps, key=lambda g: bps[g])
+    worst = min(bps, key=lambda g: bps[g])
+    margin = min(bps[best] / bps[g] - 1 for g in bps if g != best)
+    gain = bps[best] / bps[1] - 1  # best width over G=1 on the same battles
+    matters = best != 1 and gain > PICK_MARGIN
+    return {"bucket": b, "name": BUCKET_NAMES[b], "launches": 1, "sizes": [n, n],
+            "bps_median": {str(g): round(v, 1) for g, v in sorted(bps.items())}, "winner": best, "worst": worst,
+            "spread_pct": round(100 * (bps[best] / bps[worst] - 1), 2), "winner_margin_pct": round(100 * margin, 2), "noise_pct": None,
+            "pick": best if matters else 1, "source": source,
+            "gain_over_g1_pct": round(100 * gain, 2),
+            "rule": f"G={best} beats G=1 by {100 * gain:.1f}%" if matters else f"width does not matter here (best G={best} is {100 * gain:+.1f}% vs G=1): G=1"}
 
 
-def table_pick(g_fill, row, tol=TABLE_TOL):
-    """Bound the fill width by one bucket's measured b/s per width -> (G, rule)."""
-    if not row:
-        return g_fill, "fill"
-    best = max(row.values())
-    good = [g for g, v in row.items() if v >= best * (1 - tol)]
-    if g_fill in good:
-        return g_fill, "fill"
-    lg = math.log2(g_fill)
-    g = min(good, key=lambda w: (abs(math.log2(w) - lg), -row[w]))
-    return g, "table"
+def load_calib(real="float"):
+    """{bucket index: calibration row} from this GPU's calibration file (empty when absent; read once, logged once)."""
+    if _calib["rows"] is None:
+        dev = device(real)["name"]
+        p = calib_path(dev)
+        _calib.update(path=p, rows={}, file={"device": dev, "buckets": []})
+        if os.path.exists(p):
+            _calib["file"] = json.load(open(p))
+            _calib["rows"] = {int(r["bucket"]): r for r in _calib["file"].get("buckets", [])}
+            log(f"gpu width -- calibration loaded: {p} (" + ", ".join(f"{r['name']} G={r['pick']}" for r in _calib["rows"].values()) + ")")
+        else:
+            log(f"gpu width -- no calibration file for {dev} ({p}): each size bucket calibrates on its first launch")
+    return _calib["rows"]
 
 
-def default_width(n, threads, table=None):
-    """auto's pick for an n-battle launch -> (G, rule string)."""
-    g_fill = fill_width(n, threads)
-    table = load_table() if table is None else table
+def _save_calib():
+    f = _calib["file"]
+    f["buckets"] = [_calib["rows"][b] for b in sorted(_calib["rows"])]
+    f.setdefault("method", "self: first launch of each bucket replayed once at each width (G=1 = the real launch)")
+    f["pick_margin"] = PICK_MARGIN
+    f["widths"] = list(WIDTHS)
+    os.makedirs(os.path.dirname(os.path.abspath(_calib["path"])), exist_ok=True)
+    tmp = _calib["path"] + ".tmp"
+    json.dump(f, open(tmp, "w"), indent=1)
+    os.replace(tmp, _calib["path"])
+
+
+def default_width(n, threads=None, rows=None):
+    """auto's pick for an n-battle launch from the calibration file -> (G, rule string); G=1 for an uncalibrated bucket."""
+    rows = load_calib() if rows is None else rows
     b = bucket_of(n)
-    g, rule = table_pick(g_fill, table.get(b))
-    return g, f"{rule}: fill G={g_fill}, bucket {BUCKET_NAMES[b]}"
+    r = rows.get(b)
+    if r is None:
+        return 1, f"calib: bucket {BUCKET_NAMES[b]} not calibrated"
+    return int(r["pick"]), f"calib: bucket {BUCKET_NAMES[b]}, {r['rule']}"
 
 
 def mix_plan(static, idx, dyn, n, warps, q=None, wide=None, narrow=None):
@@ -140,59 +157,8 @@ def mix_plan(static, idx, dyn, n, warps, q=None, wide=None, narrow=None):
     return {"split": m, "wide": wide, "narrow": narrow, "warps_wide": ww, "q": q}
 
 
-class Prober:
-    """POGO_GPU_PROBE: per size bucket, try the default width, then one step below and above (more steps while the edge wins),
-    keep the fastest by b/s. Converged buckets use their pick; every decision is logged."""
-
-    def __init__(self):
-        self.state = {}  # bucket -> {"default": g, "tried": {g: bps}, "queue": [g...], "pick": g | None}
-
-    def choose(self, n, g_default):
-        b = bucket_of(n)
-        st = self.state.setdefault(b, {"default": g_default, "tried": {}, "queue": [g_default], "pick": None})
-        if st["pick"] is not None:
-            return st["pick"], f"probe: converged G={st['pick']}, bucket {BUCKET_NAMES[b]}"
-        g = st["queue"][0]
-        return g, f"probe: trying G={g} (default G={st['default']}), bucket {BUCKET_NAMES[b]}"
-
-    def report(self, n, g, bps):
-        b = bucket_of(n)
-        st = self.state.get(b)
-        if st is None or st["pick"] is not None or not st["queue"] or st["queue"][0] != g:
-            return
-        st["queue"].pop(0)
-        st["tried"][g] = bps
-        d = st["default"]
-        if not st["queue"]:
-            tried = st["tried"]
-            best = max(tried, key=lambda w: tried[w])
-            nxt = None
-            lo, hi = min(tried), max(tried)
-            if len(tried) == 1:
-                cands = [w for w in (d // 2, d * 2) if w in WIDTHS]
-                st["queue"] = cands
-                if cands:
-                    return
-            elif best == lo and lo // 2 in WIDTHS and lo // 2 not in tried:
-                nxt = lo // 2
-            elif best == hi and hi * 2 in WIDTHS and hi * 2 not in tried:
-                nxt = hi * 2
-            if nxt:
-                st["queue"] = [nxt]
-                return
-            st["pick"] = best
-            log(f"gpu probe -- bucket {BUCKET_NAMES[b]}: tried " + ", ".join(f"G={w} {tried[w]:.0f} b/s" for w in sorted(tried))
-                + f" in {len(tried)} launches; pick G={best} (default G={d})")
-
-    def summary(self):
-        return {BUCKET_NAMES[b]: {"default": s["default"], "tried": s["tried"], "pick": s["pick"]} for b, s in sorted(self.state.items())}
-
-
-_prober = Prober()
-
-
 def resolve(mode, static, idx, dyn, cfg=None, real="float"):
-    """Width for one launch under mode ('auto' | 'mix' | int) -> int or mix plan dict (no logging)."""
+    """Width for one launch under mode ('auto' | 'mix' | int) -> int or mix plan dict (no logging, no calibration)."""
     n = int(idx.shape[0])
     d = device(real)
     if mode == "mix":
@@ -203,8 +169,15 @@ def resolve(mode, static, idx, dyn, cfg=None, real="float"):
     return int(mode)
 
 
-def pick(static, idx, dyn, real="float", mode=None):
-    """Production per-launch pick under POGO_GPU_WIDTH / POGO_GPU_PROBE -> (width int or mix plan, log line)."""
+def _span_bps(n, info):
+    sg = info["segments"]
+    return n / (float(sg[:, 3].max() - sg[:, 2].min()) / 1e9) if len(sg) else 0.0
+
+
+def pick(static, idx, dyn, real="float", mode=None, seeds=None):
+    """Production per-launch pick under POGO_GPU_WIDTH -> (width int or mix plan, log line). auto with an uncalibrated bucket and
+    seeds given: replays this battle set at every width but 1 now (the calibration), returns G=1 for the real launch, and
+    finish_calibration() completes the bucket when that launch is collected."""
     mode = mode or MODE
     n = int(idx.shape[0])
     d = device(real)
@@ -213,14 +186,34 @@ def pick(static, idx, dyn, real="float", mode=None):
         return p, (f"gpu width -- {n} battles, G=mix {p['wide']}/{p['narrow']} (top {p['q']:.2f} by predicted length = {p['split']} "
                    f"battles on {p['warps_wide']} of {d['warps']} warps)")
     if mode == "auto":
-        g, rule = default_width(n, d["threads"])
-        if PROBE:
-            g, rule = _prober.choose(n, g)
+        rows = load_calib(real)
+        b = bucket_of(n)
+        if b not in rows and seeds is not None and b not in _calib["pending"] and n > 0:
+            from . import kernel3v3 as K
+            t0 = time.perf_counter()
+            bps = {}
+            for G in WIDTHS[1:]:
+                bps[G] = _span_bps(n, K.slice_collect(K.slice_launch(static, idx, dyn, seeds, real, width=G))[1])
+            _calib["pending"][b] = {"bps": bps, "t0": t0, "n": n}
+            return 1, f"gpu width -- {n} battles, G=1 (calib: bucket {BUCKET_NAMES[b]} calibrating; this launch times G=1)"
+        g, rule = default_width(n, d["threads"], rows)
         return g, f"gpu width -- {n} battles, G={g} ({rule})"
     g = int(mode)
     return g, f"gpu width -- {n} battles, G={g} (fixed POGO_GPU_WIDTH={g})"
 
 
-def probe_report(n, g, span_s):
-    if PROBE and MODE == "auto" and isinstance(g, int) and span_s > 0:
-        _prober.report(n, g, n / span_s)
+def finish_calibration(n, g, info):
+    """Called by slice_collect for a picked launch: if it is the G=1 launch of a calibrating bucket, write that bucket's row."""
+    b = bucket_of(n)
+    p = _calib["pending"].get(b)
+    if p is None or p["n"] != n or g != 1:
+        return
+    p["bps"][1] = _span_bps(n, info)
+    secs = time.perf_counter() - p["t0"]
+    row = calib_row(p["bps"], b, n, "self: first launch of the bucket, one replay per width")
+    row["calib_s"] = round(secs, 1)
+    _calib["rows"][b] = row
+    del _calib["pending"][b]
+    _save_calib()
+    log(f"gpu width -- calibrating width for {device()['name']}… {secs:.1f} s (bucket {row['name']}, {n} battles: "
+        + ", ".join(f"G={w} {v:.0f}" for w, v in sorted(p["bps"].items())) + f" b/s; pick G={row['pick']}, {row['rule']})")

@@ -79,7 +79,15 @@ const nearCtrl = (names) => {
   return [...pick];
 };
 const ctrlSets = {};
-for (const r of ctrlRuns) (ctrlSets[setOf(r.name)] ??= []).push(r.warmPerGen);
+// a set is same-setting control runs made back to back (each within 5 chain stages of the previous one), so base-a/b
+// (21:18 ET) and base-c/d (04:44 ET) are two sets: the drift between them is not run-to-run noise
+const lastK = {};
+for (const r of ctrlRuns) {
+  const st = setOf(r.name), k = stageK[r.name];
+  const key = lastK[st] != null && k - lastK[st].k <= 5 ? lastK[st].key : `${st}@${k}`;
+  lastK[st] = { k, key };
+  (ctrlSets[key] ??= []).push(r.warmPerGen);
+}
 // noise = largest spread between same-setting control runs made back to back
 const ctrlNoise = Object.values(ctrlSets).filter((v) => v.length >= 2).map((v) => Math.max(...v) - Math.min(...v));
 // cards: every fork's cards; measured = mean warm of the card's runs minus the mean of its nearest control runs
@@ -96,6 +104,13 @@ for (const c of cards) {
   c.mid = p.length === 2 ? (p[0] + p[1]) / 2 : null;
   c.rankKey = c.measured != null ? c.measured : c.mid ?? 99;
 }
+// a literature idea a fork already built and measured is not a "build next" pick: coop-search is what the split fork
+// prototyped (verify PASS, bench 2.4-4x slower), so it ranks with the dropped ones and points at that result.
+const BUILT_BY = { 'coop-search': 'split' };
+for (const c of cards) if (BUILT_BY[c.id] && results[BUILT_BY[c.id]]) {
+  c.rankKey = 99; c.builtBy = BUILT_BY[c.id];
+  c.do_next = `Drop: the ${c.builtBy} fork built this (card "${results[c.builtBy].cards[0].name}") and it ran slower; see that card.`;
+}
 cards.sort((a, b) => a.rankKey - b.rankKey || a.id.localeCompare(b.id));
 // R5: 6-12 cards on the page. The six candidates the plan names always stay; the rest fill up to 12 in rank order, and
 // lower-ranked ones move to a collapsed "Also looked at" list (name, verdict and do-next only).
@@ -109,9 +124,9 @@ cards.splice(0, cards.length, ...cards.filter((c) => shownSet.has(c)));
 const noise = ctrlNoise.length ? Math.max(...ctrlNoise) : null;
 const wins = cards.filter((c) => c.measured != null && c.verified && c.measured < -(noise ?? 0));
 const bestWin = wins[0] ?? null;
-const topUntested = cards.find((c) => !c.tested) ?? null;
+const topUntested = cards.find((c) => !c.tested && !c.builtBy) ?? null;
 // ---------------------------------------------------------------- styles
-const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f4f6f9;--ok:#157347;--bad:#b42318;--warn:#a15c00;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4;--c4:#8a94a6}
+const css = `ol.src{font-size:.9em;padding-left:2em}ol.src .says,ol.src .why{margin:.15em 0}:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f4f6f9;--ok:#157347;--bad:#b42318;--warn:#a15c00;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4;--c4:#8a94a6}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--warn:#e3b341;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea;--c4:#77808f}}
 :root[data-theme="dark"]{--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--warn:#e3b341;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea;--c4:#77808f}
 *{box-sizing:border-box}a{color:var(--link)}body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;margin:0 auto;max-width:860px;padding:16px}
@@ -276,9 +291,11 @@ function metricCard(m) {
     g += `<rect x="${x0}" y="${y + 2}" width="${X(v) - x0}" height="13" rx="2" fill="var(--c0)"/>` + tx(X(v) + 4, y + 13, `${nt(`prof.${m.id}.${l.id}`, v, fmt)}${isPct ? '%' : ''}`, 's');
   });
   return `<div class="mc"><div class="nm">${esc(m.name)}</div>
-<p><span class="l">What it is:</span> ${esc(m.what)}</p><p><span class="l">Ours:</span> ${esc(m.ours)}</p><p><span class="l">For speed:</span> ${esc(m.means)}</p>
+<p><span class="l">What it is:</span> ${esc(m.what)}</p><p><span class="l">Ours:</span> ${esc(m.ours)}</p><p><span class="l">For speed:</span> ${esc(SHORT_MEANS[m.id] ?? m.means)}</p>
 ${svg(bot + 22, g, m.name)}<details><summary>How measured</summary><small>${esc(m.method ?? '')}</small></details></div>`;
 }
+// page rule: no paragraph over 3 lines at phone width; shorter wording for the prof fork's longest line
+const SHORT_MEANS = { warp_exec_efficiency: 'one battle per thread (width 1): a warp\'s threads take different branches and it runs each in turn' };
 function stallPicture() {
   const st = (prof?.stalls ?? []).filter((s) => (s.share ?? []).some((v) => v != null));
   if (!st.length) return (prof?.stalls ?? []).length ? `<p class="mut">Stall reasons (why warps wait): not measured, they need the blocked counters.</p>` : '';
@@ -303,26 +320,40 @@ const lastI = profLaunchIds.length - 1;
 
 // ---------------------------------------------------------------- step: prototype runs (R7/R8)
 const setNames = Object.keys(settings).filter((s) => okRuns(settings[s]).length);
-const cardOfSet = (s) => cards.find((c) => (c.runs ?? []).some((n) => setOf(n) === s));
+const cardOfSet = (s) => allCards.find((c) => (c.runs ?? []).some((n) => setOf(n) === s));
 const setLabel = (s) => (s === BASE ? 'baseline (today\'s defaults)' : cardOfSet(s)?.name ?? s);
 const setRows = setNames.map((s) => ({ s, warm: setWarm(s), rs: okRuns(settings[s]), card: cardOfSet(s) })).sort((a, b) => (a.s === BASE ? -1 : b.s === BASE ? 1 : a.warm - b.warm));
+// each tested setting against the production runs made nearest it in time (the GPU drifted ~1.3 s/gen overnight, so one
+// fixed baseline would credit early-vs-late differences to the prototypes)
+const varTag = (r) => (r.env || '').split(/\s+/).filter((e) => e && !/^(POGO_GPU_STUDY|POGO_GPU_\w*LOG|POGO_GPU_WIDTH_CALIB)=/.test(e))
+  .map((e) => e.replace(/^POGO_GPU_|^CPU_SHARE=/, (m) => (m === 'CPU_SHARE=' ? 'share ' : '')).toLowerCase()).join(' ');
+const clip = (t, n) => (t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t);
+const deltaRows = setNames.filter((st) => st !== BASE && !okRuns(settings[st]).some((r) => CTRL_RE.test(r.name))).map((st) => {
+  const rs = okRuns(settings[st]), ctrl = nearCtrl(rs.map((r) => r.name)), cw = mean(ctrl.map((r) => r.warmPerGen));
+  const tag = st === 'width-selfcal' ? 'builds its file' : st === 'streams-time' ? 'timing log only' : varTag(rs[0]);
+  return { s: st, rs, cw, d: setWarm(st) - cw, label: `${clip(cardOfSet(st)?.name ?? st, tag ? 34 : 54)}${tag ? ` (${tag})` : ''}` };
+}).sort((a, b) => a.d - b.d);
 function runsPicture() {
-  if (!setRows.length || baseWarm == null) return '';
-  const all = setRows.flatMap((r) => r.rs.map((x) => x.warmPerGen));
-  const hi = Math.ceil(Math.max(...all) / 2) * 2, x0 = 8, x1 = W - 60, X = (v) => x0 + (v / hi) * (x1 - x0), rh = 38;
-  let g = tx(4, 16, 'Seconds per warm generation (shorter is faster)', 'h'), top = 28;
-  const bot = top + setRows.length * rh;
-  for (let v = 0; v <= hi; v += hi <= 12 ? 2 : 4) g += `<line x1="${X(v)}" x2="${X(v)}" y1="${top}" y2="${bot}" stroke="var(--line)"/>` + tx(X(v), bot + 13, v, 's', 'middle');
-  setRows.forEach((r, i) => {
-    const y = top + i * rh, col = r.s === BASE ? 'var(--c4)' : r.warm < baseWarm - (noise ?? 0) ? 'var(--c2)' : r.warm > baseWarm + (noise ?? 0) ? 'var(--c1)' : 'var(--c0)';
-    g += tx(x0, y + 11, esc(setLabel(r.s)), 's');
-    g += `<rect x="${x0}" y="${y + 15}" width="${X(r.warm) - x0}" height="14" rx="2" fill="${col}"/>`;
-    for (const x of r.rs) g += `<circle cx="${X(x.warmPerGen)}" cy="${y + 22}" r="3" fill="var(--fg)"><title>${esc(x.name)} ${x.warmPerGen.toFixed(2)} s</title></circle>`;
-    g += tx(X(r.warm) + 6, y + 27, `${nt(`set.${r.s}.warm`, r.warm, 1)} s`, 'h');
+  if (!deltaRows.length) return '';
+  const all = deltaRows.flatMap((r) => [r.d, ...r.rs.map((x) => x.warmPerGen - r.cw)]);
+  const lim = Math.ceil(Math.max(2, ...all.map(Math.abs)) / 2) * 2, x0 = 8, x1 = W - 8, X = (v) => x0 + ((v + lim) / (2 * lim)) * (x1 - x0), rh = 38;
+  let g = tx(4, 16, 'Change in s per warm generation', 'h') + tx(4, 30, 'vs production runs made the same hour', 's'), top = 40;
+  const bot = top + deltaRows.length * rh, nz = noise ?? 0;
+  g += `<rect x="${X(-nz)}" y="${top}" width="${X(nz) - X(-nz)}" height="${bot - top}" fill="var(--fg)" opacity="0.07"/>`;
+  for (let v = -lim; v <= lim; v += lim <= 4 ? 1 : 2) g += `<line x1="${X(v)}" x2="${X(v)}" y1="${top}" y2="${bot}" stroke="var(--line)"/>` + tx(X(v), bot + 13, v > 0 ? `+${v}` : v, 's', 'middle');
+  deltaRows.forEach((r, i) => {
+    const y = top + i * rh, col = r.d < -nz ? 'var(--c2)' : r.d > nz ? 'var(--c1)' : 'var(--c0)';
+    g += tx(x0, y + 11, esc(r.label), 's');
+    g += `<rect x="${X(Math.min(0, r.d))}" y="${y + 15}" width="${Math.abs(X(r.d) - X(0))}" height="14" rx="2" fill="${col}"/>`;
+    for (const x of r.rs) g += `<circle cx="${X(x.warmPerGen - r.cw)}" cy="${y + 22}" r="3" fill="var(--fg)"><title>${esc(x.name)} ${x.warmPerGen.toFixed(2)} s</title></circle>`;
+    const right = r.d >= 0;
+    const inside = right && X(r.d) > x1 - 60;
+    if (inside) { g += tx(X(r.d) - 4, y + 27, `${nt(`delta.${r.s}`, r.d, 1, { sign: true })} s`, 'h', 'end', ' style="fill:#fff"'); return; }
+    g += tx(right ? Math.max(X(r.d), ...r.rs.map((x) => X(x.warmPerGen - r.cw))) + 6 : Math.min(X(r.d), ...r.rs.map((x) => X(x.warmPerGen - r.cw))) - 6, y + 27, `${nt(`delta.${r.s}`, r.d, 1, { sign: true })} s`, 'h', right ? 'start' : 'end');
   });
-  g += `<line x1="${X(baseWarm)}" x2="${X(baseWarm)}" y1="${top}" y2="${bot}" stroke="var(--fg)" stroke-dasharray="3 3"/>`;
-  g += tx(4, bot + 30, 'dashed = baseline · dots = each run · green = faster than baseline noise · orange = slower', 's');
-  return svg(bot + 38, g, 'warm seconds per generation per tested setting');
+  g += `<line x1="${X(0)}" x2="${X(0)}" y1="${top}" y2="${bot}" stroke="var(--fg)"/>`;
+  g += tx(4, bot + 30, 'left = faster · dots = each run · grey = noise', 's') + tx(4, bot + 44, 'green = faster than noise · orange = slower', 's');
+  return svg(bot + 52, g, 'change in warm seconds per generation per tested setting');
 }
 const runRow = (r) => [esc(r.name), esc(r.env || '(defaults)'), r.exit, r.gens, num(`run.${r.name}.sat`, r.sat, 0), num(`run.${r.name}.warm`, r.warmPerGen, 2), num(`run.${r.name}.total`, r.total, 0), num(`run.${r.name}.bps`, r.bps, ',')];
 const baseFirst = chainStages.find((c) => c.kind === 'run'), baseLast = [...chainStages].reverse().find((c) => c.kind === 'run');
@@ -358,7 +389,7 @@ function forkPicture() {
   g += tx(4, y + 11, 'chain runs', 's');
   for (const c of chainStages) { const b = tParse(c.at); g += `<line x1="${X(b)}" x2="${X(b)}" y1="${y + 1}" y2="${y + 14}" stroke="${c.rc ? 'var(--bad)' : 'var(--c2)'}" stroke-width="1.5"/>`; }
   const hours = []; for (let t = Math.ceil(t0 / 3600) * 3600; t <= t1; t += 3600) hours.push(t);
-  for (const t of hours) g += tx(X(t), y + 30, new Date(t * 1000).toTimeString().slice(0, 5), 's', 'middle') + `<line x1="${X(t)}" x2="${X(t)}" y1="${top}" y2="${y + 18}" stroke="var(--line)"/>`;
+  for (const [i, t] of hours.entries()) g += (i % 2 ? '' : tx(X(t), y + 30, new Date(t * 1000).toTimeString().slice(0, 5), 's', 'middle')) + `<line x1="${X(t)}" x2="${X(t)}" y1="${top}" y2="${y + 18}" stroke="var(--line)"/>`;
   return svg(y + 38, g, 'fork timeline');
 }
 
@@ -368,10 +399,19 @@ const badge = (c) => (c.tested ? (c.verified ? '<span class="badge b-test">teste
 const gainLine = (c) => (c.measured != null
   ? `measured ${num(`card.${c.id}.measured`, c.measured, 1, { sign: true })} s per generation (${num(`card.${c.id}.nruns`, c.nRuns, 0)} runs; baseline noise ±${num('base.noise', noise, 1)} s)`
   : `predicted ${fmtRange(c)} per generation`);
+// the card face shows the first clause of the fork's do-next line (phone: <= 3 lines); the full line is in the details
+const WIDTH_APPLIED = /load_calib/.test(txt('gpu/gpu/width.py'));
+const nextShort = (c) => {
+  if (c.id === 'width-calib' && WIDTH_APPLIED) return 'Done this round: auto now reads the calibration file (G=1 on this GPU).';
+  const t = c.do_next ?? '';
+  const first = t.split(/(?<=[.;])\s/)[0];
+  return first.length <= 110 ? first : `${first.slice(0, 108).replace(/\s\S*$/, '')}…`;
+};
 function cardLi(c) {
   return `<li id="card-${esc(c.id)}"><div class="t">${esc(c.name)} ${badge(c)}</div>
-<div>${gainLine(c)}</div><div class="next">${esc(c.do_next)}</div>
+<div>${gainLine(c)}</div><div class="next">${esc(nextShort(c))}</div>
 <details><summary>Why, evidence, what it touches, risk</summary>
+<p><b>Do next, in full:</b> ${esc(c.do_next)}</p>
 <p><b>Why it could be faster:</b> ${esc(c.mechanism)}</p><p><b>Evidence:</b> ${esc(c.evidence)}</p><p><b>Touches:</b> ${esc(c.touches)}</p><p><b>Risk:</b> ${esc(c.risk)}</p>
 ${c.tested ? `<p><b>Check:</b> verify_3v3 ${esc(c.verify_agreement || 'not run')} (<code>${esc(c.verify || '')}</code>); runs ${(c.runs ?? []).map(esc).join(', ') || 'none'}</p>` : ''}
 <p class="mut">from fork ${esc(c.fork)} · ${esc(`out/gpu/study/${c.fork}/result.json`)}</p></details></li>`;
@@ -386,8 +426,9 @@ const stepProf = () => step('profile', 'What the GPU profile says', `
 <p class="q">Three real launches (${profLaunchIds.map(esc).join(', ')} battles) were replayed with timers in the ${T('kernel')}. How busy is the GPU?</p>
 ${noNsight ? `<p class="mut">No Nsight: Windows blocks its counters (ERR_NVGPUCTRPERM). Clock timers stand in; the rest says "not measured".</p>` : ''}
 ${ul([
-    occA(lastI) != null ? `${T('occupancy', 'Occupancy')}: only ${num(`prof.achieved_occupancy.${profLaunchIds[lastI]}`, occA(lastI), 1)}% of the possible ${T('warp')}s are loaded on the 36k launch; NVIDIA calls under 60% low. The cap: ${num('sass.reg', sassRes('REG'), 0)} ${T('register')}s and ${num('sass.stack', sassRes('STACK'), ',')} bytes of ${T('local memory')} per ${T('thread')}; ${num('sass.localshare', sass?.local_share_of_static_instr, '%')} of its instructions move local memory.` : '',
-    wee(lastI) != null ? `Threads per warp step: ${num(`prof.warp_exec_efficiency.${profLaunchIds[0]}`, wee(0), 1)} to ${num(`prof.warp_exec_efficiency.${profLaunchIds[lastI]}`, wee(lastI), 1)} of 32 do useful work (healthy: 24 or more). Most of every warp waits on battles at other turns.` : '',
+    occA(lastI) != null ? `${T('occupancy', 'Occupancy')}: only ${num(`prof.achieved_occupancy.${profLaunchIds[lastI]}`, occA(lastI), 1)}% of possible ${T('warp')}s loaded on the 36k launch (NVIDIA: under 60% is low).` : '',
+    sassRes('REG') != null ? `Why: ${num('sass.reg', sassRes('REG'), 0)} ${T('register')}s and ${num('sass.stack', sassRes('STACK'), ',')} B of ${T('local memory')} per ${T('thread')}; ${num('sass.localshare', sass?.local_share_of_static_instr, '%')} of instructions move local memory.` : '',
+    wee(lastI) != null ? `Threads per warp step: ${num(`prof.warp_exec_efficiency.${profLaunchIds[0]}`, wee(0), 1)} to ${num(`prof.warp_exec_efficiency.${profLaunchIds[lastI]}`, wee(lastI), 1)} of 32 do useful work (healthy: 24+); the rest wait on battles at other turns.` : '',
     sma(1) != null ? `The SMs (the GPU's 68 cores) are busy for ${num(`prof.sm_active_share.${profLaunchIds[1]}`, sma(1), 0)}% of the 10k launch: the rest is tail, waiting on the last battles.` : '',
   ])}
 ${sup(4)}
@@ -398,11 +439,11 @@ ${stallPicture()}
 // ---------------------------------------------------------------- step: width calibration (R9)
 const CB = calib?.buckets ?? [];
 const widths = calib?.widths ?? [1, 2, 4, 8, 16, 32];
-const noMatter = CB.filter((b) => /does not matter/.test(b.rule ?? '') || b.pick === 1 && (b.winner_margin_pct ?? 0) <= 3);
+const noMatter = CB.filter((b) => b.pick === 1 && Math.max(...Object.values(b.ratio_to_g1_median ?? { 1: 1 })) <= 1.03);
 function calibPicture() {
   if (!CB.length) return '';
   const x0 = 70, x1 = W - 10, lo = 0.8, hi = 1.2, X = (v) => x0 + ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (x1 - x0), rh = 16;
-  let g = tx(4, 16, 'Speed of each width vs one thread per battle (same battles)', 'h'), y = 30;
+  let g = tx(4, 16, 'Speed vs G=1, same battles', 'h'), y = 30;
   for (const [i, b] of CB.entries()) {
     const top = y;
     g += tx(4, y + 12, esc(b.name ?? b.bucket), 'h');
@@ -415,7 +456,7 @@ function calibPicture() {
     g += `<rect x="${X(0.97)}" y="${top + 16}" width="${X(1.03) - X(0.97)}" height="${y - top + 0}" fill="var(--fg)" opacity="0.07"/>`;
     y += rh + 8;
   }
-  g += `<line x1="${X(1)}" x2="${X(1)}" y1="28" y2="${y - 8}" stroke="var(--fg)"/>` + tx(X(1), y + 6, '1.00 = same speed as G=1 · grey band = within 3%', 's', 'middle');
+  g += `<line x1="${X(1)}" x2="${X(1)}" y1="28" y2="${y - 8}" stroke="var(--fg)"/>` + tx(X(1), y + 6, '1.00 = as fast as G=1 · grey = within 3%', 's', 'middle');
   return svg(y + 14, g, 'width calibration per bucket');
 }
 const calibLog = (() => { // the --gpu run that shows the load or the calibration line (written after the production patch)
@@ -426,9 +467,9 @@ const stepWidth = () => step('width', `${T('width', 'Width')}: same battles, eve
 <p class="q">Do G threads per battle finish a launch sooner? Same battles re-run at G = 1–32, 10+ launches per ${T('bucket')}.</p>
 ${calibPicture()}
 ${ul([
-    CB.length ? `${num('calib.nomatter', noMatter.length, 0)} of ${num('calib.nbuckets', CB.length, 0)} buckets: no width beats another by more than 3%, so <b>width does not matter here</b> and auto uses G=1 there.` : 'Calibration not built yet.',
+    CB.length ? `${num('calib.nomatter', noMatter.length, 0)} of ${num('calib.nbuckets', CB.length, 0)} buckets: no width beats G=1 by over 3%, so <b>width does not matter here</b>; auto uses G=1.` : 'Calibration not built yet.',
     CB.length ? `Largest gap between the best and worst width in any bucket: ${num('calib.maxspread', Math.max(...CB.map((b) => b.spread_pct ?? 0)), 1)}%; run-to-run noise on the same launch: up to ${num('calib.maxnoise', Math.max(...CB.map((b) => b.noise_pct ?? 0)), 1)}%.` : '',
-    calibLog ? `The pick is saved once per GPU in <code>out/gpu/${esc(calibFile)}</code>; a <code>--gpu</code> run logs: <code>${esc(calibLog.line.slice(0, 140))}</code>` : `The pick is saved once per GPU in <code>out/gpu/${esc(calibFile ?? 'width-calib-<gpu>.json')}</code>.`,
+    calibLog ? `Saved once per GPU; a <code>--gpu</code> run logs <code>${esc(calibLog.line.replace(/^gpu width -- /, '').replace(/:.*$/, ''))}</code> (or builds the file on its first run).` : `The pick is saved once per GPU in <code>out/gpu/${esc(calibFile ?? 'width-calib-<gpu>.json')}</code>.`,
   ])}
 ${sup(2)}
 <details><summary>Calibration table (median battles per second per width)</summary>${CB.length ? table(['bucket', 'launches', ...widths.map((G) => `G=${G}`), 'winner', 'spread %', 'noise %', 'pick'], CB.map((b, i) => [esc(b.name ?? b.bucket), num(`calib.${i}.launches`, b.launches, 0), ...widths.map((G) => (b.bps_median?.[G] ?? b.bps_median?.[String(G)])?.toFixed(0)), `G=${b.winner}`, (b.spread_pct ?? 0).toFixed(1), (b.noise_pct ?? 0).toFixed(1), `G=${b.pick}`])) + `<p class="mut">${esc(calib?.method ?? '')}</p>` : ''}</details>`);
@@ -437,14 +478,14 @@ ${sup(2)}
 const genChoice = (() => {
   const b = baseRuns.slice(0, 2);
   if (b.length < 2) return '';
-  return `Runs are 10 generations: the cache fills by generation ${num(`run.${b[0].name}.sat`, b[0].sat, 0)}–${num(`run.${b[1].name}.sat`, b[1].sat, 0)}, and two same-seed baselines agree to ${num('base.ab', Math.abs(b[0].warmPerGen - b[1].warmPerGen), 2)} s per generation. Fewer generations would leave too few warm ones.`;
+  return `10 generations per run: the cache fills by generation ${b[0].sat === b[1].sat ? num(`run.${b[0].name}.sat`, b[0].sat, 0) : `${num(`run.${b[0].name}.sat`, b[0].sat, 0)}–${num(`run.${b[1].name}.sat`, b[1].sat, 0)}`}; same-seed baselines agree to ${num('base.ab', Math.abs(b[0].warmPerGen - b[1].warmPerGen), 2)} s.`;
 })();
 const stepRuns = () => step('runs', 'Prototype runs in the overnight chain', `
 <p class="q">Each prototype ran twice or more, same seed, alone on the GPU, scored by seconds per ${T('warm generation')}.</p>
 ${runsPicture()}
 ${ul([
-    baseWarm != null ? `Baseline (today's defaults): ${num('base.warm', baseWarm, 2)} s per warm generation over ${num('base.n', baseRuns.length, 0)} runs; first vs last baseline ${baseDrift ? `${num('base.drift', baseDrift.d, '%1', { sign: true })} drift` : 'drift not yet measured'}.` : '',
-    bestWin ? `Fastest verified change: ${esc(bestWin.name)}, ${num(`card.${bestWin.id}.measured`, bestWin.measured, 1, { sign: true })} s per generation.` : `No verified prototype beat the baseline by more than its noise (±${num('base.noise', noise, 2)} s).`,
+    baseWarm != null ? `Production time per generation moved ${baseDrift ? num('base.drift', baseDrift.d, '%1', { sign: true }) : 'n/a'} overnight, so each bar is against production runs made near it.` : '',
+    bestWin ? `Two verified changes measure ${num(`card.${bestWin.id}.measured`, bestWin.measured, 1, { sign: true })} s each, but a production-path run also read ${num('delta.streams-time', deltaRows.find((r) => r.s === 'streams-time')?.d, 1, { sign: true })} s: confirm in one A/B.` : `No verified prototype beat the baseline by more than its noise (±${num('base.noise', noise, 2)} s).`,
     genChoice,
   ])}
 ${sup(3)}
@@ -454,18 +495,39 @@ ${sup(3)}
 const appliesN = (a) => sources.filter((s) => s.applies === a).length;
 function litPicture() {
   if (!sources.length) return '';
-  const cats = [['yes', 'applies', 'var(--c2)'], ['partly', 'partly applies', 'var(--c0)'], ['no', 'does not apply', 'var(--c4)']];
+  const cats = [['yes', 'applies', 'var(--c2)'], ['partly', 'partly applies', 'var(--c0)'], ['no', 'no', 'var(--c4)']];
   let x = 4, g = tx(4, 16, `${sources.length} sources: do they fit this sim?`, 'h');
   const sc = (W - 8) / sources.length;
   for (const [a, l, c] of cats) { const n = appliesN(a); if (!n) continue; g += `<rect x="${x}" y="26" width="${n * sc - 2}" height="22" rx="3" fill="${c}"/>` + tx(x + 4, 42, `${nt(`lit.${a}`, n, 0)} ${l}`, 's', 'start', ' style="fill:var(--bg)"'); x += n * sc; }
   return svg(56, g, 'literature fit');
 }
+const litEv = rd(`${S}/lit/evidence-profile.json`);
+const LIT_SHORT = [
+  litEv ? `Tail: ${num('lit.tail', litEv.aggregate.tail_share_of_wall, '%1')} of a warm round-7 generation; longest battle ${num('lit.maxp50', litEv.aggregate.max_over_p50_median, 1)}x the median.` : '',
+  'NVIDIA: under 60% occupancy is low; under 24 of 32 threads busy is heavy divergence.',
+  'Splitting one search over a thread group is the published width fix (BPIDA*); our extra threads only duplicate work.',
+];
+// one-line applies text for the phone page; the source's full finding and reasoning sit under "What it found"
+const WHY_SHORT = {
+  'https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html': 'Source of the healthy ranges on the metric bars; our 16.7% occupancy is far under its 60% line.',
+  'https://research.nvidia.com/publication/2009-08_understanding-efficiency-ray-traversal-gpus': 'We already pull battles from a queue; its new idea, giving idle threads speculative work, is the next-round card.',
+  'https://research.nvidia.com/publication/2013-07_megakernels-considered-harmful-wavefront-path-tracing-gpus': 'Our kernel is the big kind they warn about, but our battle state is too large to pass between stages cheaply.',
+  'https://klasses.cs.uchicago.edu/archive/2016/winter/32001-1/papers/AStudyofPersistentThreadsStyleGPUProgrammingforGPGPUWorkloads.pdf': 'Battles take seconds, so launch and queue overhead (microseconds) is not where our time goes.',
+  'https://arxiv.org/abs/1705.02843': 'The published way to split one battle\'s search over its G threads instead of repeating it.',
+  'https://hgpu.org/?p=5727': 'Caps what regrouping battles by phase could give: a modest gain at best.',
+  'https://arxiv.org/abs/2206.10558': 'Same wait on the slowest item; we can\'t return early, but can start next-round work in the tail.',
+  'https://arxiv.org/abs/2108.13976': 'Same one-battle-per-group layout, but their steps are short and equal; lockstep won\'t fix our tail.',
+  'https://arxiv.org/abs/2108.10470': 'Their gain is cutting CPU-GPU copies; ours take 0.2 s of a 10.9 s generation.',
+  'https://developer.nvidia.com/blog/cuda-graphs/': '3 launches per generation, seconds each: graphs would save microseconds.',
+  'https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html': 'Explains why our 35 KB stack in local memory is slow; the basis of the on-chip-state card.',
+  'https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html': 'RTX 3080 limits: our 254 registers allow 8 of 48 warps per SM.',
+};
 const stepLit = () => step('lit', 'What other GPU simulators do', `
 <p class="q">How do other projects run many uneven-length simulations on one GPU?</p>
 ${litPicture()}
-${ul((results.lit?.findings ?? []).map(esc))}
+${ul(LIT_SHORT)}
 ${sup(4)}
-<ol class="src">${sources.slice(0, 12).map((s) => `<li><a href="${esc(s.url)}">${esc(s.title)}</a> <span class="mut">(${esc(s.year)})</span><br>${esc(s.says)}<br><b>${s.applies === 'yes' ? 'Applies' : s.applies === 'partly' ? 'Partly applies' : 'Does not apply'}:</b> ${esc(s.why)}</li>`).join('')}</ol>`);
+<ol class="src">${sources.slice(0, 12).map((s) => `<li><a href="${esc(s.url)}">${esc(s.title)}</a> <span class="mut">(${esc(s.year)})</span><div class="why"><b>${s.applies === 'yes' ? 'Applies' : s.applies === 'partly' ? 'Partly applies' : 'Does not apply'}:</b> ${esc(WHY_SHORT[s.url] ?? s.why)}</div><details><summary>What it found</summary><div class="says">${esc(s.says)}</div><div class="says">${esc(s.why)}</div></details></li>`).join('')}</ol>`);
 
 // ---------------------------------------------------------------- step: forks (R6)
 const stepForks = () => step('forks', 'How the overnight search ran', `
@@ -483,13 +545,16 @@ ${sup(3, 4)}
 const protoCards = allCards.filter((c) => c.tested); // every prototype, also ones in "Also looked at"
 const detRows = runs.filter((r) => r.name !== baseRuns[0]?.name && r.exit === 0).map((r) => ({ r, c: baseRuns[0] ? compareRuns(baseRuns[0].dir, r.dir) : null }));
 const detSame = detRows.filter((d) => d.c?.same).length;
+const detDiffer = detRows.filter((d) => !d.c?.same);
+if (detDiffer.some((d) => !/^cpushare-/.test(d.r.name))) console.warn('non-cpushare run differs from base:', detDiffer.map((d) => d.r.name).join(' '));
 const r7det = txt(`${S}/det-r7.txt`).trim();
+const shortAgree = (a) => { const p = (a ?? '').match(/[\d.]+%/), f = (a ?? '').match(/(\d+) flagged/); return p ? `${p[0]}${f ? `, ${f[1]} flagged` : ''}` : 'not run'; };
 function checkPicture() {
   if (!protoCards.length) return '';
   let g = tx(4, 16, 'Does each prototype give the same answers?', 'h'), y = 28;
   for (const c of protoCards) {
     const ok = c.verified;
-    g += `<circle cx="12" cy="${y + 7}" r="7" fill="${ok ? 'var(--ok)' : 'var(--bad)'}"/>` + tx(12, y + 11, ok ? '✓' : '✗', '', 'middle', ' style="fill:var(--bg);font-size:11px"') + tx(26, y + 11, `${esc(c.name)}: ${esc(c.verify_agreement || 'not run')}`, 's');
+    g += `<circle cx="12" cy="${y + 7}" r="7" fill="${ok ? 'var(--ok)' : 'var(--bad)'}"/>` + tx(12, y + 11, ok ? '✓' : '✗', '', 'middle', ' style="fill:var(--bg);font-size:11px"') + tx(26, y + 11, `${esc(clip(c.name, 30))}: ${esc(shortAgree(c.verify_agreement))}`, 's');
     y += 20;
   }
   return svg(y + 4, g, 'verify results');
@@ -499,7 +564,8 @@ const stepCheck = () => step('check', 'Do the prototypes give the same results?'
 ${checkPicture()}
 ${ul([
     `${num('check.verified', protoCards.filter((c) => c.verified).length, 0)} of ${num('check.tested', protoCards.length, 0)} tested prototypes match the CPU engine on every battle (verify_3v3: 100% winner agreement, 0 flagged).`,
-    detRows.length ? `${num('det.same', detSame, 0)} of ${num('det.n', detRows.length, 0)} chain runs gave checkpoints identical to ${esc(baseRuns[0]?.name)} (same seed, timing fields ignored).` : '',
+    detRows.length ? `${num('det.same', detSame, 0)} of ${num('det.n', detRows.length, 0)} chain runs gave checkpoints identical to ${esc(baseRuns[0]?.name)} (same seed, timing ignored).` : '',
+    detDiffer.length ? `The ${num('det.differ', detDiffer.length, 0)} others are CPU-share runs: CPU battles shift results slightly; same-share runs match.` : '',
     r7det ? esc(r7det) : '',
   ])}
 ${sup(3)}
@@ -508,6 +574,8 @@ ${sup(3)}
 // ---------------------------------------------------------------- recommendation box (R10a, R12: action + gain + command per line)
 const CMD = 'node scripts/evolve.mjs <collection.csv> --config recipes/standard.json --halving-rounds 3 --gpu --out-dir out/<name>';
 const nextCards = cards.filter((c) => !(c.measured != null && c.measured >= -(noise ?? 0) && c.verified)).filter((c) => c !== bestWin).slice(0, 2);
+const addOn = nextCards.find((c) => /only as a later add-on/.test(c.do_next ?? ''));
+const lead = nextCards.find((c) => c !== addOn) ?? nextCards[0];
 const REC = [
   {
     act: 'Run the standard sim on the GPU with island halving off (the default) and halving 3, as today.',
@@ -520,17 +588,19 @@ const REC = [
     cmd: `nothing to add; built once per GPU into out/gpu/${calibFile ?? 'width-calib-<gpu>.json'} (delete it to re-measure)`,
   },
   bestWin
-    ? { act: `Turn on the prototype "${esc(bestWin.name)}" (passes the same-answers check).`, gain: `${num(`card.${bestWin.id}.measured`, bestWin.measured, 1, { sign: true })} s per warm generation, measured over ${num(`card.${bestWin.id}.nruns`, bestWin.nRuns, 0)} runs`, cmd: `add ${(runs.find((r) => (bestWin.runs ?? []).includes(r.name))?.env ?? '').split(/\s+/).filter((x) => /^POGO_GPU_STUDY=|^POGO_GPU_/.test(x)).join(' ') || '(see card)'} before the command` }
+    ? { act: `Turn on the prototype "${esc(bestWin.name)}" (passes the same-answers check).`, gain: `${num(`card.${bestWin.id}.measured`, bestWin.measured, 1, { sign: true })} s per warm generation over ${num(`card.${bestWin.id}.nruns`, bestWin.nRuns, 0)} runs; confirm in one A/B (step 4)`, cmd: `add ${(runs.find((r) => (bestWin.runs ?? []).includes(r.name))?.env ?? '').split(/\s+/).filter((x) => /^POGO_GPU_STUDY=|^POGO_GPU_/.test(x)).join(' ') || '(see card)'} before the command` }
     : { act: 'No prototype is worth turning on yet: none beat the baseline by more than run-to-run noise.', gain: `0 s now (noise ±${num('base.noise', noise, 2)} s per generation)`, cmd: 'keep the command above unchanged' },
   {
-    act: nextCards.length ? `Build next round: ${nextCards.map((c) => `"${esc(c.name)}"`).join(', then ')} (top of the ranked list below).` : 'Build next round: the top card of the ranked list below.',
-    gain: nextCards[0] ? `predicted ${nextCards[0].measured != null ? num(`card.${nextCards[0].id}.measured`, nextCards[0].measured, 1, { sign: true }) + ' s (measured)' : fmtRange(nextCards[0])} per warm generation` : '',
-    cmd: 'claude --agent planner "round 9: build ' + (nextCards[0] ? esc(nextCards[0].id) : 'the top card') + ' from out/gpu-study.html"',
+    // a card whose own fork says "keep it only as a later add-on" rides on the other card instead of leading
+    act: addOn && nextCards.length === 2 ? `Build next round: "${esc(lead.name)}" (measure first), with "${esc(addOn.name)}" as its add-on (cards 1–2 below).` : nextCards.length ? `Build next round: ${nextCards.map((c) => `"${esc(c.name)}"`).join(', then ')} (top of the ranked list below).` : 'Build next round: the top card of the ranked list below.',
+    gain: addOn && nextCards.length === 2 ? `predicted ${fmtRange(lead)}, plus ${fmtRange(addOn)} from the add-on, per warm generation` : nextCards[0] ? `predicted ${nextCards[0].measured != null ? num(`card.${nextCards[0].id}.measured`, nextCards[0].measured, 1, { sign: true }) + ' s (measured)' : fmtRange(nextCards[0])} per warm generation` : '',
+    cmd: 'claude --agent planner "round 9: build ' + (lead ? esc(lead.id) : 'the top card') + ' from out/gpu-study.html"',
   },
 ];
-const before = baseWarm, after = baseWarm != null ? baseWarm + (bestWin?.measured ?? 0) : null;
+// before/after from the same hour: the best win's nearest production runs vs its own runs (the GPU drifted ~1.3 s/gen overnight)
+const before = bestWin ? bestWin.ctrlWarm : baseWarm, after = bestWin ? bestWin.measuredWarm : baseWarm;
 const recBox = () => `<div class="rec" id="rec"><h2>Recommendation for the standard sim</h2>
-<div class="ba"><div>now (today's defaults)<b>${num('rec.before', before, 1)} s</b>per warm generation</div><div>with the lines below<b>${num('rec.after', after, 1)} s</b>per warm generation</div></div>
+<div class="ba"><div>now (today's defaults, same hour)<b>${num('rec.before', before, 1)} s</b>per warm generation</div><div>with the lines below<b>${num('rec.after', after, 1)} s</b>per warm generation</div></div>
 <ol>${REC.map((r, i) => `<li id="rec-${i + 1}"><b>${r.act}</b><br><span class="gain">Gain:</span> ${r.gain}<code class="cmd">${esc(r.cmd)}</code></li>`).join('')}</ol>
 <p class="mut">A warm generation is one after the battle cache has filled. Halving rounds stay at 3, as asked.</p></div>`;
 const rankList = () => `<section id="ranked"><h2>Changes to pick from, fastest first</h2>

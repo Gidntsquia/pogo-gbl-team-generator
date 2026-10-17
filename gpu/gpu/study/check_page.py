@@ -83,8 +83,12 @@ def near_ctrl(ns):
             pick[r['name']] = r
     return list(pick.values())
 CS = {}
-for r in CTRL:
-    CS.setdefault(setof(r['name']), []).append(r['warm'])
+_last = {}
+for r in CTRL:  # back-to-back runs only (within 5 chain stages), so overnight drift is not counted as noise
+    st, k = setof(r['name']), STAGEK[r['name']]
+    key = _last[st][1] if st in _last and k - _last[st][0] <= 5 else f'{st}@{k}'
+    _last[st] = (k, key)
+    CS.setdefault(key, []).append(r['warm'])
 _sp = [max(v) - min(v) for v in CS.values() if len(v) >= 2]
 noise = max(_sp) if _sp else None
 
@@ -98,7 +102,7 @@ for f, r in results.items():
         rs = ok([RUNS[n] for n in c.get('runs', []) if n in RUNS and not re.match(CTRL_PAT, n)])
         mw = mean([x['warm'] for x in rs])
         cw = mean([x['warm'] for x in near_ctrl([x['name'] for x in rs])]) if rs else None
-        c = dict(c, fork=f, nruns=len(rs), measured=mw - cw if mw is not None and cw is not None else None)
+        c = dict(c, fork=f, nruns=len(rs), mw=mw, cw=cw, measured=mw - cw if mw is not None and cw is not None else None)
         c['verified'] = bool(re.match(r'^100(\.0+)?%.*\b0 flagged', c.get('verify_agreement') or ''))
         CARDS[c['id']] = c
 prof = rd(f'{S}/prof/metrics.json') or {}
@@ -168,6 +172,8 @@ def value(k):
     p = k.split('.')
     if p[0] in ('run', 'set') and len(p) > 3:
         p = [p[0], '.'.join(p[1:-1]), p[-1]]
+    if p[0] == 'delta' and len(p) > 2:
+        p = [p[0], '.'.join(p[1:])]
     if p[0] == 'gen':
         return gen_key(p[1], p[3] if p[2] == 'mean' else p[2])
     if p[0] == 'launch':  # launch.<run>.<gen>.<i>.<n|wall>
@@ -187,7 +193,7 @@ def value(k):
         if p[1] == 'nbuckets':
             return len(CB)
         if p[1] == 'nomatter':
-            return sum(1 for b in CB if 'does not matter' in (b.get('rule') or '') or (b.get('pick') == 1 and (b.get('winner_margin_pct') or 0) <= 3))
+            return sum(1 for b in CB if b.get('pick') == 1 and max((b.get('ratio_to_g1_median') or {'1': 1}).values()) <= 1.03)
         if p[1] == 'maxspread':
             return max(b.get('spread_pct') or 0 for b in CB)
         if p[1] == 'maxnoise':
@@ -201,9 +207,12 @@ def value(k):
             return b['ratio_to_g1_median'][p[3]]
     if p[0] == 'run':
         return RUNS[p[1]][{'sat': 'sat', 'warm': 'warm', 'total': 'total', 'bps': 'bps'}[p[2]]]
+    if p[0] == 'delta':  # a tested setting's mean warm minus its nearest production runs' mean
+        rs = ok(SETS[p[1]])
+        return mean([r['warm'] for r in rs]) - mean([x['warm'] for x in near_ctrl([r['name'] for r in rs])])
     if p[0] == 'set':
         return mean([r['warm'] for r in ok(SETS[p[1]])])
-    if k == 'base.warm' or k == 'rec.before':
+    if k == 'base.warm':
         return base_warm
     if k == 'base.n':
         return len(base)
@@ -218,12 +227,18 @@ def value(k):
         return mean([r['warm'] for r in b[-2:]]) / mean([r['warm'] for r in b[:2]]) - 1
     if k == 'rec.after':
         wins = sorted([c for c in CARDS.values() if c['measured'] is not None and c['verified'] and c['measured'] < -(noise or 0)], key=lambda c: c['measured'])
-        return base_warm + (wins[0]['measured'] if wins else 0)
+        return wins[0]['mw'] if wins else base_warm
+    if k == 'rec.before':
+        wins = sorted([c for c in CARDS.values() if c['measured'] is not None and c['verified'] and c['measured'] < -(noise or 0)], key=lambda c: c['measured'])
+        return wins[0]['cw'] if wins else base_warm
     if p[0] == 'card':
         c = CARDS[p[1]]
         return {'lo': (c.get('predicted_s_per_gen') or [None, None])[0], 'hi': (c.get('predicted_s_per_gen') or [None, None])[1], 'measured': c['measured'], 'nruns': c['nruns']}[p[2]]
     if k == 'cards.n':
         return min(12, len(CARDS))
+    if k in ('lit.tail', 'lit.maxp50'):
+        ag = json.load(open(f'{S}/lit/evidence-profile.json'))['aggregate']
+        return ag['tail_share_of_wall'] if k == 'lit.tail' else ag['max_over_p50_median']
     if p[0] == 'lit':
         return sum(1 for s in sources if s.get('applies') == p[1])
     if k == 'forks.n':
@@ -237,10 +252,11 @@ def value(k):
     if k in ('check.verified', 'check.tested'):
         t = [c for c in CARDS.values() if c.get('tested')]
         return len(t) if k == 'check.tested' else sum(1 for c in t if c['verified'])
-    if k in ('det.same', 'det.n'):
+    if k in ('det.same', 'det.n', 'det.differ'):
         b0 = base[0]
         rows = [r for r in RUNS.values() if r['name'] != b0['name'] and r['exit'] == 0]
-        return len(rows) if k == 'det.n' else sum(1 for r in rows if same_ck(b0['dir'], r['dir']))
+        same = sum(1 for r in rows if same_ck(b0['dir'], r['dir']))
+        return len(rows) if k == 'det.n' else same if k == 'det.same' else len(rows) - same
     if k == 'r7.isl':
         return mean([r7warm('isl-h3-p1'), r7warm('isl-h3-p1-r2')])
     if k == 'r7.auto':
@@ -281,9 +297,15 @@ for k, f, shown in items:
     lines.append(f"{'ok      ' if good else 'MISMATCH'} {k:<44} page {H.unescape(shown):>10}  recomputed {exp:>10}  (raw {v!r})")
 page_text = H.unescape(re.sub(r'<[^>]+>', '', page))
 # card prose is copied verbatim; check that each card's do_next and name appear on the page
+BUILT_BY = {'coop-search': 'split'}
+RESULTS_BY_FORK = {f.split('/')[-2]: json.load(open(f)) for f in glob.glob(f'{S}/*/result.json')}
 for c in CARDS.values():
     for fld in ('name', 'do_next'):
-        good = (c.get(fld) or '') in page_text
+        want = c.get(fld) or ''
+        if fld == 'do_next' and c['id'] in BUILT_BY and BUILT_BY[c['id']] in RESULTS_BY_FORK:
+            # an idea another fork already built: the page replaces its do_next with a pointer to that fork's card
+            want = f"Drop: the {BUILT_BY[c['id']]} fork built this (card \"{RESULTS_BY_FORK[BUILT_BY[c['id']]]['cards'][0]['name']}\")"
+        good = want in page_text
         bad += not good
         lines.append(f"{'ok      ' if good else 'MISMATCH'} card.{c['id']}.{fld} text present")
 lines.append(f'{len(items)} numbers + {2 * len(CARDS)} card texts checked, {bad} mismatches')

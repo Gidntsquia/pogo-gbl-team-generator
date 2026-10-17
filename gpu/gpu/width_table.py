@@ -1,4 +1,4 @@
-"""Build gpu/gpu/width-table.json (the auto picker's bound, plans round 7 R4) from the fixed-width benches.
+"""Build gpu/gpu/width-table.json (the round-7 bench table, plans round 7 R4; since round 8 auto reads the width calibration file instead) from the fixed-width benches.
 
   cd gpu && uv run python -m gpu.width_table [--bench-dir ../out/gpu/width]
 

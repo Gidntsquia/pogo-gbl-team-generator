@@ -331,3 +331,42 @@ Bench: `gpu/gpu/width_bench.py` (writes `gpu/gpu/width-table.json`); runs: `out/
   process's 2.8 s of setup. The pause starts at the gen-13 checkpoint, so the unfinished gen 14 is also dropped.
 - **Next:** re-add the CPU share at the chosen setting. Retire the probe: its picks match the formula in 3 of 6
   buckets, and the widths are now fixed per bucket in `width-table.json`.
+
+## Round 8: profile-first study
+
+Report: `node gpu/gpu-study.mjs` → `out/gpu-study.html` (linked from `out/gpu-width.html`): recommendation box and
+ranked change list first, then seven steps (time split, profile, width, chain runs, correctness, literature, forks),
+each with one picture and a "supports: recommendation line N" tag. `python3 gpu/gpu/study/check_page.py` re-derives
+every number on the page (`out/gpu/study/check.log`, 0 mismatches). Research forks live in `gpu/gpu/study/<fork>/`
+(`variant.py`, selected by `POGO_GPU_STUDY=<fork>`, off by default) with their data in `out/gpu/study/<fork>/`; the
+timed runs ran one at a time in `out/gpu/study/chain.sh` (52 stages, all exit 0, 10-gen standard halving-3 runs).
+
+- **Profile.** Nsight Compute is blocked on this Windows/WSL machine (`ncu` → `ERR_NVGPUCTRPERM`; enabling GPU
+  performance counters for all users in the NVIDIA Control Panel needs a Windows admin), so in-kernel clock timers and
+  SASS counts stand in. Achieved occupancy 11.4 / 8.6 / 14.4% (5k / 10k / 36k launches) against 16.7% theoretical
+  (255 registers per thread, 8 of 48 warps per SM). 2.8 / 4.3 / 9.6 of 32 threads per warp step do useful work. SMs
+  have work 73 / 56 / 88% of each launch. Stack is 39,088 B per thread, and 19.7% of the kernel's instructions are
+  local-memory loads/stores. Stall reasons, L1/L2 hit rates and issue-slot use need the blocked counters.
+- **Time split.** The GPU is busy for 92% of a warm generation, and 43% of it is tail (the GPU waiting on a launch's
+  last, longest battles). Host work and the GA are the other 8%.
+- **GPU drift.** The same production command ran 13.36 / 13.49 s per warm generation at 21:18 ET and 11.66 / 11.66 at
+  04:44 ET (−13%). Each prototype is therefore compared with the two production runs nearest it in the chain; back-to-
+  back production runs agree within 0.35 s.
+- **Faster, verified (100% winner agreement, 0 flagged, checkpoints identical to production):** cold helpers as real
+  function calls (`occ` fork, 11 `__noinline__` edits, −0.6 s/gen: 11.52 vs 12.16 in the same hour) and battle state
+  in compact on-chip form (`stack` fork, −0.6 s/gen). Both are study variants; production is unchanged. A run of the
+  production path with only a timing log (`streams-time`) also read −0.6 against its neighbours, so confirm both in one A/B.
+- **Slower or no gain:** plain work-queue kernel +7.3 s/gen, lockstep one-slice-per-launch +6.2, smaller search pool
+  with rare re-run +4.4, two-stream overlap +2.0, register caps for more warps +0.3 (any cap spills ~1 KB per thread),
+  splitting one battle's look-ahead over its threads 2.4–4× slower in the bench. A CPU share of 0.003–0.01 gives no
+  gain beyond noise and changes the checkpoints (same-share runs match each other).
+- **Width calibration.** 68 real launches (10–14 per size bucket) were replayed at G = 1–32 on identical battles (`out/gpu/width-calib-NVIDIA-
+  GeForce-RTX-3080.json`). No width beats G=1 by more than 3% in any size bucket, so auto now uses G=1 everywhere
+  ("width does not matter here"). `--gpu` loads the file (`gpu width -- calibration loaded: ...`), or builds a bucket's
+  row on that bucket's first launch when the file is missing (`gpu width -- calibrating width for NVIDIA GeForce RTX 3080… 68.2 s`,
+  `out/gpu/study/width/calib-line.log`). `POGO_GPU_PROBE` and the live prober are removed. This
+  supersedes round 7's width question.
+- **Correctness.** A CPU-only 2-gen run and a default-GPU 5-gen run with round-8 code write checkpoints identical to
+  round 7's (`out/gpu/study/det-r7.txt`).
+- **Next:** port the two verified kernel changes into `gpu/gpu/kernels` and A/B them together; build early release of
+  sure next-round winners only together with an in-kernel append queue for the tail.

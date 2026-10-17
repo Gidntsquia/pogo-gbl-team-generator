@@ -34,7 +34,7 @@ def serve_binary():
     fin, fout = sys.stdin.buffer, sys.stdout.buffer
     if K.PROTO == "slice":  # round 7 R4: the width picker's device capacity, logged once at start
         from . import width as WD
-        sys.stderr.write(WD.device_line() + f"; POGO_GPU_WIDTH={WD.MODE}" + (", probe on" if WD.PROBE else "") + "\n")
+        sys.stderr.write(WD.device_line() + f"; POGO_GPU_WIDTH={WD.MODE}\n")
         sys.stderr.flush()
     state = {"static": None, "streams": 1}
     inbox = queue.Queue()

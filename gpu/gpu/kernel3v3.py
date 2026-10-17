@@ -290,7 +290,7 @@ def slice_launch(static, idx, dyn, seeds, real="float", T=None, K=None, mode=Non
             width, wlog = 1, f"gpu width -- {n} battles, G=1 (fixed: handoff mode, series > 1 or ahead pool)"
         else:
             from . import width as WD
-            width, wlog = WD.pick(static, idx, dyn, real)
+            width, wlog = WD.pick(static, idx, dyn, real, seeds=seeds)
         sys.stderr.write(wlog + "\n")
         sys.stderr.flush()
     if isinstance(width, dict):
@@ -382,7 +382,7 @@ def slice_collect(h):
             "plan": h.get("plan"), "width": h.get("width")}
     if h.get("picked") and nseg:
         from . import width as WD
-        WD.probe_report(n, h["width"], float(segs[:, 3].max() - segs[:, 2].min()) / 1e9)
+        WD.finish_calibration(n, h["width"], info)
     if na:
         asort = h["asort"]
         done = cp.asnumpy(h["d_adone"])[:na].astype(bool)
