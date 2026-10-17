@@ -121,7 +121,8 @@ def tail_launch(static, idx, dyn, seeds, pool, meta, real="float", stream=None, 
             "out": K._dz(cp, (n + nP, K.B_OUT), np.int32), "order": D(main_order, np.int32), "ser": D(np.arange(n + 1), np.int32),
             "ctl": D(ctl, np.uint32), "spos": K._dz(cp, max(n, 1), np.int32), "sstate": K._dz(cp, max(n, 1), np.int32),
             "save": cp.empty((max(n, 1) * words,), cp.uint64), "ring": D(ring if n else np.zeros(1, np.uint64), np.uint64),
-            "segs": cp.empty((seg_cap * 6,), cp.uint32), "pred": D(pred_ns, np.float32),
+            "segs": K._dz(cp, seg_cap * 6, np.uint32),  # zeroed: an early read can see a claimed slot not yet written (pool reuse leaves old bytes)
+            "pred": D(pred_ns, np.float32),
             "mainTag": D(meta["mainTag"] if n else np.zeros(1), np.int32), "poolTeam": D(meta["poolTeam"] if nP else np.zeros(1), np.int32),
             "porder": D(porder if nP else np.zeros(1), np.int32),
             "tPts": K._dz(cp, max(nT, 1), np.float32), "tN": K._dz(cp, max(nT, 1), np.float32),
@@ -312,6 +313,8 @@ def tail_collect(h):
     nseg = min(int(ctl[5]), h["seg_cap"])
     sg = (segs_raw[: nseg * 6] if segs_raw is not None else cp.asnumpy(d["segs"][: nseg * 6])).reshape(-1, 6).astype(np.int64)
     segs = np.stack([sg[:, 0], sg[:, 1], sg[:, 2] | (sg[:, 3] << 32), sg[:, 4] | (sg[:, 5] << 32)], 1) if nseg else np.zeros((0, 4), np.int64)
+    if len(segs):  # rows claimed but not yet written when read early (late lanes still running) are still zero: drop them
+        segs = segs[(sg[:, 3] > 0) & (sg[:, 5] > 0) & (segs[:, 3] >= segs[:, 2])]  # high words set: not torn (globaltimer ns > 2^32)
     u64 = lambda i: int(tc[i] | (tc[i + 1] << 32))
     t_exit, t_main, t_spec = u64(8), u64(10), u64(12)
     st0 = int(segs[:, 2].min()) if len(segs) else 0
@@ -362,7 +365,7 @@ INFO = ("n", "pool", "started", "kept", "discarded", "from_certain", "kept_certa
 def reply_words(res):
     """tail_collect result -> int32 reply words: info[16] (INFO order; times in us, -1 = none) | pdone[nP] | rows (n+nP) x B_OUT."""
     out, pdone, info = res
-    us = lambda v: -1 if v is None else int(round(v * 1e6))
+    us = lambda v: -1 if v is None or not 0 <= v * 1e6 < 2**31 else int(round(v * 1e6))
     vals = dict(info, spec_ranked=int(info["spec_ranked"]), overrun_us=int(round(info["overrun_us"])),
                 spec_at_us=us(info["spec_at_s"]), main_end_us=us(info["main_end_s"]))
     head = np.array([int(vals[k]) for k in INFO], np.int32)
