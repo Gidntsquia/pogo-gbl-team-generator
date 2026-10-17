@@ -69,8 +69,9 @@ export function createTail({ log }) {
      * @param {Function} packTail gpu/client.mjs packTail
      * @param {object[]} specs
      * @param {object} j tailJob
-     * @param {{plan: object|null, specIndex: number[], served: Map<number, object>}} cert certain-mode inputs: specIndex[k] = this
-     *   call's spec index of launch row k; served = results already known
+     * @param {{plan: object|null, specIndex: number[], served: Map<number, object>, ensureStatic?: () => Promise<void>}} cert certain-mode
+     *   inputs: specIndex[k] = this call's spec index of launch row k; served = results already known; ensureStatic resends the
+     *   mon table when packing the pool added mons
      * @returns {Promise<{out: Int32Array, cols: number, kernelUs: number, info: object, packMs: number, sidecarMs: number}>}
      */
     async launch(sc, pack, packTail, specs, j, cert) {
@@ -83,6 +84,7 @@ export function createTail({ log }) {
         main: pack(specs), pool: pack(j.pool.map((p) => p.spec)), mainTag, poolTeam: Int32Array.from(j.pool, (p) => p.team),
         priorPts: j.priorPts, priorN: j.priorN, keepK: j.keepK, spec: true, certain: certainOn,
       });
+      if (cert.ensureStatic) await cert.ensureStatic();
       const packMs = performance.now() - tp;
       const ts = performance.now();
       const { tag, done } = await sc.tailStart(body);

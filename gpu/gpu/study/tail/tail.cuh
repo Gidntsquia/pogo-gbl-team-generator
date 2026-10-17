@@ -100,6 +100,7 @@ extern "C" __global__ void battle3v3_tail(
   unsigned smid_;
   asm volatile("mov.u32 %0, %%smid;" : "=r"(smid_));
   const int gwarp = (int)(smid_ & 255u);  // wmain is per SM: pool warps share the SM's issue slots and L1 with its main warps
+  const int segWho = gtid | ((int)(smid_ & 255u) << 20);  // segment record: thread | SM id (bits 20-27), for the SM timeline
   B3 b;
   Run r;
   if (lane >= (int)ctl[C_SPREAD]) { atomicSub(&ctl[C_ALIVE], 1u); return; }  // spare lanes leave, as in production
@@ -138,7 +139,7 @@ extern "C" __global__ void battle3v3_tail(
         if (done) {
           tail_write(b, r, out, bi, mdone);
           unsigned long long t1 = gtimer();
-          seg_rec(ctl, segs, segCap, gtid, 0, bi, t0, t1);
+          seg_rec(ctl, segs, segCap, segWho, 0, bi, t0, t1);
           int tg = mainTag[bi];
           if (tg >= 0) {
             int w = out[(long long)bi * B_OUT], seat = tg & 1;
@@ -153,7 +154,7 @@ extern "C" __global__ void battle3v3_tail(
           if (pos + 1 >= serStart[s + 1] - serStart[s]) { more = false; break; }
         } else {
           save_state(save + (long long)s * SLOT_WORDS, b, r);
-          seg_rec(ctl, segs, segCap, gtid, 0, bi, t0, gtimer());
+          seg_rec(ctl, segs, segCap, segWho, 0, bi, t0, gtimer());
           sstate[s] = 1;
           break;
         }
@@ -222,11 +223,11 @@ extern "C" __global__ void battle3v3_tail(
       *(volatile int*)(pdone + held) = 1;
       atomicAdd(&tctl[T_DONE], 1u);
       if (heldCq) atomicAdd(&tctl[T_DONECQ], 1u);
-      seg_rec(ctl, segs, segCap, gtid, 3, nMain + held, heldT0, gtimer());
+      seg_rec(ctl, segs, segCap, segWho, 3, nMain + held, heldT0, gtimer());
       held = -1;
       atomicSub(&tctl[T_HELD], 1u);
     } else if (stop) {
-      seg_rec(ctl, segs, segCap, gtid, 3, nMain + held, heldT0, gtimer());
+      seg_rec(ctl, segs, segCap, segWho, 3, nMain + held, heldT0, gtimer());
       break;  // discarded
     }
   }

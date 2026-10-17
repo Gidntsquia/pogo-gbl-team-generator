@@ -9,7 +9,7 @@ const { createGpuExecutor } = await import('../src/engine/gpuExecutor.js');
 
 const IVS = { atk: 0, def: 15, hp: 15 };
 const team = (ids) => ids.map((speciesId) => ({ speciesId, ivs: IVS }));
-const A = team(['azumarill', 'registeel', 'altaria']), B = team(['magikarp', 'sunkern', 'feebas']);
+const A = team(['azumarill', 'registeel', 'altaria']), B = team(['magikarp', 'sunkern', 'feebas']), C = team(['medicham', 'swampert', 'skarmory']);
 const spec = (leadA, leadB) => ({ teamA: A, teamB: B, leadA, leadB });
 const keyFor = (s) => `${s.leadA}:${s.leadB}`;
 // a row's winner is a function of its packed lead mons, so a result served for the wrong spec would differ
@@ -19,13 +19,15 @@ test('pool rows finished in one launch are served to the next call, which launch
   const ctx = await initEngine();
   const cpu = { run: async (specs) => specs.map(() => ({ ok: true, value: { winner: 'cpu' } })), stats: async () => [], close: async () => [] };
   const sent = [];
+  let staticRows = 0;
   const sidecar = {
-    setStatic: async () => {},
+    setStatic: async (mons) => { staticRows = mons.length; },
     batch3: async ({ seeds, idx }) => { sent.push(seeds.length); const out = new Int32Array(seeds.length * 24); for (let i = 0; i < seeds.length; i++) row(out, i, idx, i); return { out, cols: 24, kernelUs: 1, pieces: 1 }; },
     tailStart: async (body) => {
       const m = new Int32Array(body.buffer, body.byteOffset, 8), [n, nP] = m;
       const idx = new Int32Array(body.buffer, body.byteOffset + 32, (n + nP) * 6);
       sent.push(n);
+      assert.ok(Math.max(...idx) < staticRows, 'a pool mon was sent before the static table that holds it');
       const w = new Int32Array(16 + nP + (n + nP) * 24);
       w[0] = n; w[1] = nP; w[2] = nP; w[3] = nP - 1; w[4] = 1;
       for (let p = 0; p < nP; p++) w[16 + p] = p === 0 ? 0 : 1; // pool battle 0 was discarded (still running at the end)
@@ -37,7 +39,7 @@ test('pool rows finished in one launch are served to the next call, which launch
   const ex = await createGpuExecutor({ ctx, cpuExecutor: cpu, cpuShare: 0, sidecar, log: (l) => logs.push(l) });
   const plain = await createGpuExecutor({ ctx, cpuExecutor: cpu, cpuShare: 0, sidecar });
   const main = [spec(0, 0), spec(0, 1)], next = [spec(0, 2), spec(1, 0), spec(2, 2)];
-  const pool = [spec(0, 2), spec(1, 0), spec(1, 1)]; // spec(1,1) is speculated but not asked for; spec(0,2) is the discarded one
+  const pool = [spec(0, 2), spec(1, 0), { teamA: C, teamB: B, leadA: 0, leadB: 0 }]; // the C battle (new mons) is speculated but not asked for; spec(0,2) is discarded
   ex.speculate({ main: main.map((s, t) => ({ key: keyFor(s), team: t, seat: 0 })), pool: pool.map((s) => ({ key: keyFor(s), spec: s, team: 0 })),
     priorPts: new Float32Array(2), priorN: new Float32Array(2), keep: 0.5, keepK: 1, keyFor });
   const r0 = await ex.run(main);

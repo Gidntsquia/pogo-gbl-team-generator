@@ -188,7 +188,9 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       if (tj && lo + GPU_BATCH_LIMIT >= specs.length) {
         // the step's last launch carries the next round's pool (round 9 study); main rows come back exactly as from batch3
         const part = specs.slice(lo);
-        const r = await tail.launch(sc, (p) => pack(p, false), packTail, part, tj.job, { plan: tj.plan, specIndex: part.map((_, k) => tj.specIndex[lo + k]), served: tj.served });
+        // packing the pool can add mons (next round's opponents) to the table: resend it before the launch
+        const ensureStatic = async () => { if (monTable.length !== sentStatic) { await sc.setStatic(monTable); sentStatic = monTable.length; } };
+        const r = await tail.launch(sc, (p) => pack(p, false), packTail, part, tj.job, { plan: tj.plan, specIndex: part.map((_, k) => tj.specIndex[lo + k]), served: tj.served, ensureStatic });
         tj.info = r.info;
         take(lo, part, { out: r.out, cols: r.cols, kernelUs: r.kernelUs, pieces: 1 }, { packMs: r.packMs, staticMs: lo ? 0 : staticMs, sidecarMs: r.sidecarMs });
         break;
