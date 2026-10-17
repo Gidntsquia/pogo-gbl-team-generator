@@ -243,7 +243,7 @@ function wallChart() {
   const LBL = 190, X0 = LBL + 12, X1 = 640, rh = 40;   // room for the label after the longest bar
   const tmax = Math.max(...settings.flatMap((s) => s.R.map((r) => r.total ?? 0)));
   const XB = (v) => X0 + (v / tmax) * (X1 - X0);
-  let g = `<text x="${X0}" y="18" class="h">20-gen wall time, minutes: total (light) and warm part (dark), median of runs; dots = each run's total</text>`;
+  let g = `<text x="${X0}" y="18" class="h">20-gen wall time, minutes (median of runs): light = total, dark = warm part, dots = runs</text>`;
   let y = 34, lastPop = null;
   const top = y;
   for (const s of settings) {
@@ -277,7 +277,7 @@ function bpsChart() {
   let grid = '';   // gridlines first, so the row labels (with their halo) sit on top
   for (let v = 0; v <= bmax; v += 500) grid += `<line x1="${XB(v)}" x2="${XB(v)}" y1="${top}" y2="${y}" stroke="var(--line)"/><text x="${XB(v)}" y="${y + 14}" text-anchor="middle" class="sub">${n0(v)}</text>`;
   grid += `<line x1="${XB(TARGET)}" x2="${XB(TARGET)}" y1="${top}" y2="${y}" stroke="var(--bad)" stroke-width="2"/><text x="${XB(TARGET) + 4}" y="${top + 10}" class="sub" style="fill:var(--bad)">1,500</text>`;
-  return `<svg viewBox="0 0 960 ${y + 22}" class="fig" role="img" aria-label="battles per second per setting">${grid}${g}</svg>`;
+  return `<svg viewBox="0 0 1010 ${y + 22}" class="fig" role="img" aria-label="battles per second per setting">${grid}${g}</svg>`;
 }
 
 // ---------------------------------------------------------------- determinism (R3/R7), probe (R5), island (R7)
@@ -333,20 +333,83 @@ ${table(['setting (pop 1×)', 'mean win% of top 12', 'top-3 mean', 'best', 'top-
 <details><summary>Side by side, GA rank 1–12 (win% on the full pool, rank among all finalists)</summary>${table(['GA rank', ...Object.keys(fin.sets).map((k) => esc(SETTING_LABEL(k.split('-')[0], k.split('-')[1].slice(1))))], side)}</details>`;
 }
 
-// ---------------------------------------------------------------- conclusion
+// ---------------------------------------------------------------- story: numbers each step quotes
 const { svg: bucketSvg, rows: bucketRows } = bucketChart();
 const allWithin = bucketRows.length ? bucketRows.every((r) => r.ok) : null;
 const islBest = pop1.filter((s) => s.mode === 'isl').sort((a, b) => a.warmPerGen - b.warmPerGen)[0];
 const islPair = islBest ? settings.find((s) => s.key === `auto-h${islBest.h}-p1`) : null;
 const finMean = (k) => (fin?.sets[k] ? sum(fin.sets[k].teams, (t) => t.win) / fin.sets[k].teams.length : null);
 const h3s = (p) => settings.find((s) => s.key === `auto-h3-p${p}`);
-const conclusion = [
-  best ? `<b>Best at pop 1×:</b> ${esc(best.label)}, ${n1(best.warmPerGen)} s per warm generation, total ${mins(best.total)}, ${n0(best.bps)} b/s (${best.bps >= TARGET ? 'above' : 'below'} 1,500)${best.key !== 'auto-h3-p1' && h3s('1') ? `; auto halving 3 ${n1(h3s('1').warmPerGen)} s (${pct(h3s('1').warmPerGen / best.warmPerGen - 1)} slower)` : ''}.` : 'Best setting: pending (runs not finished).',
-  `<b>Width picker:</b> auto ${allWithin == null ? 'pending' : allWithin ? 'within 5% of the best fixed width in every bench bucket' : `more than 5% below the best fixed width at ${bucketRows.filter((r) => !r.ok).map((r) => n0(r.size)).join(', ')}`}; 5-gen halving 3 median ${n0(r5med)} b/s vs 1,315 (slice+bin).`,
-  islBest && islPair ? `<b>Island halving:</b> ${esc(islBest.label)} ${n1(islBest.warmPerGen)} vs ${n1(islPair.warmPerGen)} s/warm gen standard (${pct(islBest.warmPerGen / islPair.warmPerGen - 1)}); finalist mean win% ${pct(finMean(islBest.key))} vs ${pct(finMean(islPair.key))}. Cost: one launch, FIFO tasks, no slicing or length order, so each island round waits on its longest battle.` : '<b>Island halving:</b> pending.',
-  `<b>Population:</b> halving 3 b/s ${n0(h3s('1')?.bps)} at 1×, ${n0(h3s('1.5')?.bps)} at 1.5×, ${n0(h3s('2')?.bps)} at 2× (1,500 bar).`,
-  '<b>Next:</b> re-add the CPU share at the chosen setting and retire the probe (widths are fixed per bucket in width-table.json).',
-];
+const dev = wtable?.device ?? '';
+const THREADS = +(dev.match(/(\d+) threads/)?.[1] ?? 17408);
+const fillG = (n) => Math.min(32, Math.max(1, 2 ** Math.floor(Math.log2(Math.max(1, THREADS / n)))));
+// per bench size: every fixed width's b/s and idle share
+const benchSizes = [...new Set(Object.values(benches).flatMap((b) => b.slices.map((s) => s.size)))].sort((a, b) => a - b);
+const perSize = benchSizes.map((size) => {
+  const f = BW.map((w) => ({ w, bps: sl(benches[`w${w}`], size)?.bps_median, idle: sl(benches[`w${w}`], size)?.idle_median })).filter((x) => x.bps != null);
+  if (!f.length) return null;
+  const hi = Math.max(...f.map((x) => x.bps)), lo = Math.min(...f.map((x) => x.bps));
+  return { size, f, spread: 1 - lo / hi, best: f.find((x) => x.bps === hi) };
+}).filter(Boolean);
+const maxSpread = perSize.length ? Math.max(...perSize.map((p) => p.spread)) : null;
+const big = perSize.at(-1);
+const idleOf = (p, w) => p?.f.find((x) => x.w === w)?.idle;
+const popBps = ['1', '1.5', '2'].map((p) => [p, h3s(p)?.bps]);
+const popTop = popBps.filter(([, v]) => v != null).at(-1);
+const crossed = popBps.find(([, v]) => v >= TARGET);
+const above1 = pop1.filter((s) => s.mode === 'auto' && s.bps >= TARGET);
+
+// ---------------------------------------------------------------- pictures
+const svgText = (x, y, lines, cls = '', anchor = 'middle', dy = 16) => `<text x="${x}" y="${y}" text-anchor="${anchor}"${cls ? ` class="${cls}"` : ''}>${lines.map((l, i) => `<tspan x="${x}" dy="${i ? dy : 0}">${l}</tspan>`).join('')}</text>`;
+/** One warp (32 lanes) at G=1 and at G=8: same lanes, fewer battles each run by more lanes. */
+function widthPicture() {
+  const lane = (x, y, c, o = 1) => `<rect x="${x}" y="${y}" width="11" height="22" rx="2" fill="${c}" opacity="${o}"/>`;
+  const cols = ['var(--c0)', 'var(--c1)', 'var(--c2)', 'var(--c3)'];
+  let g = '';
+  const panel = (x0, G, title, under) => {
+    g += svgText(x0, 20, [title], 'h', 'start');
+    for (let i = 0; i < 32; i++) {
+      const b = Math.floor(i / G);
+      g += lane(x0 + i * 13, 34, G === 1 ? cols[i % 4] : cols[b % 4], G === 1 ? 0.55 + 0.45 * ((i % 3) / 2) : 0.85);
+    }
+    if (G > 1) for (let b = 0; b < 32 / G; b++) g += `<path d="M${x0 + b * G * 13} 62 v6 h${G * 13 - 2} v-6" fill="none" stroke="var(--fg)"/>${svgText(x0 + b * G * 13 + (G * 13 - 2) / 2, 84, [`battle ${b + 1}`], 'sub')}`;
+    else g += svgText(x0 + 208, 84, ['every lane runs its own battle'], 'sub');
+    g += svgText(x0, 112, under, '', 'start', 18);
+  };
+  panel(10, 1, 'G=1: one lane per battle', ['32 battles at once, each on 1 lane.', 'Needs many battles to fill the GPU.']);
+  panel(480, 8, 'G=8: eight lanes per battle', ['4 battles at once, each on 8 lanes.', 'Each battle should finish sooner.']);
+  return `<svg viewBox="0 0 920 150" class="fig" role="img" aria-label="one warp at width 1 and width 8">${g}</svg>`;
+}
+/** auto's per-launch rule as a flow of boxes. */
+function pickerPicture() {
+  const ex = 5000, g0 = fillG(ex);
+  const box = (x, w, lines, c = 'var(--line)') => `<rect x="${x}" y="8" width="${w}" height="92" rx="8" fill="var(--bg)" stroke="${c}" stroke-width="2"/>${svgText(x + w / 2, 34, lines, '', 'middle', 18)}`;
+  const arrow = (x) => `<path d="M${x} 54 h22" stroke="var(--mut)" stroke-width="2" marker-end="url(#ah)"/>`;
+  let g = `<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="var(--mut)"/></marker></defs>`;
+  g += box(4, 190, ['<tspan font-weight="700">A launch arrives</tspan>', `e.g. ${n0(ex)} battles`]) + arrow(198);
+  g += box(226, 220, ['<tspan font-weight="700">Fill the GPU</tspan>', `widest G with battles × G`, `≤ ${n0(THREADS)} lanes → G=${g0}`]) + arrow(450);
+  g += box(478, 220, ['<tspan font-weight="700">Check the bench table</tspan>', 'is that G within 2%', 'of the best measured here?']) + arrow(702);
+  g += box(730, 186, ['<tspan font-weight="700">yes:</tspan> use it', '<tspan font-weight="700">no:</tspan> nearest width', 'that is'], 'var(--c0)');
+  return `<svg viewBox="0 0 920 108" class="fig" role="img" aria-label="how auto picks a width">${g}</svg>`;
+}
+/** Standard halving (one launch per round, host cut between) vs island halving (one launch, islands advance alone). Schematic. */
+function islandPicture() {
+  const X = (t) => 150 + t * 7;
+  const seg = (y, t0, t1, c, label) => `<rect x="${X(t0)}" y="${y}" width="${X(t1) - X(t0) - 2}" height="18" rx="3" fill="${c}" opacity="0.8"/>${label ? `<text x="${(X(t0) + X(t1)) / 2}" y="${y + 13}" text-anchor="middle" class="lbl" font-size="11">${label}</text>` : ''}`;
+  const gap = (y, t0, t1) => `<rect x="${X(t0)}" y="${y}" width="${X(t1) - X(t0) - 2}" height="18" fill="none" stroke="var(--bad)" stroke-dasharray="3 2"/>`;
+  let g = svgText(4, 20, ['Standard: one launch per round'], 'h', 'start');
+  g += svgText(4, 46, ['all teams'], 'sub', 'start');
+  g += seg(32, 0, 40, 'var(--c0)', 'round 1') + gap(32, 40, 46) + seg(32, 46, 66, 'var(--c0)', 'round 2') + gap(32, 66, 72) + seg(32, 72, 82, 'var(--c0)', 'r3');
+  g += svgText(X(43), 66, ['host cut'], 'sub');
+  g += svgText(4, 98, ['Island: one launch, each island advances alone'], 'h', 'start');
+  const isl = [[34, 52, 62], [40, 58, 70], [30, 50, 58], [38, 60, 74]];
+  isl.forEach(([a, b, c], i) => {
+    const y = 110 + i * 24;
+    g += svgText(4, y + 13, [`island ${i + 1}`], 'sub', 'start') + seg(y, 0, a, 'var(--c2)', 'round 1') + seg(y, a, b, 'var(--c2)', 'round 2') + seg(y, b, c, 'var(--c2)', 'r3');
+  });
+  g += `<line x1="${X(74)}" x2="${X(74)}" y1="106" y2="208" stroke="var(--fg)" stroke-dasharray="4 3"/>${svgText(X(74) + 6, 222, ['launch ends with the slowest island'], 'sub', 'start')}`;
+  return `<svg viewBox="0 0 920 232" class="fig" role="img" aria-label="standard vs island halving (schematic)">${g}</svg>`;
+}
 
 // ---------------------------------------------------------------- page
 // a run more than 15% under its setting's median b/s was slowed by something outside it (the user's own load on this box)
@@ -355,58 +418,155 @@ const slowRuns = runs.filter(slowRun);
 const runRows = runs.map((r) => [esc(r.name) + (slowRun(r) ? ' <span class="na">slowed</span>' : ''), esc(r.label), r.pop ? popLabel(r.pop) : '', r.exit == null ? '<span class="na">running</span>' : tag(r.exit === 0, 'exit 0', `exit ${r.exit}`), r.gens,
   mins(r.total), r.warm == null ? 'n/a' : `${mins(r.warm)}<br><small>${n1(r.warmPerGen)} s/gen</small>`, r.sat >= 0 ? `gen ${r.sat}<br><small>hit ${pct(r.rate[r.sat])}, final-5 ${pct(r.tailMean)}</small>` : 'n/a',
   n0(r.bps), n0(r.battlesPerGen), n1(r.gpuPerGen)]);
+const runNotes = [
+  'Total wall = run start → last checkpoint. Warm = generations after the memo hit rate settles (within 2 pp of its final-5 mean).',
+  slowRuns.length ? `Slowed (more than 15% under the setting's median): ${slowRuns.map((r) => `${esc(r.name)} ${n0(r.bps)} b/s`).join(', ')}. Other work shared the GPU; a third clean run outvotes each.` : null,
+  ...runs.filter((r) => r.paused > 0).map((r) => `${esc(r.name)} was stopped at a checkpoint and resumed from it (user request). Its total leaves out the ${mins(r.paused)} pause, the unfinished generation and the ${n1(r.restart)} s restart.`),
+].filter(Boolean);
+const picker = (() => {
+  const t5 = sl(bench('bench-auto-tol5'), 2500);
+  if (!t5) return null;
+  const best25 = Math.max(...BW.map((w) => sl(benches[`w${w}`], 2500)?.bps_median ?? 0));
+  const re = ['auto', '4', '16', '1'].map((g) => [g, ['a', 'b'].map((p) => sl(bench(`recheck-${p}-${g}`), 2500)?.bps_median)]);
+  return { g: t5.launches?.[0]?.width ?? '?', bps: t5.bps_median, ratio: t5.bps_median / best25, re };
+})();
+const verifyOk = verify.every((r) => r[1].includes('PASS') && r[2].includes('PASS'));
+const steps = [
+  ['width', 'Width', `Lanes per battle barely matter: every width within ${pct(maxSpread, 0)} of the best at each size`],
+  ['picker', 'Auto picker', allWithin ? 'Picks a width within 5% of the best at every size' : 'Misses the best width at some sizes'],
+  ['island', 'Island halving', islBest && islPair ? `${pct(islBest.warmPerGen / islPair.warmPerGen - 1, 0)} slower per generation, same team quality` : 'pending'],
+  ['population', 'Population', popTop ? `Bigger launches: halving 3 goes from ${n0(h3s('1')?.bps)} to ${n0(popTop[1])} b/s at ${popTop[0]}×` : 'pending'],
+  ['runs', 'Best setting', best ? `${esc(best.label)}: ${n1(best.warmPerGen)} s/gen, ${n0(best.bps)} b/s` : 'pending'],
+];
 const css = `:root{--link:#1f5fc4;--bg:#fff;--fg:#1d2330;--mut:#5b6577;--line:#d9dee7;--card:#f5f7fa;--ok:#157347;--bad:#b42318;--c0:#2f6fdb;--c1:#e0832a;--c2:#3aa676;--c3:#a259c4}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}}
 :root[data-theme="dark"]{--link:#8ab4ff;--bg:#14171d;--fg:#e6e9ef;--mut:#9aa3b2;--line:#2c3340;--card:#1c2028;--ok:#4cc38a;--bad:#ff7b72;--c0:#6ea0ff;--c1:#f2a65a;--c2:#5ccf98;--c3:#c792ea}
 a{color:var(--link)}body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1150px;padding:16px}
-h1{font-size:1.5rem}h2{margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:4px}
+h1{font-size:1.5rem;margin-bottom:.2rem}h2{margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:4px}h2 .n{display:inline-block;background:var(--c0);color:var(--bg);border-radius:50%;width:1.6em;height:1.6em;text-align:center;line-height:1.6em;font-size:.8em;margin-right:.4em;vertical-align:middle}
 svg.fig{width:100%;height:auto;background:var(--card);border-radius:6px;margin:.5rem 0}svg.fig text{fill:var(--fg);font-size:13px}svg.fig .h{font-weight:700;font-size:14px}svg.fig .sub{fill:var(--mut);font-size:12px}svg.fig .lbl{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
 .box{background:var(--card);border-left:4px solid var(--c0);padding:10px 14px;margin:1rem 0}.box p{margin:.2rem 0}
+.q{font-size:1.05rem;margin:.4rem 0}.q b{color:var(--c0)}ul.find{margin:.4rem 0;padding-left:1.2rem}ul.find li{margin:.15rem 0}
+.so{background:var(--card);border-radius:6px;padding:6px 12px;margin:1rem 0 0;font-weight:600}.so::before{content:"So → ";color:var(--c0)}
+.story{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:1rem 0;counter-reset:s}.story li{flex:1 1 170px;background:var(--card);border-radius:8px;padding:8px 10px;position:relative;counter-increment:s}
+.story li::before{content:counter(s);display:inline-block;background:var(--c0);color:var(--bg);border-radius:50%;width:1.4em;height:1.4em;text-align:center;line-height:1.4em;font-size:.8em;font-weight:700;margin-right:.4em}
+.story a{font-weight:700;text-decoration:none}.story span{display:block;font-size:13px;color:var(--mut);margin-top:2px}
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:14px}th,td{border:1px solid var(--line);padding:5px 7px;text-align:left;vertical-align:top}th{background:var(--card)}
 .pass{color:var(--ok);font-weight:700}.fail{color:var(--bad);font-weight:700}.na{color:var(--mut)}small,.mut{color:var(--mut)}pre{background:var(--card);padding:8px;overflow-x:auto;white-space:pre-wrap}
 details{margin:.5rem 0}summary{cursor:pointer;color:var(--mut)}.tlpair{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:760px){.tlpair{grid-template-columns:1fr}}
 figure{margin:0}figcaption{font-size:13px;color:var(--mut)}svg.tl{width:100%;height:auto;background:var(--card);border-radius:4px}svg.tl text{font-size:10px;fill:var(--mut)}`;
-const dev = wtable?.device ?? '';
+const ul = (items) => `<ul class="find">${items.filter(Boolean).map((x) => `<li>${x}</li>`).join('')}</ul>`;
+const h2 = (id, n, t) => `<h2 id="${id}"><span class="n">${n}</span>${t}</h2>`;
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPU width round 7</title><style>${css}</style></head><body>
-<h1>GPU round 7: threads per battle, island halving, population</h1>
-<p class="mut">Built ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} ET by <code>node gpu/gpu-width.mjs</code>. ${esc(dev)}. Back to <a href="gpu-sched.html">round 6 (gpu-sched)</a>.</p>
-<div class="box">${conclusion.map((l) => `<p>${l}</p>`).join('')}</div>
+<h1>GPU round 7: can the GPU reach 1,500 battles/s?</h1>
+<p class="mut">Built ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} ET by <code>node gpu/gpu-width.mjs</code> · ${esc(dev.replace(/^gpu device -- /, ''))} · <a href="gpu-sched.html">round 6</a></p>
+<p class="q">Round 6 ran halving 3 at <b>${n0(R6_H3)} b/s</b>. The bar is <b>${n0(TARGET)}</b>. Round 7 tried three ways to close the gap, in this order:</p>
+<ol class="story">${steps.map(([id, t, s]) => `<li><a href="#${id}">${t}</a><span>${s}</span></li>`).join('')}</ol>
 
-<h2>Wall time per setting</h2>
-${wallChart()}
-<p class="mut">Total wall = run start → last checkpoint written. Warm = sum of generation walls from the saturation generation on; saturation = first generation whose memo hit rate is within 2 pp of the run's final-5-generation mean. ★ = lowest warm s/gen at pop 1×.</p>
-<h2>Battles per second per setting</h2>
-${bpsChart()}
-<details open><summary>Every run (R9)</summary>${table(['run', 'setting', 'pop', 'exit', 'gens', 'total wall', 'warm wall', 'saturation', 'b/s', 'battles/gen', 'GPU s/gen'], runRows)}<div id="run-notes"></div>${slowRuns.length ? `<p class="mut">Slowed (b/s more than 15% under the setting's median of ${'≥'}3 runs; they ran while other work on this machine shared the GPU): ${slowRuns.map((r) => `${esc(r.name)} ${n0(r.bps)} b/s`).join(', ')}. Medians per setting use every run; a third clean run outvotes the slowed one.</p>` : ''}${runs.filter((r) => r.paused > 0).map((r) => `<p class="mut">${esc(r.name)} was stopped after a checkpoint and resumed from it (user request): its total wall leaves out the ${mins(r.paused)} pause (which starts at that checkpoint, so it also drops the unfinished generation) and the resumed process's ${n1(r.restart)} s setup and sidecar start.</p>`).join('')}</details>
+${h2('width', 1, 'Width: how many lanes run one battle')}
+<p class="q">Round 6 gave each battle one lane. Big launches left most lanes idle. Would giving each battle more lanes help?</p>
+${widthPicture()}
+${ul([
+    big ? `At ${n0(big.size)} battles, idle lanes drop from ${pct(idleOf(big, 1), 0)} (G=1) to ${pct(idleOf(big, 32), 0)} (G=32)…` : null,
+    maxSpread != null ? `…but b/s hardly moves: at every size the six widths are within ${pct(maxSpread, 0)} of each other. More busy lanes did not mean more battles finished.` : null,
+    perSize.length ? `Best width per size: ${perSize.map((p) => `${p.size / 1000}k → G=${p.best.w}`).join(', ')}.` : null,
+  ])}
+<details><summary>Width bench table (5 launches per size)</summary>${table(['width', '5k b/s', '5k span', '5k idle', '36k b/s', '36k span', '36k idle'], benchRows([5000, 36000]))}${table(['width', '1k b/s', 'span', 'idle', '2.5k b/s', 'span', 'idle', '10k b/s', 'span', 'idle', '20k b/s', 'span', 'idle'], benchRows([1000, 2500, 10000, 20000]))}<p class="mut">Round-6 slice files, requeue T=64, length binning on. Mix = longest q of battles at the wide width.</p></details>
+<p class="so">No single width wins everywhere, so let a picker choose one per launch.</p>
 
-<h2>Width vs launch size (auto vs fixed)</h2>
+${h2('picker', 2, 'Auto: pick the width per launch')}
+${pickerPicture()}
+${relPicture()}
+${ul([
+    allWithin != null ? `Auto is ${allWithin ? 'within 5%' : 'not within 5%'} of the best fixed width at every bench size ${tag(allWithin, '✓', '✗')}.` : null,
+    picker ? `A 5% band first let auto pick G=${picker.g} at 2.5k (${pct(picker.ratio)} of best); the band is now 2%.` : null,
+    `On the real halving-3 command (5 gens, ${r5.length} runs): <b>${n0(r5med)} b/s</b> vs ${n0(R6_H3)} in round 6 ${tag(r5med == null ? null : r5med > R6_H3, '✓', '✗')}.`,
+  ])}
+<details><summary>Per-size bars, table, picker fix, occupancy timelines, probe</summary>
 ${bucketSvg}
 ${table(['bench size', 'bucket', 'best fixed', 'auto', 'auto / best', 'within 5%', 'auto idle share'], bucketRows.map((r) => [n0(r.size), esc(r.bucket), `G=${r.best[0]} ${n0(r.best[1])}`, `G=${r.autoG ?? '?'} ${n0(r.auto)}`, pct(r.ratio), tag(r.ok, 'yes', 'no'), pct(r.idle)]))}
-<p class="mut">Picker fix: ${(() => { const t5 = sl(bench('bench-auto-tol5'), 2500); const re = ['auto', '4', '16', '1'].map((g) => [g, ['a', 'b'].map((p) => sl(bench(`recheck-${p}-${g}`), 2500)?.bps_median)]); return t5 ? `with a 5% table band auto picked G=${t5.launches?.[0]?.width ?? '?'} at 2.5k: ${n0(t5.bps_median)} b/s (${pct(t5.bps_median / Math.max(...BW.map((w) => sl(benches[`w${w}`], 2500)?.bps_median ?? 0)))} of best). Recheck at 2.5k, two passes × 10 launches: ${re.map(([g, v]) => `${g === 'auto' ? 'auto' : `G=${g}`} ${v.map(n0).join(' / ')}`).join(', ')} — G=4 is really slower, so the band is now 2% (rows above).` : 'n/a'; })()}</p>
-<p class="mut">Auto 5-gen on the halving-3 command (median of ${r5.length} runs): <b>${n0(r5med)} b/s</b> vs 1,315 (round-6 slice+bin) — ${tag(r5med == null ? null : r5med > R6_H3, 'beats 1,315', 'below 1,315')}. Runs: ${r5.map((x) => `${esc(x.name)} ${n0(x.bps)}`).join(', ') || 'none'}.</p>
-<h3>Occupancy timelines, auto (busy lanes / resident lanes; grey = each launch, blue = median launch)</h3>
+${picker ? `<p class="mut">Recheck at 2.5k, two passes × 10 launches: ${picker.re.map(([g, v]) => `${g === 'auto' ? 'auto' : `G=${g}`} ${v.map(n0).join(' / ')}`).join(', ')}.</p>` : ''}
+<p class="mut">Occupancy (busy lanes ÷ resident lanes) over one launch; grey = each launch, blue = median launch.</p>
 <div class="tlpair"><figure>${timeline(benches.auto, 5000)}<figcaption>5,000 battles, idle ${pct(sl(benches.auto, 5000)?.idle_median)}</figcaption></figure><figure>${timeline(benches.auto, 36000)}<figcaption>36,000 battles, idle ${pct(sl(benches.auto, 36000)?.idle_median)}</figcaption></figure></div>
-
-<h2>Width bench (R1, R2): 5k and 36k slices</h2>
-${table(['width', '5k b/s', '5k span', '5k idle', '36k b/s', '36k span', '36k idle'], benchRows([5000, 36000]))}
-<details><summary>Other sizes (1k, 2.5k, 10k, 20k)</summary>${table(['width', '1k b/s', 'span', 'idle', '2.5k b/s', 'span', 'idle', '10k b/s', 'span', 'idle', '20k b/s', 'span', 'idle'], benchRows([1000, 2500, 10000, 20000]))}</details>
-<p class="mut">Each bench: 5 launches per size of the round-6 slice files (<code>gpu.sched_bench bench --sizes ...</code>), slice requeue T=64, length binning on. Mix: the top q of battles by predicted length run at the wide width on a share of the warps sized by predicted work.</p>
-
-<h2>Island halving vs standard: finalists on the full pool (R8)</h2>
-${finalistTable()}
-<h3>Island runs: launches per step and host check (R7)</h3>
-${islRows.length ? table(['run', 'gens', 'island launches (log lines)', 'profile steps', 'host reference check'], islRows) : '<p class="na">no island runs finished yet</p>'}
-
-<h2>Probe convergence (R5, POGO_GPU_PROBE=on in the auto grid)</h2>
+<p class="mut">Probe (POGO_GPU_PROBE=on): tries neighbouring widths per bucket and keeps the fastest.</p>
 ${probeByBucket.length ? table(['bucket', 'formula default', 'probe picks (runs)', 'most common pick', 'vs default', 'launches to converge (median)', 'one run\'s tries'], probeByBucket) : '<p class="na">no probe lines yet</p>'}
+</details>
+<p class="so">Auto ${r5med > R6_H3 ? 'edges past' : 'stays below'} round 6 (${pct(r5med / R6_H3 - 1)}), far from 1,500. The next cost is between launches: each halving round waits for the host.</p>
 
-<h2>Correctness (R3)</h2>
-${table(['width', 'verify_3v3', 'verify_1v1', 'logs'], verify)}
-<h3>Same seed, same config: two 20-gen runs</h3>
+${h2('island', 3, 'Island halving: every round in one launch')}
+<p class="q">Can the GPU cut teams itself, so a generation step needs one launch instead of one per round?</p>
+${islandPicture()}
+<p class="mut">Schematic. Teams are split into islands of ${islandSizeNote()}; each island cuts its own losers on the GPU and moves on.</p>
+${ul([
+    islBest && islPair ? `Slower: ${n1(islBest.warmPerGen)} vs ${n1(islPair.warmPerGen)} s per warm generation (${esc(islBest.label)} vs standard), <b>${pct(islBest.warmPerGen / islPair.warmPerGen - 1, 0)}</b>.` : null,
+    'Why: one launch has no slicing or length order, so every island round waits on its longest battle.',
+    islBest && islPair ? `Same team quality: finalists win ${pct(finMean(islBest.key))} vs ${pct(finMean(islPair.key))} on the full pool.` : null,
+  ])}
+<details><summary>Finalists on the full pool, island runs</summary>${finalistTable()}
+${islRows.length ? table(['run', 'gens', 'island launches (log lines)', 'profile steps', 'host reference check'], islRows) : '<p class="na">no island runs finished yet</p>'}</details>
+<p class="so">Removing host waits cost more than it saved. What is left is giving each launch more battles.</p>
+
+${h2('population', 4, 'Population: more battles per launch')}
+<p class="q">A bigger population means bigger launches, which the GPU runs at a higher rate. Does it reach 1,500?</p>
+${bpsChart()}
+${ul([
+    `Halving 3, auto: ${popBps.map(([p, v]) => `${p}× → <b>${n0(v)}</b>`).join(', ')} b/s.`,
+    crossed ? `Halving 3 crosses the 1,500 bar at ${crossed[0]}× ${tag(true, '✓')}.` : 'Halving 3 does not cross the 1,500 bar.',
+    above1.length ? `Auto with ${above1.map((s) => (s.h === '0' ? 'the full grid' : `halving ${s.h}`)).join(' or ')} passes 1,500 already at 1×: they run more battles per generation, so their launches are bigger.` : null,
+  ])}
+<p class="so">Higher b/s is not the goal in itself: more battles also means longer generations. Wall time decides.</p>
+
+${h2('runs', 5, 'Full 20-generation runs: the best setting')}
+${wallChart()}
+${ul([
+    best ? `Fastest at 1× ★: <b>${esc(best.label)}</b>, ${n1(best.warmPerGen)} s per warm generation, ${mins(best.total)} total, ${n0(best.bps)} b/s.` : null,
+    best && ref && best.key !== ref.key ? `Auto, halving 3 is ${pct(ref.warmPerGen / best.warmPerGen - 1)} behind (${n1(ref.warmPerGen)} s).` : null,
+    h3s('1') && popTop ? `Bigger population costs wall time: auto, halving 3 takes ${mins(h3s('1').total)} at 1× and ${mins(h3s(popTop[0]).total)} at ${popTop[0]}×.` : null,
+    'Light bar = total; dark bar = warm part; dots = each run.',
+  ])}
+<details id="every-run"><summary>Every run (${runs.length}) and run notes</summary>${table(['run', 'setting', 'pop', 'exit', 'gens', 'total wall', 'warm wall', 'saturation', 'b/s', 'battles/gen', 'GPU s/gen'], runRows)}<div id="run-notes"></div>${ul(runNotes)}</details>
+<p class="so">The speedups only count if results are unchanged.</p>
+
+${h2('correctness', 6, 'Correctness')}
+${ul([
+    `Battle checks (verify 3v3 and 1v1) at every width, mix and auto: ${tag(verifyOk, 'all PASS', 'some FAIL')}.`,
+    `Same seed, same config, ${detRows.length} settings run 2–3 times: checkpoints ${tag(detAll, 'IDENTICAL', 'DIFFERENT')}.`,
+  ])}
+<details><summary>Check tables</summary>${table(['width', 'verify_3v3', 'verify_1v1', 'logs'], verify)}
 ${detRows.length ? table(['setting', 'pop', 'runs', 'compared', 'result'], detRows) : '<p class="na">pending</p>'}
-${det2 ? `<details><summary>2-gen determinism and CPU-only check</summary><pre>${esc(det2)}</pre></details>` : ''}
+${det2 ? `<p class="mut">2-gen determinism and CPU-only check:</p><pre>${esc(det2)}</pre>` : ''}</details>
+
+${h2('answer', 7, 'Answer')}
+<div class="box">${[
+    best ? `<p>The fastest setting at today's population, ${esc(best.label)}, runs <b>${n0(best.bps)} b/s</b>: ${best.bps >= TARGET ? 'above' : 'below'} the 1,500 bar, yet its generations are the shortest (${n1(best.warmPerGen)} s warm) because halving 3 runs the fewest battles.</p>` : '',
+    crossed ? `<p>Halving 3 clears 1,500 at ${crossed[0]}× population (<b>${n0(crossed[1])} b/s</b>${popTop && popTop[0] !== crossed[0] ? `; ${popTop[0]}×: ${n0(popTop[1])}` : ''}); halving 2 and the full grid clear it at 1×. Bigger launches are what lift b/s, not width or islands.</p>` : '',
+    '<p><b>Next:</b> add the CPU share back at the chosen setting, and retire the probe (width-table.json fixes each bucket\'s width).</p>',
+  ].join('')}</div>
 </body></html>
 `;
+/** One row per bench size: every fixed width and auto as a share of that size's best fixed width. */
+function relPicture() {
+  if (!bucketRows.length) return '';
+  const lo = Math.floor(Math.min(...perSize.flatMap((p) => p.f.map((x) => x.bps / p.best.bps)), ...bucketRows.map((r) => r.ratio)) * 20) / 20;
+  const X0 = 130, X1 = 740, X = (v) => X0 + ((v - lo) / (1.02 - lo)) * (X1 - X0), rh = 46;
+  let g = `<text x="${X0}" y="18" class="h">b/s as a share of the best fixed width, per launch size</text>`;
+  g += `<text x="${X0}" y="36" class="sub">grey dots = fixed widths, labelled with G; blue = auto; red band = more than 5% below best</text>`;
+  const top = 50, bot = top + bucketRows.length * rh;
+  g += `<rect x="${X0}" y="${top}" width="${X(0.95) - X0}" height="${bot - top}" fill="var(--bad)" opacity="0.08"/>`;
+  for (let v = lo; v <= 1.0001; v += 0.05) g += `<line x1="${X(v)}" x2="${X(v)}" y1="${top}" y2="${bot}" stroke="var(--line)"/><text x="${X(v)}" y="${bot + 16}" text-anchor="middle" class="sub">${Math.round(v * 100)}%</text>`;
+  bucketRows.forEach((r, i) => {
+    const y = top + i * rh + rh / 2, p = perSize.find((q) => q.size === r.size);
+    g += `<text x="${X0 - 12}" y="${y + 5}" text-anchor="end" font-weight="700">${n0(r.size)} battles</text><line x1="${X0}" x2="${X1}" y1="${y}" y2="${y}" stroke="var(--line)"/>`;
+    let last = -99, up = true;
+    for (const x of [...(p?.f ?? [])].sort((a, b) => a.bps - b.bps)) {
+      const cx = X(x.bps / p.best.bps);
+      up = cx - last < 16 ? !up : true; last = cx;
+      g += `<circle cx="${cx}" cy="${y}" r="5" fill="var(--mut)" opacity="0.6"><title>G=${x.w} ${n0(x.bps)} b/s</title></circle><text x="${cx}" y="${up ? y - 9 : y + 18}" text-anchor="middle" class="sub" font-size="10">${x.w}</text>`;
+    }
+    g += `<circle cx="${X(r.ratio)}" cy="${y}" r="7" fill="var(--c0)"/><text x="${X1 + 20}" y="${y + 5}" class="lbl" font-weight="700" style="fill:var(--c0)">auto G=${r.autoG ?? '?'}: ${pct(r.ratio, 0)}</text>`;
+  });
+  return `<svg viewBox="0 0 920 ${bot + 24}" class="fig" role="img" aria-label="auto and fixed widths relative to the best">${g}</svg>`;
+}
+function islandSizeNote() { return `8 × 2<sup>rounds−1</sup> teams (32 at halving 3, 16 at halving 2)`; }
 mkdirSync(OUT, { recursive: true });
 writeFileSync(`${OUT}/gpu-width.html`, html.replace(/<h([23])>([^<]*)/g, (_, l, t) => `<h${l} id="${t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}">${t}`));
 console.log(`wrote ${OUT}/gpu-width.html: ${runs.length} runs (${done.length} finished), ${settings.length} settings, ${Object.keys(benches).length} benches${best ? `; best at pop 1x: ${best.key}` : ''}`);

@@ -293,8 +293,10 @@ move-ahead log, determinism). Bench: `gpu/gpu/sched_bench.py`; 5-gen runs `out/g
 
 ## Round 7: width picker and island halving
 
-Report: `node gpu/gpu-width.mjs` → `out/gpu-width.html` (linked from `gpu-sched.html`: wall and b/s per setting,
-auto vs fixed width, occupancy timelines, width bench, finalists, island runs, probe, correctness, same-seed table).
+Report: `node gpu/gpu-width.mjs` → `out/gpu-width.html` (linked from `gpu-sched.html`), told as seven steps from
+the question (1,315 → 1,500 b/s?) to the answer: width, auto picker, island halving, population, full runs, correctness,
+answer. Each step has a diagram or chart, at most three findings and a "So →" line into the next; tables sit in
+collapsed sections.
 Bench: `gpu/gpu/width_bench.py` (writes `gpu/gpu/width-table.json`); runs: `out/gpu/width/chain.sh`.
 
 - **Width bench (threads per battle G = 1..32, slices 1k–36k, median of 5 launches).** No width wins by much: at 5k
