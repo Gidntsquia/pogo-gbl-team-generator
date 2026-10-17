@@ -334,11 +334,12 @@ Bench: `gpu/gpu/width_bench.py` (writes `gpu/gpu/width-table.json`); runs: `out/
 
 ## Round 8: profile-first study
 
-Report: `node gpu/gpu-study.mjs` → `out/gpu-study.html` (linked from `out/gpu-width.html`): a five-point summary,
-then the recommendation box (each line's runs table sits above its gain), the ranked change list (plain-words meaning,
-data table, gain beside both run-to-run spreads, one-line "Do next"), then eight steps (time split, profile, width,
-chain runs, morning A/B, correctness, literature, forks), each with one picture and a "supports: summary point N /
-recommendation line N" tag; glossary last. `python3 gpu/gpu/study/check_page.py` re-derives every number on the page
+Report: `node gpu/gpu-study.mjs` → `out/gpu-study.html` (linked from `out/gpu-width.html`): four parts, each closed
+by its own "Conclusion of this part" box. A, what to do: a five-point summary, the recommendation box (each line's runs
+table sits above its gain), the ranked change list (plain-words meaning, data table, gain beside both run-to-run
+spreads, one-line "Do next"). B, where the time goes: steps 1–3 (time split, profile, width). C, what the prototypes
+changed: steps 4–6 (chain runs, morning A/B, correctness). D, background: steps 7–8 (literature, forks). Each step has
+one picture and a "supports: summary point N / recommendation line N" tag; glossary last. `python3 gpu/gpu/study/check_page.py` re-derives every number on the page
 (`out/gpu/study/check.log`, 0 mismatches); `node gpu/gpu/study/phone.mjs` renders every section at 390 px
 (`out/gpu/study/phone/*.png`) and fails on any "…", clipped text, block over 3 lines or horizontal scroll. Research forks live in `gpu/gpu/study/<fork>/`
 (`variant.py`, selected by `POGO_GPU_STUDY=<fork>`, off by default) with their data in `out/gpu/study/<fork>/`; the
