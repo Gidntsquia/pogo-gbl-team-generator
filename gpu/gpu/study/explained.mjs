@@ -80,8 +80,8 @@ const pics = {};
     { label: 'CPU share auto', v: 2.0, fill: C.b, text: '+2.0 s' },
     { label: 'two streams', v: 4.4, fill: C.b, text: '+4.4 s' },
     { label: 'less lookahead', v: 4.4, fill: C.b, text: '+4.4 s' },
-    { label: 'longer lockstep', v: 5.2, fill: C.b, text: '+5.2 s' },
-    { label: 'lockstep', v: 7.3, fill: C.b, text: '+7.3 s' },
+    { label: 'lockstep 128', v: 5.2, fill: C.b, text: '+5.2 s' },
+    { label: 'lockstep 32', v: 7.3, fill: C.b, text: '+7.3 s' },
     { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s' },
   ], 9);
   let h = g;

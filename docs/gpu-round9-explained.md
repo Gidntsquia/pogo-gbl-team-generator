@@ -11,7 +11,7 @@ Five ideas from GPU study rounds 7-9, one picture each. Sources: `out/gpu-study.
 - **Lookahead:** a battle's search of next moves. **Nsight Compute:** NVIDIA's GPU profiler.
 - **Tail filler, certain feed:** round 9 fills idle SMs with next-round battles, or battles of teams sure to pass.
 - **Warm s/gen:** seconds per generation, early generations left out (see the last section).
-- **A/B:** default and a change in turns. **Lockstep:** some steps of all battles per launch (longer: more).
+- **A/B:** default and a change in turns. **Lockstep:** each launch moves every battle 32 or 128 steps.
 
 ## Island halving costs 5.4 s per generation
 
@@ -41,7 +41,7 @@ Less lookahead memory re-runs battles that overflow it, one at a time.
 
 The queue kernel hands threads whole battles from a list.
 
-None makes a battle shorter, and a launch still waits for its longest one. Why each added time was not measured.
+None makes a battle shorter, and a launch still waits for its longest one. I did not measure why each one added time.
 
 ## The tail, and why it is the target
 

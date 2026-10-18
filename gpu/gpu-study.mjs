@@ -170,8 +170,8 @@ const verdictLine = (id, v) => `${VARIANTS.find((x) => x.id === id).label}: ${de
 const summary = [
   `The tail filler and the certain feed run next-round battles early and give the same teams as default.`,
   `Warm time per generation: default ${s('default')}, tail filler ${s('tail')} (${verdict('ab.tail.delta', vT.word)}), certain feed ${s('certain')} (${verdict('ab.certain.delta', vC.word)}).`,
-  `In a replay, SMs are busier (${num('tl.10k.default.active', tl10.off?.sm_active_share_pct, 1, { unit: '%' })} to ${num('tl.10k.tail.active', tl10.tail?.sm_active_share_pct, 1, { unit: '%' })} on 10k); a launch still ends with its longest battle.`,
-  `Nsight on a recorded 5k launch: ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp cycles wait on memory loads, mostly battle state.`,
+  `In the 19:44 ET replay, SMs are busier (${num('tl.10k.default.active', tl10.off?.sm_active_share_pct, 1, { unit: '%' })} to ${num('tl.10k.tail.active', tl10.tail?.sm_active_share_pct, 1, { unit: '%' })} on 10k); a launch still ends with its longest battle.`,
+  `Nsight on the 5k launch (10:37 ET run): ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp cycles wait on memory loads, mostly battle state.`,
   `Keep the default: the 100-gen tail-filler run took ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })} (one run); the certain feed had ${verdict('ab.certain.delta', vC.word)}.`,
 ];
 const sup = (...k) => `<p class="sup">Supports summary point${k.length > 1 ? 's' : ''} ${k.length > 1 ? `${k.slice(0, -1).join(', ')} and ${k.at(-1)}` : k[0]}.</p>`;
@@ -206,7 +206,7 @@ const metrics = [
   {
     name: 'Achieved occupancy', unit: '%', healthy: { lo: 60 },
     what: 'warps loaded on an SM at once, as a share of the 48 it can hold.',
-    ours: `${pct('ncu.5k.occ', n5.achieved_occupancy_pct)}: each thread needs so many registers that only 8 warps fit.`,
+    ours: `${pct('ncu.5k.occ', n5.achieved_occupancy_pct)}: each thread needs so many registers (its fastest storage) that only 8 warps fit.`,
     means: 'with few warps, a wait on memory leaves the SM idle.',
     rows: [ncuRow('5k default', n5, (o) => o.achieved_occupancy_pct, 'ncu.5k.occ', COL.default), ncuRow('5k tail filler', vOn, (o) => o.achieved_occupancy_pct, 'ncu.5kon.occ', COL.tail), ncuRow('10k default', n10, (o) => o.achieved_occupancy_pct, 'ncu.10k.occ', COL.default), ncuRow('36k default', n36, (o) => o.achieved_occupancy_pct, 'ncu.36k.occ', COL.default)],
   },
@@ -220,7 +220,7 @@ const metrics = [
   {
     name: 'L1 hit rate', unit: '%', healthy: null,
     what: 'share of L1 requests answered by L1, the small cache inside each SM.',
-    ours: `${pct('ncu.5k.l1', n5.l1_hit_pct)}; each miss waits for L2.`,
+    ours: `${pct('ncu.5k.l1', n5.l1_hit_pct)}; each miss waits for L2, the larger cache all SMs share.`,
     means: 'each miss is a long wait (the "long scoreboard" stall).',
     rows: [ncuRow('5k default', n5, (o) => o.l1_hit_pct, 'ncu.5k.l1', COL.default), ncuRow('5k tail filler', vOn, (o) => o.l1_hit_pct, 'ncu.5kon.l1', COL.tail), ncuRow('10k default', n10, (o) => o.l1_hit_pct, 'ncu.10k.l1', COL.default), ncuRow('36k default', n36, (o) => o.l1_hit_pct, 'ncu.36k.l1', COL.default)],
   },
@@ -303,24 +303,24 @@ const glossary = [
 
 // ---------------------------------------------------------------- page
 const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json, 19:44 ET).</p><p class="cap">The tail kernel is the GPU program with the filler built in. Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
-const ncuCaption = `First five cards: Nsight Compute on the 5k and 10k launches (summary.json).</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json).</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
+const ncuCaption = `First five cards: Nsight Compute runs of 2026-10-17 (summary.json): 5k at 10:37 ET, 10k at 10:50 ET.</p><p class="cap">The 10k run stopped at pass 25 of 42; its values come from passes 1-24.</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json).</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). A captioned table or chart uses the runs its caption names.</p></header>
 
 <section id="summary"><h2>Summary 📌</h2><ol>${summary.map((x, i) => `<li id="s${i + 1}">${x}</li>`).join('')}</ol>
-<p class="cap">Words in the summary:</p><ul class="cap"><li>launch: one batch of battles sent to the GPU.</li><li>SM: one of the GPU's 68 cores.</li><li>replay: a recorded launch run again alone, with timers.</li><li>warm: once the battle cache has filled (from the saturation generation on).</li><li>Nsight: NVIDIA's profiler. A warp is 32 battles run together.</li></ul></section>
+<p class="cap">Words in the summary:</p><ul class="cap"><li>default: the current code, both new flags off.</li><li>round: one cut inside a generation; the bottom half of the teams is dropped. The next round fights the rest.</li><li>launch: one batch of battles sent to the GPU. 5k and 10k are recorded launches of 4,788 and 10,920 battles.</li><li>tail filler: idle GPU cores run next-round battles early. Certain feed: adds battles of teams sure to pass.</li><li>SM: one of the GPU's 68 cores. Replay: a recorded launch run again alone, with timers.</li><li>warm: from the generation on which the share of battles answered from saved results levels off.</li><li>Nsight: NVIDIA's profiler. A warp is 32 battles run together.</li></ul></section>
 
 <section id="built"><h2>What I built and what it gained 🔧</h2>
 ${sup(1, 2, 3)}
 <p>A generation runs about ${num('ab.default.launches', mean(ST.default.runs.map((r) => r.gpuPerGen != null ? (rd(`${r.dir}/gpu-profile.json`)?.steps ?? []).filter((x) => x.gen !== 'final').reduce((a, x) => a + (x.launches?.length ?? 0), 0) / r.gens : 0)), 0)} GPU launches. Each ends with a tail: once half its battles are done, SMs run out of work one by one.</p>
 <p>The tail filler gives idle SMs the next round's battles of the teams most likely to pass the cut.</p>
 <p>A result is used only if the next round asks for that battle.</p>
-<p>It starts once half of the launch's threads have no battle left (<code>POGO_GPU_TAIL_IDLE=0.5</code>, the default).</p>
-<p>I picked 0.5 by hand: earlier would slow this round's battles, later leaves little time.</p>
+<p>It starts once half of the launch's threads (one per battle) have no battle left (<code>POGO_GPU_TAIL_IDLE=0.5</code>, the default).</p>
+<p>I picked 0.5 by hand and did not try other values.</p>
 <p>The certain feed adds the battles of teams that are already sure to pass, sent into the running launch through a queue.</p>
 <h3>Same results</h3>
-<p>The 5-generation and winner checks ran 18:31-18:35 ET, before the A/B (files det-r9.txt, verify3v3-tail*.log).</p>
+<p>The 5-generation and winner checks ran 18:31-18:34 ET, just before the A/B (files det-r9.txt, verify3v3-tail*.log).</p>
 <p>A checkpoint is a run's saved state after each generation. The seed fixes every random choice.</p>
 <p>The winner check re-runs the battles on the CPU engine, pvpoke's own battle code.</p>
 <ul>
@@ -365,7 +365,7 @@ ${sup(3, 4, 5)}
 <h3>2. Each battle waits on its own memory</h3>
 <p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory. Nsight Compute shows what that costs:</p>
 ${stallBars()}
-<p class="cap">Where warp cycles go on the 5k launch (Nsight Compute, summary.json). A stall is a cycle in which a warp cannot run its next instruction yet.</p>
+<p class="cap">Where warp cycles go on the 5k launch (Nsight Compute run, 10:37 ET; summary.json).</p><p class="cap">A stall is a cycle in which a warp cannot run its next instruction yet.</p>
 <ul class="cap"><li>long scoreboard: waiting on memory.</li><li>wait: a fixed pause after an instruction.</li><li>no instruction: the next instruction is not fetched yet.</li><li>selected: the cycle an instruction issues.</li><li>branch resolving: waiting for a jump target.</li></ul>
 ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
