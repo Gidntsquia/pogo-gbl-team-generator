@@ -310,7 +310,7 @@ const body = `
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). An A/B runs default and each change in turns.</p><p class="mut"> A captioned table or chart uses the runs its caption names.</p></header>
 
 <section id="summary"><h2>Summary 📌</h2><ol>${summary.map((x, i) => `<li id="s${i + 1}">${x}</li>`).join('')}</ol>
-<p class="cap">Words in the summary:</p><ul class="cap"><li>default: the current code, both new flags off.</li><li>generation: one step of the team search. 100-gen: a run of 100 generations.</li><li>round: one cut inside a generation; the bottom half of the teams is dropped. The next round fights the rest.</li><li>round 8, round 9: study rounds of this GPU work (this page is round 9).</li><li>launch: one batch of battles sent to the GPU. 5k and 10k are recorded launches of 4,788 and 10,920 battles.</li><li>tail filler: idle GPU cores run next-round battles early. Certain feed: adds battles of teams sure to pass.</li><li>SM: one of the GPU's 68 cores. Replay: a recorded launch run again alone, with timers.</li><li>warm: from the generation on which the share of battles answered from saved results levels off.</li><li>Nsight: NVIDIA's profiler. A warp is 32 battles run together.</li></ul></section>
+<p class="cap">Words in the summary:</p><ul class="cap"><li>default: the current code, both new flags off.</li><li>generation: one step of the team search. 100-gen: a run of 100 generations.</li><li>round: one cut inside a generation; the bottom half of the teams is dropped. The next round fights the rest.</li><li>round 8, round 9: study rounds of this GPU work (this page is round 9).</li><li>launch: one batch of battles sent to the GPU. 5k and 10k are recorded launches of 4,788 and 10,920 battles.</li><li>36k: generation 0's three launches merged into one, 36,000 battles.</li><li>tail filler: idle GPU cores run next-round battles early. Certain feed: adds battles of teams sure to pass.</li><li>SM: one of the GPU's 68 cores. Replay: a recorded launch run again alone, with timers.</li><li>warm: from the generation on which the share of battles answered from saved results levels off.</li><li>Nsight: NVIDIA's profiler. A warp is 32 battles run together.</li></ul></section>
 
 <section id="built"><h2>What I built and what it gained 🔧</h2>
 ${sup(1, 2, 3)}
@@ -324,6 +324,7 @@ ${sup(1, 2, 3)}
 <p>The 5-generation and winner checks ran 18:31-18:34 ET, just before the A/B (files det-r9.txt, verify3v3-tail*.log).</p>
 <p>A checkpoint is a run's saved state after each generation. The seed fixes every random choice.</p>
 <p>The winner check re-runs the battles on the CPU engine, pvpoke's own battle code.</p>
+<p>A battle is flagged when the GPU result is invalid.</p>
 <ul>
 <li>Checkpoints of a 5-generation run with the same seed: tail filler ${detOk('tail') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'} to default, certain feed ${detOk('tail,certain') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'}.</li>
 <li>100-generation runs (r9-full-*) vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
