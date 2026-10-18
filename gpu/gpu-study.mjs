@@ -353,7 +353,8 @@ ${sup(3, 4, 5)}
 <h3>1. A launch ends with its longest battle</h3>
 <p>The filler fills idle SMs, but it cannot make the longest battle finish sooner.</p>
 <p>SM-active share is the share of a launch in which an SM has a battle to run.</p>
-<p>On the 10k launch the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' percentage points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
+<p>Source: the round-9 replay of the 10k launch (19:44 ET).</p>
+<p>There the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' percentage points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
 <p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
 <p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory. Nsight Compute shows what that costs:</p>
