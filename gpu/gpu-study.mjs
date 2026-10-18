@@ -234,7 +234,7 @@ const metrics = [
     name: 'L2 hit rate', unit: '%', healthy: null,
     what: 'share of L2 requests answered by L2, the cache all SMs share.',
     ours: `${pct('ncu.5k.l2', n5.l2_hit_pct)}; the rest go to the GPU's main memory.`,
-    means: 'a miss here waits longer still, for main memory; more battles at once share the same L2.',
+    means: 'a miss here waits longer still, for main memory.',
     rows: [ncuRow('5k default', n5, (o) => o.l2_hit_pct, 'ncu.5k.l2', COL.default), ncuRow('5k tail filler', vOn, (o) => o.l2_hit_pct, 'ncu.5kon.l2', COL.tail), ncuRow('10k default', n10, (o) => o.l2_hit_pct, 'ncu.10k.l2', COL.default), ncuRow('36k default', n36, (o) => o.l2_hit_pct, 'ncu.36k.l2', COL.default)],
   },
   {
@@ -277,7 +277,6 @@ const glossary = [
   ['spread', 'the slowest minus the fastest of a variant\'s A/B runs: the noise.'],
   ['A/B', 'the same 10-generation run for each variant, repeated in passes.'],
   ['pass', 'default, tail filler and certain feed, run back to back.'],
-  ['memo hit', 'a battle answered from the cache instead of being simulated again.'],
   ['stall', 'a cycle in which a warp has an instruction but cannot run it yet.'],
   ['long scoreboard', 'the stall where a warp waits for data from L1, L2 or main memory.'],
   ['local memory', 'per-thread memory in the GPU\'s main memory, cached in L1 and L2. Battle state lives there.'],
@@ -285,11 +284,12 @@ const glossary = [
   ['Nsight Compute', 'NVIDIA\'s profiler; it reads the GPU\'s hardware counters.'],
   ['no Nsight', 'no profiler numbers for this launch (reasons below).'],
   ['no Nsight: 36k', 'the profiled run failed twice with "LaunchFailed (CUDA error 999)" and reset the display driver.'],
-  ['no Nsight: 5k tail filler', 'the profiled replay failed with "LaunchFailed" and reset the display driver (13:36 ET).'],
+  ['no Nsight: 5k tail filler', 'its profiled replay failed with "LaunchFailed" (13:36 ET, before the fixes) and was not repeated.'],
   ['no Nsight: certain feed', 'the host feeds it while it runs; the profiler cannot replay that.'],
   ['generation', 'one step of the team search. Each runs several halving rounds.'],
   ['checkpoint', 'the saved state of a run after each generation (evolve-genN.json).'],
   ['seed', 'the number that fixes every random choice of a run.'],
+  ['CPU engine', 'pvpoke\'s battle code, run on the CPU: the reference the GPU must match.'],
   ['winner check', 'the same battles re-run on the CPU engine. A battle is flagged when the GPU result is invalid.'],
   ['5k, 10k launch', 'two real launches recorded in a round-8 run, of 4,788 and 10,920 battles.'],
   ['36k launch', 'the three launches of that run\'s generation 0 merged into one, 36,000 battles.'],
@@ -303,7 +303,6 @@ const glossary = [
   ['lookahead', 'the search a battle runs to pick each move. A filler battle checks whether to stop between searches.'],
   ['stream', 'a GPU work queue. Work on one stream runs in order.'],
   ['registers', 'the fastest per-thread storage on an SM. A thread that needs many leaves room for fewer warps.'],
-  ['shared memory', 'fast on-chip memory shared by the threads of an SM (100 KB per SM).'],
 ];
 
 // ---------------------------------------------------------------- page
@@ -329,8 +328,9 @@ ${sup(1, 2, 3)}
 <li>100-generation runs vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
 <li>Winner check against the CPU engine: tail filler ${verifyOk('tail') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}, certain feed ${verifyOk('tail-certain') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}.</li>
 </ul>
-<h3>Four bugs the long runs found</h3>
-<p>The first long runs failed or slowed down, so all four were fixed. Every tail and certain-feed run here was made after the fixes.</p>
+<h3>Four bugs the runs found</h3>
+<p>Runs failed or slowed down, so all four were fixed.</p>
+<p>Every tail and certain-feed run on this page was made after the fixes, except the failed 5k profile.</p>
 <p>A read of the launch's results could run before they were uploaded and use old values. The read now waits.</p>
 <p>Unfinished early battles ran on past the launch end and slowed the next launch. They now stop within one lookahead.</p>
 <p>A new stream per launch blocked memory reuse, so late generations took minutes. Now one stream serves all.</p>
@@ -357,7 +357,7 @@ ${sup(3, 4, 5)}
 <h3>1. A launch ends with its longest battle</h3>
 <p>The filler fills idle SMs, but it cannot make the longest battle finish sooner.</p>
 <p>SM-active share is the share of a launch in which an SM has a battle to run.</p>
-<p>On the 10k launch the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
+<p>On the 10k launch the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' percentage points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
 <p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
 <p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory. Nsight Compute shows what that costs:</p>

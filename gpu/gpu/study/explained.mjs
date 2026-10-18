@@ -85,8 +85,8 @@ const pics = {};
     { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s' },
   ], 9);
   let h = g;
-  h += t(10, y + 14, 'Each one reorders battles. None makes the longest', { size: 11.5 });
-  h += t(10, y + 30, 'battle shorter, and each adds work of its own.', { size: 11.5 });
+  h += t(10, y + 14, 'None of them makes a battle shorter; half of', { size: 11.5 });
+  h += t(10, y + 30, 'all warp cycles still wait on memory.', { size: 11.5 });
   pics['gpu-r9-scheduling'] = svg(y + 40, h);
 }
 
@@ -109,16 +109,16 @@ const pics = {};
 
 // 5. warm s/gen and its noise: round-9 A/B runs as dots, mean and spread
 {
-  const V = [['default', C.g], ['tail', C.a], ['certain', C.b]];
+  const V = [['default', C.g, 'default'], ['tail', C.a, 'tail filler'], ['certain', C.b, 'certain feed']];
   const runs = V.map(([v]) => [1, 2, 3, 4, 5].map((i) => `out/evolve-gpu8-r9-ab-${v}-${i}`).filter((d) => existsSync(`${d}.log`)).map(runStats).filter((r) => r.exit === 0 && r.warmPerGen != null));
   const all = runs.flat().map((r) => r.warmPerGen);
   let h = t(10, 18, 'Warm s/gen, round 9 A/B: one dot per run', { bold: true });
   if (all.length) {
     const lo = Math.floor(Math.min(...all) * 2) / 2 - 0.5, hi = Math.ceil(Math.max(...all) * 2) / 2 + 0.5;
     const x0 = 84, x1 = W - 14, X = (v) => x0 + ((v - lo) / (hi - lo)) * (x1 - x0);
-    V.forEach(([v, col], i) => {
+    V.forEach(([v, col, label], i) => {
       const y = 40 + i * 30, w = runs[i].map((r) => r.warmPerGen);
-      h += t(10, y + 4, v, { size: 11.5 });
+      h += t(10, y + 4, label, { size: 11.5 });
       if (!w.length) return;
       const mn = Math.min(...w), mx = Math.max(...w), m = w.reduce((a, b) => a + b, 0) / w.length;
       h += rect(X(mn), y - 6, X(mx) - X(mn), 12, col, 3).replace('/>', ' opacity="0.3"/>');

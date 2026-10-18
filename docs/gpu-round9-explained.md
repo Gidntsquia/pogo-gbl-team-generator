@@ -24,17 +24,19 @@ Local memory is GPU main memory, reached through the L1 and L2 caches.
 
 Nsight Compute, NVIDIA's profiler, shows this is nearly all L1 traffic. Half of all warp cycles wait for it.
 
-Round 8's compact state packs fields into 8 and 16 bits. Less state means fewer bytes to wait for.
-
-It saved 0.5 s per generation in a 3-pass A/B.
+Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per generation in a 3-pass A/B.
 
 ## Why the scheduling ideas ran slower
 
 ![Six round-8 scheduling ideas each added 2.0 to 7.3 s per generation](gpu-r9-scheduling.png)
 
-Streams, queues, lockstep groups and CPU sharing each change the order in which battles run.
+Two streams overlap host work with the GPU. The smaller pool uses a smaller search pool, with a rare re-run.
 
-A launch still waits for its longest battle, so order barely matters, and each idea adds work of its own.
+A queue or lockstep changes how battles reach threads. CPU sharing moves some to the CPU.
+
+None makes a battle shorter: half of all warp cycles wait on memory, and a launch waits for its longest battle.
+
+Why each one added time was not measured one by one.
 
 ## The tail, and why it is the target
 
@@ -51,9 +53,7 @@ with its longest battle.
 
 ![Round 9 A/B: one dot per run for default, tail filler and certain feed](gpu-r9-noise.png)
 
-Warm s/gen: mean seconds per generation once the cache hit rate has levelled off.
-
-The slower early generations are left out.
+Warm s/gen: mean seconds per generation once the cache hit rate has levelled off; slower early generations are left out.
 
 The same run repeated gives a slightly different time. The spread, slowest minus fastest, is that noise.
 
