@@ -76,21 +76,20 @@ const pics = {};
   pics['gpu-r9-memory'] = svg(224, h);
 }
 
-// 3. scheduling ideas, round 8: card.*.measured keys of out/gpu/study/detail/round8-numbers.json where round 8 made a card,
-// else delta.* (CPU share auto, less lookahead: 2 runs each vs the nearest default runs)
+// 3. scheduling ideas, round 8: the three decision cards in out/gpu/study/detail/round8-numbers.json
+// (card.<id>.measured, .ownspread, .ctrlspread, .nruns)
 {
-  const { g, y } = bars('Round 8 scheduling ideas: s/gen added vs default', [
-    { label: 'two streams', v: 2.0, fill: C.b, text: '+2.0 s (4 runs)' },
-    { label: 'CPU share auto', v: 2.0, fill: C.b, text: '+2.0 s (2 runs)' },
-    { label: 'less lookahead', v: 4.4, fill: C.b, text: '+4.4 s (2 runs)' },
-    { label: 'lockstep', v: 6.2, fill: C.b, text: '+6.2 s (4 runs)' },
-    { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s (2 runs)' },
+  const { g, y } = bars('Round 8 scheduling ideas: s/gen vs default', [
+    { label: 'two streams', v: 2.0, fill: C.mut, text: '+2.0 s: no change' },
+    { label: 'lockstep', v: 6.2, fill: C.b, text: '+6.2 s added' },
+    { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s added' },
   ], 12);
   let h = g;
-  h += t(10, y + 14, 'None of them makes a battle shorter.', { size: 11.5 });
-  h += t(10, y + 32, 'Source: round 8 runs (round8-numbers.json; decision', { size: 11, fill: C.mut });
-  h += t(10, y + 47, 'cards for two streams, lockstep and queue kernel).', { size: 11, fill: C.mut });
-  pics['gpu-r9-scheduling'] = svg(y + 59, h);
+  h += t(10, y + 14, 'Two streams: 4 runs, own spread 6.33 s, so no change.', { size: 11 });
+  h += t(10, y + 30, 'Lockstep: 4 runs, own spread 2.02 s, default 0.53 s.', { size: 11 });
+  h += t(10, y + 46, 'Queue kernel: 2 runs, own spread 0.16 s, default 0.13 s.', { size: 11 });
+  h += t(10, y + 64, 'Source: round 8 decision cards (round8-numbers.json).', { size: 11, fill: C.mut });
+  pics['gpu-r9-scheduling'] = svg(y + 76, h);
 }
 
 // 4. the tail: busy SMs over the 10k launch, filler off

@@ -376,7 +376,7 @@ ${sup(3, 4, 5)}
 <p>SM-active share is the share of a launch in which an SM has a battle to run.</p>
 <p>Source: the round-9 replay of the 10k launch (19:44 ET).</p>
 <p>There the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' percentage points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
-<p>Each mode was replayed once, so the launch-end change has no noise measure.</p>
+<p>Each mode was replayed twice and the shorter replay kept, so the launch-end change has no noise measure.</p>
 <p>In the 5k replay the certain feed ended ${(TL['5k']?.off && TL['5k']?.certain) ? (TL['5k'].off.main_span_s - TL['5k'].certain.main_span_s).toFixed(2) : '?'}&nbsp;s before default, so end times move both ways.</p>
 <p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
