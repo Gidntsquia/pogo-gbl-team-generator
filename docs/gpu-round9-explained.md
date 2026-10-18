@@ -1,9 +1,9 @@
 # GPU round 9, explained 🧭
 
-Five ideas behind GPU rounds 8 and 9, one picture each. Sources: `out/gpu-study.html` and `out/gpu/study/` (branch `gpu`).
+Five ideas from GPU study rounds 7-9, one picture each. Sources: `out/gpu-study.html` and `out/gpu/study/` (branch `gpu`).
 
 ## Terms
-- **Generation:** one step of the team search; its **halving rounds** each cut the bottom half of teams.
+- **Generation:** one step of the team search; its **halving rounds** each cut the bottom half. **Round 7-9:** study rounds.
 - **SM:** one of the GPU's 68 cores. A **warp** is 32 threads it runs together.
 - **Registers, shared memory:** small, fast storage on an SM. **L1, L2:** caches between the SMs and GPU main memory.
 - **Launch:** one batch of battles sent to the GPU; it ends with its last battle. A **stream** is a queue of GPU work.
@@ -31,7 +31,7 @@ Local memory is GPU main memory, behind L1 and L2. Nsight Compute shows half of 
 
 Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per generation in an A/B of 3 runs each.
 
-## Why the scheduling ideas ran slower
+## Each scheduling idea added time
 
 ![Six round-8 scheduling ideas each added 2.0 to 7.3 s per generation](gpu-r9-scheduling.png)
 

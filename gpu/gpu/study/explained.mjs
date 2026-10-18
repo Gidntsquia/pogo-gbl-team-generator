@@ -37,7 +37,7 @@ const pics = {};
     { label: 'island halving', v: 17.64, fill: C.b, text: '17.64 / 17.51' },
   ], 24);
   let h = g, yy = y + 14;
-  h += t(10, yy, 'One launch runs an island\'s rounds one after another.', { size: 11.5 });
+  h += t(10, yy, 'One launch runs an island\'s halving rounds in turn.', { size: 11.5 });
   yy += 10;
   // sketch: three rounds of four parallel battles; each round waits for its longest battle
   const rounds = [[5, 8, 4, 6], [3, 4, 9, 5], [6, 3, 4, 4]];
@@ -45,7 +45,7 @@ const pics = {};
   rounds.forEach((r, i) => {
     const mx = Math.max(...r);
     r.forEach((l, k) => { h += rect(x, yy + k * 13, l * 10, 10, l === mx ? C.b : C.g); });
-    h += t(x, yy + 66, `round ${i + 1}`, { size: 11, fill: C.mut });
+    h += t(x, yy + 66, `halving ${i + 1}`, { size: 11, fill: C.mut });
     x += mx * 10 + 12;
     h += `<line x1="${x - 6}" x2="${x - 6}" y1="${yy - 2}" y2="${yy + 52}" stroke="${C.fg}" stroke-dasharray="3 2"/>`;
   });
@@ -85,9 +85,8 @@ const pics = {};
     { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s' },
   ], 9);
   let h = g;
-  h += t(10, y + 14, 'None of them makes a battle shorter; half of', { size: 11.5 });
-  h += t(10, y + 30, 'all warp cycles still wait on memory.', { size: 11.5 });
-  pics['gpu-r9-scheduling'] = svg(y + 40, h);
+  h += t(10, y + 14, 'None of them makes a battle shorter.', { size: 11.5 });
+  pics['gpu-r9-scheduling'] = svg(y + 24, h);
 }
 
 // 4. the tail: busy SMs over the 10k launch, filler off

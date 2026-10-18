@@ -318,6 +318,7 @@ ${sup(1, 2, 3)}
 <p>Why 0.5 (a design choice, not measured): earlier would slow this round's battles, later leaves little time.</p>
 <p>The certain feed adds the battles of teams that are already sure to pass, sent into the running launch through a queue.</p>
 <h3>Same results</h3>
+<p>The 5-generation and winner checks ran 18:31-18:35 ET, before the A/B (files det-r9.txt, verify3v3-tail*.log).</p>
 <ul>
 <li>Checkpoints of a 5-generation run with the same seed: tail filler ${detOk('tail') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'} to default, certain feed ${detOk('tail,certain') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'}.</li>
 <li>100-generation runs vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
