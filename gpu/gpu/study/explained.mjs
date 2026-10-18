@@ -102,7 +102,8 @@ const pics = {};
     h += t(10, top + hh + 16, `0 s`, { size: 11, fill: C.mut }) + t(x1, top + hh + 16, `${L.main_span_s.toFixed(1)} s`, { size: 11, fill: C.mut, anchor: 'end' });
     h += t(10, top + hh + 34, `The tail (right of the line) is ${L.tail_share_pct}% of the launch.`, { size: 11.5 });
     h += t(10, top + hh + 50, `SMs are busy ${L.sm_active_share_pct}% of the launch (a replay).`, { size: 11.5 });
-    pics['gpu-r9-tail'] = svg(top + hh + 60, h);
+    h += t(10, top + hh + 66, 'Source: round-9 replay, 19:44 ET (tail-timeline.json).', { size: 11, fill: C.mut });
+    pics['gpu-r9-tail'] = svg(top + hh + 76, h);
   }
 }
 

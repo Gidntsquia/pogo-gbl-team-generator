@@ -46,11 +46,13 @@ def run(name):
     tail = sum(g["buckets"]["tail"] for g in gw[sat:G]) / sum(g["wall"] for g in gw[sat:G]) if sat >= 0 and len(gw) >= G else None
     start = float(re.search(r"wall start ([\d.]+)", log).group(1))
     total = os.path.getmtime(os.path.join(d, f"evolve-gen{G - 1}.json")) - start if G else None
+    we = re.search(r"wall end ([\d.]+)", log)
+    wall = float(we.group(1)) - start if we else None
     tl = re.findall(r"gpu tail -- pool (\d+), speculated (\d+) \((\d+) certain\), kept (\d+), discarded (\d+), overrun (-?\d+)us, served (\d+)", log)
     sv2 = re.findall(r"gpu tail -- served (\d+) from the previous launch \(no pool", log)
     late = sum(float(x) for x in re.findall(r"gpu tail late -- waited ([\d.]+)ms", log)) / 1e3
     steps = [s for s in prof.get("steps", []) if s.get("gen") != "final"]
-    return {"exit": int(ex[-1]) if ex else None, "gens": G, "warm": warm, "tail": tail, "total": total, "start": start,
+    return {"exit": int(ex[-1]) if ex else None, "gens": G, "warm": warm, "tail": tail, "total": total, "wall": wall, "start": start,
             "launches": sum(len(s.get("launches", [])) for s in steps) / G if G else None,
             "spec": sum(int(x[1]) for x in tl), "kept": sum(int(x[3]) for x in tl), "served": sum(int(x[6]) for x in tl) + sum(int(x) for x in sv2),
             "nl": len(tl), "late": late}
@@ -93,7 +95,7 @@ def expected():
     full = {v: run(f"r9-full-{v}") for v in VAR}
     for v, r in full.items():
         if r and r["exit"] == 0:
-            E[f"full.{v}.min"], E[f"full.{v}.warm"], E[f"full.{v}.gens"] = r["total"] / 60, r["warm"], r["gens"]
+            E[f"full.{v}.min"], E[f"full.{v}.warm"], E[f"full.{v}.gens"] = r["wall"] / 60, r["warm"], r["gens"]
     if full["tail"] and full["tail"]["exit"] == 0:
         E["full.tail.latewait"] = full["tail"]["late"]
     for v in ("tail", "certain"):
@@ -104,8 +106,8 @@ def expected():
         rng = lambda a, b: sum(walls["tail"][a:b + 1]) / (b - a + 1) - sum(walls["default"][a:b + 1]) / (b - a + 1)
         E["full.tail.early"], E["full.tail.late"] = rng(4, 9), rng(60, 99)
     for v in ("tail", "certain"):
-        if full[v] and full["default"] and full[v]["total"] and full["default"]["total"]:
-            E[f"full.{v}.dmin"] = (full[v]["total"] - full["default"]["total"]) / 60
+        if full[v] and full["default"] and full[v]["wall"] and full["default"]["wall"]:
+            E[f"full.{v}.dmin"] = (full[v]["wall"] - full["default"]["wall"]) / 60
     tl = (jl(os.path.join(S, "prof/tail-timeline.json")) or {}).get("launches", {})
     for l, modes in tl.items():
         for m, r in modes.items():
