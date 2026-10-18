@@ -2,11 +2,11 @@
 
 Five ideas behind the round-8 and round-9 GPU results, one picture each.
 
-Numbers come from the study page, `out/gpu-study.html` on branch `gpu`.
+Numbers come from the study page `out/gpu-study.html` and its round-7/8 detail pages (`out/gpu/study/detail/`), branch `gpu`.
 
 ## Island halving costs 5.4 s per generation
 
-![Round 8 warm s/gen: one pool 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
+![Round 7 warm s/gen: one pool 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
 
 Island halving runs each island's halving rounds inside one launch, one round after another.
 

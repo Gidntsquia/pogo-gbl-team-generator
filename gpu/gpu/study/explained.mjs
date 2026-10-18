@@ -30,9 +30,9 @@ function bars(title, rows, max, y0 = 26) {
 
 const pics = {};
 
-// 1. island halving: round 8 A/B (r7 islands on/off, two runs each)
+// 1. island halving: round 7 runs (r7.* keys of round8-numbers.json, islands on/off, two runs each)
 {
-  const { g, y } = bars('Warm s/gen, round 8 (two runs each)', [
+  const { g, y } = bars('Warm s/gen, round 7 (two runs each)', [
     { label: 'one pool', v: 12.2, fill: C.a, text: '12.20 / 12.05' },
     { label: 'island halving', v: 17.64, fill: C.b, text: '17.64 / 17.51' },
   ], 24);

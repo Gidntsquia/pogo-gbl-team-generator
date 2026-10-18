@@ -177,8 +177,8 @@ const summary = [
   `The tail filler and the certain feed give the same teams as default, run for run.`,
   `Warm time per generation: default ${s('default')}, tail filler ${s('tail')} (${verdict('ab.tail.delta', vT.word)}), certain feed ${s('certain')} (${verdict('ab.certain.delta', vC.word)}).`,
   `In a replay, SMs are busier (${num('tl.10k.default.active', tl10.off?.sm_active_share_pct, 1, { unit: '%' })} to ${num('tl.10k.tail.active', tl10.tail?.sm_active_share_pct, 1, { unit: '%' })} on 10k); a launch still ends with its longest battle.`,
-  `Battles mostly wait on their own memory: ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp cycles wait on loads.`,
-  `Keep the default: in 100-gen runs both flags moved less than the A/B spreads (${num('full.tail.dwarm', fullW('tail'), 2, { sign: true })}, ${num('full.certain.dwarm', fullW('certain'), 2, { sign: true })} s/gen).`,
+  `Nsight on a recorded 5k launch: ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp cycles wait on memory loads, mostly battle state.`,
+  `Keep the default: the 100-gen tail-filler run took ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })} (one run); the certain feed had ${verdict('ab.certain.delta', vC.word)}.`,
 ];
 const sup = (...k) => `<p class="sup">Supports summary point${k.length > 1 ? 's' : ''} ${k.length > 1 ? `${k.slice(0, -1).join(', ')} and ${k.at(-1)}` : k[0]}.</p>`;
 
@@ -207,35 +207,35 @@ const metrics = [
     what: 'share of cycles in which an SM starts an instruction.',
     ours: `${pct('ncu.5k.issue', n5.issue_slot_use_pct)} on the 5k launch: most cycles nothing is ready to run.`,
     means: 'warps are waiting, and there are too few of them to cover the wait.',
-    rows: [ncuRow('5k default', n5, (o) => o.issue_slot_use_pct, 'ncu.5k.issue', COL.default), ncuRow('5k tail filler', vOn, (o) => o.issue_slot_use_pct, 'ncu.5kon.issue', COL.tail), ncuRow('10k default', n10, (o) => o.issue_slot_use_pct, 'ncu.10k.issue', COL.default)],
+    rows: [ncuRow('5k default', n5, (o) => o.issue_slot_use_pct, 'ncu.5k.issue', COL.default), ncuRow('5k tail filler', vOn, (o) => o.issue_slot_use_pct, 'ncu.5kon.issue', COL.tail), ncuRow('10k default', n10, (o) => o.issue_slot_use_pct, 'ncu.10k.issue', COL.default), ncuRow('36k default', n36, (o) => o.issue_slot_use_pct, 'ncu.36k.issue', COL.default)],
   },
   {
     name: 'Achieved occupancy', unit: '%', healthy: { lo: 60 },
     what: 'warps resident on an SM, as a share of the 48 it can hold.',
     ours: `${pct('ncu.5k.occ', n5.achieved_occupancy_pct)}: each thread needs so many registers that only 8 warps fit.`,
     means: 'with few warps, a wait on memory leaves the SM idle.',
-    rows: [ncuRow('5k default', n5, (o) => o.achieved_occupancy_pct, 'ncu.5k.occ', COL.default), ncuRow('5k tail filler', vOn, (o) => o.achieved_occupancy_pct, 'ncu.5kon.occ', COL.tail), ncuRow('10k default', n10, (o) => o.achieved_occupancy_pct, 'ncu.10k.occ', COL.default)],
+    rows: [ncuRow('5k default', n5, (o) => o.achieved_occupancy_pct, 'ncu.5k.occ', COL.default), ncuRow('5k tail filler', vOn, (o) => o.achieved_occupancy_pct, 'ncu.5kon.occ', COL.tail), ncuRow('10k default', n10, (o) => o.achieved_occupancy_pct, 'ncu.10k.occ', COL.default), ncuRow('36k default', n36, (o) => o.achieved_occupancy_pct, 'ncu.36k.occ', COL.default)],
   },
   {
     name: 'Local memory share of L1 traffic', unit: '%', healthy: null,
     what: 'bytes of per-thread local memory (each battle\'s own state) among all bytes through L1.',
     ours: `${pct('ncu.5k.localshare', n5.local_share_of_l1_bytes_pct, 2)}, or ${num('ncu.5k.localgb', n5.local_bytes_gb, 0, { unit: ' GB' })} in a ${num('ncu.5k.kernel', n5.kernel_s_at_base_clock, 1, { unit: ' s' })} launch.`,
     means: 'battle state is the traffic; a smaller state means fewer bytes to wait for.',
-    rows: [ncuRow('5k default', n5, (o) => o.local_share_of_l1_bytes_pct, 'ncu.5k.localshare', COL.default), ncuRow('5k tail filler', vOn, (o) => o.local_share_of_l1_bytes_pct, 'ncu.5kon.localshare', COL.tail), ncuRow('10k default', n10, (o) => o.local_share_of_l1_bytes_pct, 'ncu.10k.localshare', COL.default)], dec: 2,
+    rows: [ncuRow('5k default', n5, (o) => o.local_share_of_l1_bytes_pct, 'ncu.5k.localshare', COL.default), ncuRow('5k tail filler', vOn, (o) => o.local_share_of_l1_bytes_pct, 'ncu.5kon.localshare', COL.tail), ncuRow('10k default', n10, (o) => o.local_share_of_l1_bytes_pct, 'ncu.10k.localshare', COL.default), ncuRow('36k default', n36, (o) => o.local_share_of_l1_bytes_pct, 'ncu.36k.localshare', COL.default)], dec: 2,
   },
   {
     name: 'L1 hit rate', unit: '%', healthy: null,
     what: 'share of L1 requests answered by L1, the small cache inside each SM.',
     ours: `${pct('ncu.5k.l1', n5.l1_hit_pct)}; each miss waits for L2.`,
     means: 'each miss is a long wait (the "long scoreboard" stall).',
-    rows: [ncuRow('5k default', n5, (o) => o.l1_hit_pct, 'ncu.5k.l1', COL.default), ncuRow('5k tail filler', vOn, (o) => o.l1_hit_pct, 'ncu.5kon.l1', COL.tail), ncuRow('10k default', n10, (o) => o.l1_hit_pct, 'ncu.10k.l1', COL.default)],
+    rows: [ncuRow('5k default', n5, (o) => o.l1_hit_pct, 'ncu.5k.l1', COL.default), ncuRow('5k tail filler', vOn, (o) => o.l1_hit_pct, 'ncu.5kon.l1', COL.tail), ncuRow('10k default', n10, (o) => o.l1_hit_pct, 'ncu.10k.l1', COL.default), ncuRow('36k default', n36, (o) => o.l1_hit_pct, 'ncu.36k.l1', COL.default)],
   },
   {
     name: 'L2 hit rate', unit: '%', healthy: null,
     what: 'share of L2 requests answered by L2, the cache all SMs share.',
     ours: `${pct('ncu.5k.l2', n5.l2_hit_pct)}; the rest go to the GPU's main memory.`,
     means: 'a miss here waits longer still, for main memory; more battles at once share the same L2.',
-    rows: [ncuRow('5k default', n5, (o) => o.l2_hit_pct, 'ncu.5k.l2', COL.default), ncuRow('5k tail filler', vOn, (o) => o.l2_hit_pct, 'ncu.5kon.l2', COL.tail), ncuRow('10k default', n10, (o) => o.l2_hit_pct, 'ncu.10k.l2', COL.default)],
+    rows: [ncuRow('5k default', n5, (o) => o.l2_hit_pct, 'ncu.5k.l2', COL.default), ncuRow('5k tail filler', vOn, (o) => o.l2_hit_pct, 'ncu.5kon.l2', COL.tail), ncuRow('10k default', n10, (o) => o.l2_hit_pct, 'ncu.10k.l2', COL.default), ncuRow('36k default', n36, (o) => o.l2_hit_pct, 'ncu.36k.l2', COL.default)],
   },
   {
     name: 'SM-active share', unit: '%', healthy: null,
@@ -284,7 +284,8 @@ const glossary = [
   ['L1, L2', 'caches: L1 is small and inside each SM, L2 is larger and shared by all SMs.'],
   ['Nsight Compute', 'NVIDIA\'s profiler; it reads the GPU\'s hardware counters.'],
   ['no Nsight', 'no profiler numbers for this launch (reasons below).'],
-  ['no Nsight: 36k, 5k tail filler', 'the profiled replay failed (LaunchFailed) and reset the display driver (5k: 13:35 ET).'],
+  ['no Nsight: 36k', 'the profiled run failed twice with "LaunchFailed (CUDA error 999)" and reset the display driver.'],
+  ['no Nsight: 5k tail filler', 'the profiled replay failed with "LaunchFailed" and reset the display driver (13:36 ET).'],
   ['no Nsight: certain feed', 'the host feeds it while it runs; the profiler cannot replay that.'],
   ['generation', 'one step of the team search. Each runs several halving rounds.'],
   ['checkpoint', 'the saved state of a run after each generation (evolve-genN.json).'],
@@ -307,7 +308,7 @@ const glossary = [
 
 // ---------------------------------------------------------------- page
 const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json). Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
-const ncuCaption = `First five cards: Nsight Compute on the 5k and 10k launches (summary.json). SM-active share: the replay's timing records (tail-timeline.json).`;
+const ncuCaption = `First five cards: Nsight Compute on the 5k and 10k launches (summary.json); 36k has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json).</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html">NVIDIA's Nsight Compute guide</a>, as read in round 8.`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). A captioned table or chart uses the runs its caption names.</p></header>
@@ -343,8 +344,7 @@ ${table(['variant', 'mean', 'spread', 'vs default'], abSum, 'The same runs: mean
 <p class="mut">A change counts as a gain only if it is larger than both its own spread and the default's.</p>
 <h3>Tail share</h3>
 <p>Tail share: default ${tailPct('default')}, tail filler ${tailPct('tail')}, certain feed ${tailPct('certain')}.</p>
-<p>It rises because filler battles run inside the tail, making it longer.</p>
-<p>Also, later rounds find many battles already done, so their launches are shorter.</p>
+<p>The filler runs its battles in the tail. Why the share rises is not measured.</p>
 <p>Per launch with a pool, the filler ran ${num('ab.tail.spec', TLg.tail.speculated / Math.max(1, TLg.tail.launches), 0)} battles early on average.</p>
 <p>Of those, ${pct('ab.tail.keptpct', 100 * TLg.tail.kept / Math.max(1, TLg.tail.speculated), 0)} finished before the launch ended and ${pct('ab.tail.servedpct', 100 * TLg.tail.served / Math.max(1, TLg.tail.speculated), 0)} were later used.</p>
 ${timelinePicture('10k')}
@@ -358,16 +358,16 @@ ${sup(3, 4, 5)}
 <p>The filler fills idle SMs, but it cannot make the longest battle finish sooner.</p>
 <p>SM-active share is the share of a launch in which an SM has a battle to run.</p>
 <p>On the 10k launch the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
-<p>The extra battles share L1, L2 and main memory with this round's battles, so they compete for the same waits of fact 2.</p>
 <p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
 <p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory. Nsight Compute shows what that costs:</p>
 ${stallBars()}
-<p class="cap">Where warp cycles go on the 5k launch, as a share of all cycles (Nsight Compute, summary.json). "selected" is the cycle an instruction issues.</p>
+<p class="cap">Where warp cycles go on the 5k launch, as a share of all cycles (Nsight Compute, summary.json).</p>
+<ul class="cap"><li>long scoreboard: waiting on memory.</li><li>wait: a fixed pause after an instruction.</li><li>no instruction: the next instruction is not fetched yet.</li><li>selected: the cycle an instruction issues.</li><li>branch resolving: waiting for a jump target.</li></ul>
 ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
 <h3>3. The 10-generation gain did not hold over 100 generations</h3>
-<p>The A/B runs 10 generations. A full run is 100. There, warm s/gen moved less than the A/B spreads.</p>
+<p>The A/B runs 10 generations. A full run is 100; the table has one run of each.</p>
 ${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), after the A/B (r9-full-*). Default was rerun last.')}
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
 <p>The late wait in the 100-generation tail-filler run was ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} in total.</p>
@@ -379,7 +379,8 @@ ${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One ful
 ${sup(5)}
 <ul>
 <li>Run today with the default: <code>bash scripts/sim.sh &lt;csv&gt; --gpu</code> (its defaults).</li>
-<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8). Tail flags stay off: their gain did not hold (fact 3).</li>
+<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8).</li>
+<li>Tail flags stay off: the tail filler's gain did not hold (fact 3) and the certain feed had ${verdict('ab.certain.delta', vC.word)}.</li>
 <li>Build next: cut more bytes from each battle's state, the source of fact 2's waits.</li>
 </ul>
 <p class="more">More: <a href="gpu/study/detail/round8-decide.html">round 8 candidate changes</a></p>
