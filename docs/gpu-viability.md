@@ -402,8 +402,8 @@ time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
   s/gen: default 12.23 (spread 0.13), tail 11.83 (0.26), tail,certain 11.59 (0.73). Tail beats both spreads (−0.41 s);
   certain does not (−0.64 s inside its own 0.73 spread). Tail share rises from 42.3% to 55.4%: the filler work
   sits in the tail, and later rounds find battles already done, so the non-tail kernel time falls (about 6.2 → 3.7 s/gen). Per launch with a next-round pool (2 of 3 per generation) the filler ran 3,315 battles; 65% finished in time and 49% were later used.
-- **Full runs (100 gens, standard).** Default 17.2 min (19:48–20:05 ET), tail 17.4 min (18:54–19:12 ET), tail,certain
-  17.0 min (19:12–19:29 ET); one run each, so no spread. Warm s/gen 10.08 / 10.26 / 10.05: the 10-gen gain of tail did
+- **Full runs (100 gens, standard).** Start to process exit: default 17.4 min (19:48–20:05 ET), tail 17.5 min (18:54–19:12 ET),
+  tail,certain 17.1 min (19:12–19:29 ET); one run each, so no spread. Warm s/gen 10.08 / 10.26 / 10.05: the 10-gen gain of tail did
   not carry over to 100 gens. One run per variant, so there is no noise measure for the 100-gen differences.
 - **SM-active timeline** (replay of dumped launches on the fixed code, 19:44 ET, `out/gpu/study/prof/tail-timeline.json`;
   the next-round pool is a stand-in, up to 6,000 battles of another dumped launch): on the 10k launch SMs are busy 48.1%
