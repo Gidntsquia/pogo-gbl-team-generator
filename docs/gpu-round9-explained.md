@@ -11,7 +11,7 @@ Five ideas behind GPU rounds 8 and 9, one picture each. Sources: `out/gpu-study.
 - **Lookahead:** a battle's search of next moves. **Nsight Compute:** NVIDIA's GPU profiler.
 - **Tail filler, certain feed:** round 9 fills idle SMs with next-round battles, or battles of teams sure to pass.
 - **Warm s/gen:** seconds per generation, early generations left out (see the last section).
-- **A/B:** default and a change run in turns; a pass is one run of each. **Longer lockstep:** more steps per launch.
+- **A/B:** default and a change in turns. **Lockstep:** some steps of all battles per launch (longer: more).
 
 ## Island halving costs 5.4 s per generation
 
@@ -29,7 +29,7 @@ Each battle keeps 39,088 bytes of state in local memory: teams, HP, energy and i
 
 Local memory is GPU main memory, behind L1 and L2. Nsight Compute shows half of warp cycles wait on it.
 
-Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per generation in a 3-pass A/B.
+Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per generation in an A/B of 3 runs each.
 
 ## Why the scheduling ideas ran slower
 
@@ -39,7 +39,7 @@ Two streams overlap CPU-side work with the GPU. CPU share auto moves some battle
 
 Less lookahead memory re-runs battles that overflow it, one at a time.
 
-The queue kernel hands threads whole battles from a list. Lockstep runs some steps of all battles per launch.
+The queue kernel hands threads whole battles from a list.
 
 None makes a battle shorter, and a launch still waits for its longest one. Why each added time was not measured.
 
