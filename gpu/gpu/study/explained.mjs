@@ -70,7 +70,7 @@ const pics = {};
   h += t(10, 161, `${n.local_share_of_l1_bytes_pct ?? '?'}% of L1 traffic is local memory`, { size: 11.5 });
   h += t(10, 177, `${ls ?? '?'}% of warp cycles wait on memory loads`, { size: 11.5 });
   h += t(10, 193, `${n.issue_slot_use_pct ?? '?'}% of cycles start an instruction`, { size: 11.5 });
-  h += t(10, 213, 'Smaller state, fewer waits: round 8 saved 0.5 s/gen.', { size: 11.5, fill: C.ok });
+  h += t(10, 213, 'Compact state, round 8: 0.5 s/gen faster.', { size: 11.5, fill: C.ok });
   pics['gpu-r9-memory'] = svg(224, h);
 }
 
@@ -80,7 +80,7 @@ const pics = {};
     { label: 'CPU share auto', v: 2.0, fill: C.b, text: '+2.0 s' },
     { label: 'two streams', v: 4.4, fill: C.b, text: '+4.4 s' },
     { label: 'smaller pool', v: 4.4, fill: C.b, text: '+4.4 s' },
-    { label: 'lockstep t128', v: 5.2, fill: C.b, text: '+5.2 s' },
+    { label: 'lockstep, big slice', v: 5.2, fill: C.b, text: '+5.2 s' },
     { label: 'lockstep', v: 7.3, fill: C.b, text: '+7.3 s' },
     { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s' },
   ], 9);

@@ -8,13 +8,13 @@ Numbers come from the study page `out/gpu-study.html` and its round-7/8 detail p
 
 ![Round 7 warm s/gen: one pool 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
 
-Island halving runs each island's halving rounds inside one launch, one round after another.
+A halving round lets every team fight a few opponents, then cuts the bottom half.
 
-A round's battles run side by side. The next round starts only when the longest one ends.
+Island halving splits teams into islands and runs each island's rounds in one launch. One pool keeps teams together.
 
-All other threads wait at that line, once per round and island.
+Each round waits for its longest battle while the other threads sit idle.
 
-## Battle state belongs on-chip
+## Battle state sits in slow memory
 
 ![Battle state lives in GPU main memory and reaches the SM through L1 and L2](gpu-r9-memory.png)
 
@@ -30,13 +30,13 @@ Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per gene
 
 ![Six round-8 scheduling ideas each added 2.0 to 7.3 s per generation](gpu-r9-scheduling.png)
 
-Two streams overlap host work with the GPU. The smaller pool uses a smaller search pool, with a rare re-run.
+Two streams overlap host (CPU-side) work with the GPU. CPU share auto moves some battles to the CPU.
 
-A queue or lockstep changes how battles reach threads. CPU sharing moves some to the CPU.
+The smaller pool shrinks look-ahead memory and re-runs battles that overflow it, one at a time.
 
-None makes a battle shorter: half of all warp cycles wait on memory, and a launch waits for its longest battle.
+The queue kernel hands threads whole battles from a list. Lockstep runs one slice of every battle per launch.
 
-Why each one added time was not measured one by one.
+None makes a battle shorter, and a launch still waits for its longest one. Why each added time was not measured.
 
 ## The tail, and why it is the target
 
@@ -53,7 +53,7 @@ with its longest battle.
 
 ![Round 9 A/B: one dot per run for default, tail filler and certain feed](gpu-r9-noise.png)
 
-Warm s/gen: mean seconds per generation once the cache hit rate has levelled off; slower early generations are left out.
+Warm s/gen: mean seconds per generation once the share of battles answered from saved results has levelled off.
 
 The same run repeated gives a slightly different time. The spread, slowest minus fastest, is that noise.
 

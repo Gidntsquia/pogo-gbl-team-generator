@@ -267,11 +267,12 @@ const glossary = [
   ['SM', 'one of the GPU\'s 68 cores. Each runs several warps and switches between them.'],
   ['warp', '32 threads that run the same instruction together. Each thread runs one battle.'],
   ['launch', 'one batch of battles sent to the GPU. It ends when its last battle ends.'],
-  ['halving round', 'one step of the team search: all teams fight a few opponents, the bottom half is cut, the rest go on.'],
+  ['halving round', 'one cut inside a generation: all teams fight a few opponents, the bottom half is cut, the rest go on.'],
   ['tail', 'the end of a launch, from when half its battles are done until the last one ends. SMs run out of work one by one.'],
   ['tail share', 'the tail\'s time as a share of a generation\'s time.'],
   ['tail filler', 'POGO_GPU_STUDY=tail: idle SMs run the next round\'s likely battles early. Their results are only reused.'],
   ['certain feed', 'POGO_GPU_STUDY=tail,certain: adds next-round battles of teams already sure to pass the cut.'],
+  ['cache hit rate', 'share of battles answered from saved results instead of simulated (a program cache, apart from L1 and L2).'],
   ['warm s/gen', 'mean seconds per generation from the saturation generation on, once the cache hit rate has levelled off.'],
   ['saturation generation', 'the first generation whose cache hit rate is within 2 points of the mean of the last 5 generations.'],
   ['spread', 'the slowest minus the fastest of a variant\'s A/B runs: the noise.'],
@@ -285,8 +286,9 @@ const glossary = [
   ['no Nsight', 'no profiler numbers for this launch (reasons below).'],
   ['no Nsight: 36k', 'the profiled run failed twice with "LaunchFailed (CUDA error 999)" and reset the display driver.'],
   ['no Nsight: 5k tail filler', 'its profiled replay failed with "LaunchFailed" (13:36 ET, before the fixes) and was not repeated.'],
+  ['host', 'the CPU side of the program, which sends battles to the GPU and reads results.'],
   ['no Nsight: certain feed', 'the host feeds it while it runs; the profiler cannot replay that.'],
-  ['generation', 'one step of the team search. Each runs several halving rounds.'],
+  ['generation', 'one step of the team search: new teams are made, then cut down in several halving rounds.'],
   ['checkpoint', 'the saved state of a run after each generation (evolve-genN.json).'],
   ['seed', 'the number that fixes every random choice of a run.'],
   ['CPU engine', 'pvpoke\'s battle code, run on the CPU: the reference the GPU must match.'],
@@ -298,7 +300,7 @@ const glossary = [
   ['pool', 'the next-round battles the filler may run early in a launch.'],
   ['SM-active share', 'the share of a launch in which an SM has a battle to run, averaged over the 68 SMs.'],
   ['late wait', 'time the next launch waits for the filler\'s unfinished early battles.'],
-  ['round', 'a halving round. "Round 8" and "round 9" are study rounds.'],
+  ['round', 'short for halving round, except in "round 8" and "round 9".'],
   ['round 8, round 9', 'study rounds of this GPU work. Round 8 measured where the time goes; round 9 built the tail filler.'],
   ['lookahead', 'the search a battle runs to pick each move. A filler battle checks whether to stop between searches.'],
   ['stream', 'a GPU work queue. Work on one stream runs in order.'],
@@ -307,7 +309,7 @@ const glossary = [
 
 // ---------------------------------------------------------------- page
 const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json). Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
-const ncuCaption = `First five cards: Nsight Compute on the 5k and 10k launches (summary.json); 36k has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json).</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html">NVIDIA's Nsight Compute guide</a>, as read in round 8.`;
+const ncuCaption = `First five cards: Nsight Compute on the 5k and 10k launches (summary.json); 36k has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json).</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). A captioned table or chart uses the runs its caption names.</p></header>
@@ -319,7 +321,7 @@ ${sup(1, 2, 3)}
 <p>A generation runs about ${num('ab.default.launches', mean(ST.default.runs.map((r) => r.gpuPerGen != null ? (rd(`${r.dir}/gpu-profile.json`)?.steps ?? []).filter((x) => x.gen !== 'final').reduce((a, x) => a + (x.launches?.length ?? 0), 0) / r.gens : 0)), 0)} GPU launches. Each ends with a tail: once half its battles are done, SMs run out of work one by one.</p>
 <p>The tail filler gives idle SMs the next round's battles of the teams most likely to pass the cut.</p>
 <p>A result is used only if the next round asks for that battle.</p>
-<p>It starts once half the GPU's threads are idle (<code>POGO_GPU_TAIL_IDLE=0.5</code>, the default).</p>
+<p>It starts once half of the launch's threads have no battle left (<code>POGO_GPU_TAIL_IDLE=0.5</code>, the default).</p>
 <p>Why 0.5 (a design choice, not measured): earlier would slow this round's battles, later leaves little time.</p>
 <p>The certain feed adds the battles of teams that are already sure to pass, sent into the running launch through a queue.</p>
 <h3>Same results</h3>
