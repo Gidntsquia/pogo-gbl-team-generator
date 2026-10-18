@@ -362,9 +362,9 @@ ${stallBars()}
 ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
 <h3>3. The 10-generation gain did not show in a 100-generation run</h3>
-<p>The A/B runs 10 generations. A full run is 100; the table has one run of each.</p>
+<p>The A/B runs 10 generations. A full run is 100.</p>
 ${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full run each with the A/B\'s command and settings, 100 generations, after the A/B (r9-full-*). Default was rerun last.')}
-<p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
+<p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}.</p>
 <p>The late wait in the 100-generation tail-filler run was ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} in total.</p>
 <p>Each variant has one 100-generation run, so these differences have no noise measure. The filler did not save time in its run.</p>
 </section>

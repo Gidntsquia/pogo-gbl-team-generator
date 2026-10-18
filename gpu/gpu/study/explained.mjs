@@ -63,7 +63,7 @@ const pics = {};
   h += rect(10, 30, 160, 92, '#ffffff', 6) + t(18, 46, 'SM (on-chip)', { bold: true, size: 11.5 });
   h += t(18, 64, 'registers: fast, few', { size: 11.5 }) + t(18, 82, 'shared memory: fast,', { size: 11.5 }) + t(18, 97, 'small (100 KB per SM)', { size: 11.5 }) + t(18, 114, 'L1 cache', { size: 11.5 });
   h += rect(190, 30, 160, 92, '#ffffff', 6) + t(198, 46, 'GPU main memory', { bold: true, size: 11.5 });
-  h += t(198, 64, 'local memory: 39,104', { size: 11.5 }) + t(198, 82, 'bytes per battle, via', { size: 11.5 }) + t(198, 97, 'L1 and L2', { size: 11.5 });
+  h += t(198, 64, 'local memory: 39,088', { size: 11.5 }) + t(198, 82, 'bytes per battle, via', { size: 11.5 }) + t(198, 97, 'L1 and L2', { size: 11.5 });
   h += `<path d="M190 76 L172 76" stroke="${C.b}" stroke-width="3" marker-end="url(#ar)"/><defs><marker id="ar" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L6 3L0 6z" fill="${C.b}"/></marker></defs>`;
   const ls = n.top5_stalls?.find((x) => x.reason === 'long_scoreboard')?.share_pct;
   h += t(10, 144, '5k launch, Nsight Compute:', { size: 11.5, bold: true });

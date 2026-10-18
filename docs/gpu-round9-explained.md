@@ -25,7 +25,7 @@ Each round waits for its longest battle while the other threads sit idle.
 
 ![Battle state lives in GPU main memory and reaches the SM through L1 and L2](gpu-r9-memory.png)
 
-Each battle keeps about 39,000 bytes of state in local memory: teams, HP, energy and its lookahead.
+Each battle keeps 39,088 bytes of state in local memory: teams, HP, energy and its lookahead.
 
 Local memory is GPU main memory, behind L1 and L2. Nsight Compute shows half of warp cycles wait on it.
 
