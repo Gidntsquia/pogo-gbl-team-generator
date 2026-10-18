@@ -331,11 +331,17 @@ ${sup(1, 2, 3)}
 <h3>Four bugs the runs found</h3>
 <p>Runs failed or slowed down, so all four were fixed.</p>
 <p>Every tail and certain-feed run on this page was made after the fixes, except the failed 5k profile.</p>
+<p>Times and exits below are from r9chain.log and the fix commits (all ET, 2026-10-17).</p>
 <p>A read of results could start before the launch's inputs were uploaded and return old values. It now waits for the uploads.</p>
 <p>Unfinished early battles ran on past the launch end and slowed the next launch. </p>
 <p>They now stop within one lookahead, the move search a battle runs each turn.</p>
-<p>A new stream (GPU work queue) per launch blocked memory reuse, so late generations took minutes. Now one stream serves all.</p>
-<p>Timing records read while late battles ran could hold old bytes, which crashed a run. The buffer is now cleared each launch.</p>
+<p>Both were fixed in the 13:49 commit.</p>
+<p>The 100-generation tail and certain-feed runs before it failed (exit 1 at 13:17 and 13:35).</p>
+<p>A new stream (GPU work queue) per launch blocked memory reuse. Late generations took up to 150 times as long.</p>
+<p>Now one stream serves all (18:06 commit).</p>
+<p>Before it, the 100-generation tail run took 134 min (14:26-16:39); after it, ${fullWall('tail') != null ? (fullWall('tail') / 60).toFixed(1) : '?'} min.</p>
+<p>Timing records read while late battles ran could hold old bytes. The buffer is now cleared each launch (18:31 commit).</p>
+<p>Before it, the third certain-feed A/B run crashed (exit 1 at 18:28).</p>
 <p>The next launch waits for unfinished early battles (the late wait). In the A/B: ${num('ab.tail.latewait', ST.tail.runs.length ? mean(ST.tail.runs.map((r) => (r.tailLog?.lateWaitS ?? 0) / r.gens)) : null, 2, { unit: ' s' })} per generation with the tail filler.</p>
 <h3>Time per generation</h3>
 <p>${num('ab.rounds', rounds.length, 0)} passes, each running default, tail filler and certain feed back to back, 10 generations each.</p>
@@ -363,7 +369,10 @@ ${sup(3, 4, 5)}
 <p>There the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' percentage points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
 <p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
-<p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory. Nsight Compute shows what that costs:</p>
+<p>A battle's state (teams, HP, energy, the lookahead tree) lives in local memory.</p>
+<p>Local memory is each thread's own space in the GPU's main memory.</p>
+<p>It is reached through L1, a small cache in each SM, and L2, a larger cache all SMs share.</p>
+<p>Nsight Compute shows what that costs:</p>
 ${stallBars()}
 <p class="cap">Where warp cycles go on the 5k launch (Nsight Compute run, 10:37 ET; summary.json).</p><p class="cap">A stall is a cycle in which a warp cannot run its next instruction yet.</p>
 <ul class="cap"><li>long scoreboard: waiting on memory.</li><li>wait: a fixed pause after an instruction.</li><li>no instruction: the next instruction is not fetched yet.</li><li>selected: the cycle an instruction issues.</li><li>branch resolving: waiting for a jump target.</li></ul>
