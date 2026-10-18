@@ -24,7 +24,9 @@ Local memory is GPU main memory, reached through the L1 and L2 caches.
 
 Nsight Compute, NVIDIA's profiler, shows this is nearly all L1 traffic. Half of all warp cycles wait for it.
 
-Shared memory sits inside the SM. Keeping the hot state there would remove most of those waits.
+Round 8's compact state packs fields into 8 and 16 bits. Less state means fewer bytes to wait for.
+
+It saved 0.5 s per generation in a 3-pass A/B.
 
 ## Why the scheduling ideas ran slower
 

@@ -97,6 +97,13 @@ def expected():
     if full["tail"] and full["tail"]["exit"] == 0:
         E["full.tail.latewait"] = full["tail"]["late"]
     for v in ("tail", "certain"):
+        if full[v] and full["default"] and full[v]["warm"] is not None and full["default"]["warm"] is not None:
+            E[f"full.{v}.dwarm"] = full[v]["warm"] - full["default"]["warm"]
+    if full["tail"] and full["default"]:
+        walls = {v: [g["wall"] for g in (jl(os.path.join(OUT, f"evolve-gpu8-r9-full-{v}", "gpu-profile.json")) or {}).get("generations", [])] for v in ("tail", "default")}
+        rng = lambda a, b: sum(walls["tail"][a:b + 1]) / (b - a + 1) - sum(walls["default"][a:b + 1]) / (b - a + 1)
+        E["full.tail.early"], E["full.tail.late"] = rng(4, 9), rng(60, 99)
+    for v in ("tail", "certain"):
         if full[v] and full["default"] and full[v]["total"] and full["default"]["total"]:
             E[f"full.{v}.dmin"] = (full[v]["total"] - full["default"]["total"]) / 60
     tl = (jl(os.path.join(S, "prof/tail-timeline.json")) or {}).get("launches", {})
@@ -104,6 +111,7 @@ def expected():
         for m, r in modes.items():
             v = "default" if m == "off" else m
             E[f"tl.{l}.{v}.active"], E[f"tl.{l}.{v}.span"] = r["sm_active_share_pct"], r["main_span_s"]
+            E[f"tl.{l}.{v}.pool"] = r["pool"]
     if "10k" in tl and "tail" in tl["10k"]:
         E["tl.10k.activegain"] = tl["10k"]["tail"]["sm_active_share_pct"] - tl["10k"]["off"]["sm_active_share_pct"]
         E["tl.10k.spangain"] = tl["10k"]["tail"]["main_span_s"] - tl["10k"]["off"]["main_span_s"]

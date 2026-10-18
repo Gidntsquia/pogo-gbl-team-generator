@@ -107,6 +107,12 @@ function timelinePicture(launch) {
     g += `<line x1="${x0}" x2="${x1}" y1="${y + hS}" y2="${y + hS}" stroke="var(--line)"/>`;
     y += hS + 10;
   }
+  // one shared time axis: every strip is drawn on the same seconds scale
+  for (let t = 0; t <= span; t += 2) {
+    const x = x0 + ((x1 - x0) * t) / span;
+    g += `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${y - 10}" y2="${y - 5}" stroke="var(--mut)"/>` + tx(x, y + 6, `${t} s`, 's', t === 0 ? 'start' : 'middle');
+  }
+  y += 16;
   g += tx(x0, y + 6, `grey: SMs with this round's battles`, 's');
   g += tx(x0, y + 20, `colour: SMs with only next-round battles`, 's');
   g += tx(x0, y + 34, `full height = ${sms} SMs`, 's');
@@ -156,6 +162,14 @@ const tl10 = TL['10k'] ?? {};
 const activeGain = tl10.tail && tl10.off ? tl10.tail.sm_active_share_pct - tl10.off.sm_active_share_pct : null;
 const spanGain = tl10.tail && tl10.off ? tl10.tail.main_span_s - tl10.off.main_span_s : null;
 
+const fullW = (id) => (full[id]?.warmPerGen != null && full.default?.warmPerGen != null ? full[id].warmPerGen - full.default.warmPerGen : null);
+/** Mean wall of generations a..b (inclusive) of a full run minus the default's, from gpu-profile.json. */
+const fullRange = (id, a, b) => {
+  const w = (r) => (rd(`${r.dir}/gpu-profile.json`)?.generations ?? []).slice(a, b + 1).map((g) => g.wall);
+  if (!full[id] || !full.default) return null;
+  const x = w(full[id]), y = w(full.default);
+  return x.length === b - a + 1 && y.length === b - a + 1 ? mean(x) - mean(y) : null;
+};
 const fullD = (id) => (full[id]?.total && full.default?.total ? (full[id].total - full.default.total) / 60 : null);
 const verdictLine = (id, v) => `${VARIANTS.find((x) => x.id === id).label}: ${delta(id)} per warm generation, ${verdict(`ab.${id}.delta`, v.word)}${v.beats ? ' (beats both spreads)' : ' (within the spread)'}.`;
 
@@ -164,7 +178,7 @@ const summary = [
   `Warm time per generation: default ${s('default')}, tail filler ${s('tail')} (${verdict('ab.tail.delta', vT.word)}), certain feed ${s('certain')} (${verdict('ab.certain.delta', vC.word)}).`,
   `In a replay, SMs are busier (${num('tl.10k.default.active', tl10.off?.sm_active_share_pct, 1, { unit: '%' })} to ${num('tl.10k.tail.active', tl10.tail?.sm_active_share_pct, 1, { unit: '%' })} on 10k); a launch still ends with its longest battle.`,
   `Battles mostly wait on their own memory: ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp cycles wait on loads.`,
-  `Keep the default: 100-generation runs saved no time (tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}).`,
+  `Keep the default: in 100-gen runs both flags moved less than the A/B spreads (${num('full.tail.dwarm', fullW('tail'), 2, { sign: true })}, ${num('full.certain.dwarm', fullW('certain'), 2, { sign: true })} s/gen).`,
 ];
 const sup = (...k) => `<p class="sup">Supports summary point${k.length > 1 ? 's' : ''} ${k.length > 1 ? `${k.slice(0, -1).join(', ')} and ${k.at(-1)}` : k[0]}.</p>`;
 
@@ -206,7 +220,7 @@ const metrics = [
     name: 'Local memory share of L1 traffic', unit: '%', healthy: null,
     what: 'bytes of per-thread local memory (each battle\'s own state) among all bytes through L1.',
     ours: `${pct('ncu.5k.localshare', n5.local_share_of_l1_bytes_pct, 2)}, or ${num('ncu.5k.localgb', n5.local_bytes_gb, 0, { unit: ' GB' })} in a ${num('ncu.5k.kernel', n5.kernel_s_at_base_clock, 1, { unit: ' s' })} launch.`,
-    means: 'battle state is the traffic; moving it on-chip removes most of it.',
+    means: 'battle state is the traffic; a smaller state means fewer bytes to wait for.',
     rows: [ncuRow('5k default', n5, (o) => o.local_share_of_l1_bytes_pct, 'ncu.5k.localshare', COL.default), ncuRow('5k tail filler', vOn, (o) => o.local_share_of_l1_bytes_pct, 'ncu.5kon.localshare', COL.tail), ncuRow('10k default', n10, (o) => o.local_share_of_l1_bytes_pct, 'ncu.10k.localshare', COL.default)], dec: 2,
   },
   {
@@ -276,7 +290,14 @@ const glossary = [
   ['checkpoint', 'the saved state of a run after each generation (evolve-genN.json).'],
   ['seed', 'the number that fixes every random choice of a run.'],
   ['winner check', 'the same battles re-run on the CPU engine. A battle is flagged when the GPU result is invalid.'],
-  ['5k, 10k, 36k launch', 'three real launches dumped from a round-8 run, of about 5,000, 10,000 and 36,000 battles.'],
+  ['5k, 10k launch', 'two real launches recorded in a round-8 run, of 4,788 and 10,920 battles.'],
+  ['36k launch', 'the three launches of that run\'s generation 0 merged into one, 36,000 battles.'],
+  ['replay', 'a recorded launch run again on its own, with timing records for every battle.'],
+  ['tail kernel', 'the GPU program with the tail filler built in.'],
+  ['pool', 'the next-round battles the filler may run early in a launch.'],
+  ['SM-active share', 'the share of a launch in which an SM has a battle to run, averaged over the 68 SMs.'],
+  ['late wait', 'time the next launch waits for the filler\'s unfinished early battles.'],
+  ['round', 'a halving round. "Round 8" and "round 9" are study rounds.'],
   ['round 8, round 9', 'study rounds of this GPU work. Round 8 measured where the time goes; round 9 built the tail filler.'],
   ['lookahead', 'the search a battle runs to pick each move. A filler battle checks whether to stop between searches.'],
   ['stream', 'a GPU work queue. Work on one stream runs in order.'],
@@ -285,7 +306,7 @@ const glossary = [
 ];
 
 // ---------------------------------------------------------------- page
-const tlCaption = `Replay of the 10k launch through the tail kernel three ways (tail-timeline.json). Its next-round pool is a stand-in: 6,000 battles of another dumped launch.`;
+const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json). Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
 const ncuCaption = `First five cards: Nsight Compute on the 5k and 10k launches (summary.json). SM-active share: the replay's timing records (tail-timeline.json).`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
@@ -309,11 +330,11 @@ ${sup(1, 2, 3)}
 </ul>
 <h3>Four bugs the long runs found</h3>
 <p>The first long runs failed or slowed down, so all four were fixed. Every tail and certain-feed run here was made after the fixes.</p>
-<p>A read of the launch's state could run before its upload, see stale rows, and use them. The read now waits for the upload.</p>
+<p>A read of the launch's results could run before they were uploaded and use old values. The read now waits.</p>
 <p>Unfinished early battles ran on past the launch end and slowed the next launch. They now stop within one lookahead.</p>
 <p>A new stream per launch blocked memory reuse, so late generations took minutes. Now one stream serves all.</p>
 <p>Timing records read while late battles ran could hold old bytes, which crashed a run. The buffer is now cleared each launch.</p>
-<p>The next launch waits for unfinished early battles: ${num('ab.tail.latewait', ST.tail.runs.length ? mean(ST.tail.runs.map((r) => (r.tailLog?.lateWaitS ?? 0) / r.gens)) : null, 2, { unit: ' s' })} per generation with the tail filler.</p>
+<p>The next launch waits for unfinished early battles (the late wait). In the A/B: ${num('ab.tail.latewait', ST.tail.runs.length ? mean(ST.tail.runs.map((r) => (r.tailLog?.lateWaitS ?? 0) / r.gens)) : null, 2, { unit: ' s' })} per generation with the tail filler.</p>
 <h3>Time per generation</h3>
 <p>${num('ab.rounds', rounds.length, 0)} passes, each running default, tail filler and certain feed back to back, 10 generations each.</p>
 ${table(['variant', ...rounds.map((i) => `pass ${i}`)], abRows, 'Warm seconds per generation, one run per pass')}
@@ -335,7 +356,8 @@ ${timelinePicture('10k')}
 ${sup(3, 4, 5)}
 <h3>1. A launch ends with its longest battle</h3>
 <p>The filler fills idle SMs, but it cannot make the longest battle finish sooner.</p>
-<p>On the 10k launch it raised SM-active share by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
+<p>SM-active share is the share of a launch in which an SM has a battle to run.</p>
+<p>On the 10k launch the filler raised it by ${num('tl.10k.activegain', activeGain, 1, { sign: true, unit: ' points' })} and moved the launch end by ${num('tl.10k.spangain', spanGain, 2, { sign: true, unit: ' s' })}.</p>
 <p>The extra battles share L1, L2 and main memory with this round's battles, so they compete for the same waits of fact 2.</p>
 <p class="more">More: <a href="gpu/study/detail/round8-time.html">round 8, where the time goes</a></p>
 <h3>2. Each battle waits on its own memory</h3>
@@ -345,12 +367,12 @@ ${stallBars()}
 ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
 <h3>3. The 10-generation gain did not hold over 100 generations</h3>
-<p>The A/B runs 10 generations. A full run is 100, and there the filler saved no time.</p>
-${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), run one after another after the A/B (r9-full-*)')}
+<p>The A/B runs 10 generations. A full run is 100. There, warm s/gen moved less than the A/B spreads.</p>
+${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), after the A/B (r9-full-*). Default was rerun last.')}
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
-<p>The wait for unfinished early battles was small: ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} over the whole tail-filler run.</p>
-<p>Why the gain faded is not measured.</p>
-<p>A guess: late generations find most battles cached, so less tail is left to fill.</p>
+<p>The late wait in the 100-generation tail-filler run was ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} in total.</p>
+<p>In that run the filler changed time per generation by ${num('full.tail.early', fullRange('tail', 4, 9), 2, { sign: true, unit: ' s' })} in generations 4-9, as in the A/B.</p>
+<p>It changed it by ${num('full.tail.late', fullRange('tail', 60, 99), 2, { sign: true, unit: ' s' })} in generations 60-99. Why is not measured.</p>
 </section>
 
 <section id="todo"><h2>What to do 🚀</h2>
@@ -358,7 +380,7 @@ ${sup(5)}
 <ul>
 <li>Run today with the default: <code>bash scripts/sim.sh &lt;csv&gt; --gpu</code> (its defaults).</li>
 <li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8). Tail flags stay off: their gain did not hold (fact 3).</li>
-<li>Build next: keep each battle's hot state in on-chip shared memory, to cut the memory waits of fact 2.</li>
+<li>Build next: cut more bytes from each battle's state, the source of fact 2's waits.</li>
 </ul>
 <p class="more">More: <a href="gpu/study/detail/round8-decide.html">round 8 candidate changes</a></p>
 </section>

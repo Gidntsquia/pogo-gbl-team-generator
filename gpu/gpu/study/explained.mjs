@@ -70,7 +70,7 @@ const pics = {};
   h += t(10, 161, `${n.local_share_of_l1_bytes_pct ?? '?'}% of L1 traffic is local memory`, { size: 11.5 });
   h += t(10, 177, `${ls ?? '?'}% of warp cycles wait on memory loads`, { size: 11.5 });
   h += t(10, 193, `${n.issue_slot_use_pct ?? '?'}% of cycles start an instruction`, { size: 11.5 });
-  h += t(10, 213, 'Hot state in shared memory would cut those waits.', { size: 11.5, fill: C.ok });
+  h += t(10, 213, 'Smaller state, fewer waits: round 8 saved 0.5 s/gen.', { size: 11.5, fill: C.ok });
   pics['gpu-r9-memory'] = svg(224, h);
 }
 

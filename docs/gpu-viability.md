@@ -404,7 +404,7 @@ time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
   sits in the tail, and later rounds find battles already done, so the non-tail kernel time falls (about 6.2 → 3.7 s/gen). Per launch with a next-round pool (2 of 3 per generation) the filler ran 3,315 battles; 65% finished in time and 49% were later used.
 - **Full runs (100 gens, standard).** Default 17.2 min (19:48–20:05 ET), tail 17.4 min (18:54–19:12 ET), tail,certain
   17.0 min (19:12–19:29 ET); one run each, so no spread. Warm s/gen 10.08 / 10.26 / 10.05: the 10-gen gain of tail did
-  not carry over to 100 gens.
+  not carry over to 100 gens. Per generation, tail saved 0.56 s in gens 4-9 and cost 0.57 s in gens 60-99; why is not measured.
 - **SM-active timeline** (replay of dumped launches on the fixed code, 19:44 ET, `out/gpu/study/prof/tail-timeline.json`;
   the next-round pool is a stand-in, up to 6,000 battles of another dumped launch): on the 10k launch SMs are busy 48.1%
   of the launch with the default, 55.4% with tail, 60.2% with tail,certain, but the launch ends 0.54 s later with
@@ -422,5 +422,6 @@ time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
   dropped).
 - **GPU time.** About 7 h of chain stages against the ~3 h budget, because the four bugs forced three chain restarts.
   Cut: ncu on the tail kernel and the 36k launch (driver resets), a second full run per variant.
-- **Next:** keep each battle's hot state in on-chip shared memory; that targets the long-scoreboard waits directly.
+- **Next:** cut more bytes from each battle's state (round 8's compact state saved 0.5 s/gen); local memory is 99.9% of L1
+  traffic, so that targets the long-scoreboard waits. Shared memory is too small to hold it (100 KB per SM vs ~39 KB per battle).
   Keep the tail flags off.
