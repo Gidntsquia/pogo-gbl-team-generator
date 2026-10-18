@@ -390,7 +390,7 @@ at 390 px (`out/gpu/study/phone/`). Plain-words version: `docs/gpu-round9-explai
 time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
 
 - **What was built.** `POGO_GPU_STUDY=tail` (`gpu/gpu/study/tail/variant.py`, kernel `battle3v3_tail`): once half the
-  workers of a launch are idle (`POGO_GPU_TAIL_IDLE=0.5`), idle threads run the next halving round's likely battles.
+  threads of a launch are idle (`POGO_GPU_TAIL_IDLE=0.5`, a design choice, not tuned by measurement), idle threads run the next halving round's likely battles.
   Their results only enter the battle memo, so a checkpoint never changes, and a filler battle never extends the launch
   (it stops within one lookahead step of the main battles' end). `tail,certain` adds the battles of teams already sure
   to pass the cut (a JS port of the certainty check) through an in-kernel queue fed while the launch runs. Both are off
@@ -400,16 +400,17 @@ time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
   each). CPU-only 2-gen and default-GPU 5-gen checkpoints equal round 8's (`out/gpu/study/det-r9.txt`).
 - **Speed (reference A/B, started 2026-10-17 18:34 ET, 3 rounds × default/tail/certain, 10 gens, halving 3).** Warm
   s/gen: default 12.23 (spread 0.13), tail 11.83 (0.26), tail,certain 11.59 (0.73). Tail beats both spreads (−0.41 s);
-  certain does not (−0.64 s inside its own 0.73 spread). Tail share rises from 42.3% to 55.4%, because the filler work
-  sits in the tail. Per launch the filler ran 3,315 battles; 65% finished in time and 49% were later used.
-- **Full runs (100 gens, standard).** Default 17.2 min (12:15–12:32 ET), tail 17.4 min (18:54–19:12 ET), tail,certain
-  17.0 min (19:12–19:29 ET); one run each, so no spread. Warm s/gen 10.09 / 10.26 / 10.05: the 10-gen gain of tail did
+  certain does not (−0.64 s inside its own 0.73 spread). Tail share rises from 42.3% to 55.4%: the filler work
+  sits in the tail, and later rounds find battles already done, so the non-tail kernel time falls (about 6.2 → 3.7 s/gen). Per launch with a next-round pool (2 of 3 per generation) the filler ran 3,315 battles; 65% finished in time and 49% were later used.
+- **Full runs (100 gens, standard).** Default 17.2 min (19:48–20:05 ET), tail 17.4 min (18:54–19:12 ET), tail,certain
+  17.0 min (19:12–19:29 ET); one run each, so no spread. Warm s/gen 10.08 / 10.26 / 10.05: the 10-gen gain of tail did
   not carry over to 100 gens.
-- **SM-active timeline** (replay of dumped launches, `out/gpu/study/prof/tail-timeline.json`): on the 10k launch SMs
-  are busy 47.0% of the launch with the default, 55.3% with tail, 57.7% with tail,certain, but the launch ends 0.48 s
-  later with tail. A launch still ends with its longest battle.
+- **SM-active timeline** (replay of dumped launches on the fixed code, 19:44 ET, `out/gpu/study/prof/tail-timeline.json`;
+  the next-round pool is a stand-in, up to 6,000 battles of another dumped launch): on the 10k launch SMs are busy 48.1%
+  of the launch with the default, 55.4% with tail, 60.2% with tail,certain, but the launch ends 0.54 s later with
+  tail. A launch still ends with its longest battle. The Nsight cards on the page do not include this share.
 - **Nsight Compute** (counters now allowed; `out/gpu/study/prof/ncu/summary.json`, 5k and 10k launches at base
-  clocks): long-scoreboard stalls 51.5% of stall cycles, issue-slot use 12.5%, achieved occupancy 15.6%, local memory
+  clocks): long-scoreboard waits 51.5% of all warp cycles (55.0% of non-issuing cycles), issue-slot use 12.5%, achieved occupancy 15.6%, local memory
   99.87% of L1 bytes (844 GB in a 3.9 s launch), L1 hit 82.9%, L2 hit 86.9%. The 36k launch and the tail kernel have no
   Nsight numbers: replay ends in `LaunchFailed (CUDA error 999)` and resets the Windows display driver, and a launch the
   host feeds while it runs cannot be replayed.

@@ -22,7 +22,7 @@ Each battle keeps about 39,000 bytes of state in local memory: teams, HP, energy
 
 Local memory is GPU main memory, reached through the L1 and L2 caches.
 
-Nsight Compute, NVIDIA's profiler, shows this is nearly all L1 traffic. Warps mostly wait for it.
+Nsight Compute, NVIDIA's profiler, shows this is nearly all L1 traffic. Half of all warp cycles wait for it.
 
 Shared memory sits inside the SM. Keeping the hot state there would remove most of those waits.
 
@@ -36,11 +36,11 @@ A launch still waits for its longest battle, so order barely matters, and each i
 
 ## The tail, and why it is the target
 
-![Busy SMs over a 10k-battle launch: all 68 busy, then a long drop after half the battles finish](gpu-r9-tail.png)
+![Busy SMs over a 10k-battle launch: all 68 busy, then a slow drop after half the battles finish](gpu-r9-tail.png)
 
-The tail is the end of a launch, after half its battles are done.
+The tail is the end of a launch, from when half its battles are done until the last one ends.
 
-Most of the GPU's 68 cores (SMs) then have nothing left to run.
+In it the GPU's 68 cores (SMs) run out of work one by one.
 
 Round 9 filled that idle time with the next round's battles. The SMs stayed busier, but the launch still ends
 with its longest battle.
@@ -49,7 +49,9 @@ with its longest battle.
 
 ![Round 9 A/B: one dot per run for default, tail filler and certain feed](gpu-r9-noise.png)
 
-Warm s/gen is the mean seconds per generation once the battle cache has filled. Earlier, slower generations are left out.
+Warm s/gen: mean seconds per generation once the cache hit rate has levelled off.
+
+The slower early generations are left out.
 
 The same run repeated gives a slightly different time. The spread, slowest minus fastest, is that noise.
 

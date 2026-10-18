@@ -68,7 +68,7 @@ const pics = {};
   const ls = n.top5_stalls?.find((x) => x.reason === 'long_scoreboard')?.share_pct;
   h += t(10, 144, '5k launch, Nsight Compute:', { size: 11.5, bold: true });
   h += t(10, 161, `${n.local_share_of_l1_bytes_pct ?? '?'}% of L1 traffic is local memory`, { size: 11.5 });
-  h += t(10, 177, `${ls ?? '?'}% of warp waits are memory loads`, { size: 11.5 });
+  h += t(10, 177, `${ls ?? '?'}% of warp cycles wait on memory loads`, { size: 11.5 });
   h += t(10, 193, `${n.issue_slot_use_pct ?? '?'}% of cycles start an instruction`, { size: 11.5 });
   h += t(10, 213, 'Hot state in shared memory would cut those waits.', { size: 11.5, fill: C.ok });
   pics['gpu-r9-memory'] = svg(224, h);
@@ -95,14 +95,14 @@ const pics = {};
   const L = rd('out/gpu/study/prof/tail-timeline.json')?.launches?.['10k']?.off;
   let h = t(10, 18, 'Busy SMs during one 10k-battle launch', { bold: true });
   if (L) {
-    const x0 = 10, x1 = W - 10, top = 30, hh = 90, bw = (x1 - x0) / L.busy_sms.length;
+    const x0 = 10, x1 = W - 10, top = 46, hh = 90, bw = (x1 - x0) / L.busy_sms.length;
     L.busy_sms.forEach((b, k) => { h += rect(x0 + k * bw, top + hh - (b / L.sms) * hh, bw + 0.3, (b / L.sms) * hh, C.a, 0); });
     const half = x0 + (x1 - x0) * (1 - L.tail_share_pct / 100);
-    h += `<line x1="${half}" x2="${half}" y1="${top - 4}" y2="${top + hh}" stroke="${C.b}" stroke-width="2"/>`;
-    h += t(half + 4, top + 8, 'half the battles done', { size: 11, fill: C.b });
+    h += `<line x1="${half}" x2="${half}" y1="${top - 12}" y2="${top + hh}" stroke="${C.b}" stroke-width="2"/>`;
+    h += t(Math.min(half, W - 10), top - 16, 'half the battles done', { size: 11, fill: C.b, anchor: half > W - 130 ? 'end' : 'middle' });
     h += t(10, top + hh + 16, `0 s`, { size: 11, fill: C.mut }) + t(x1, top + hh + 16, `${L.main_span_s.toFixed(1)} s`, { size: 11, fill: C.mut, anchor: 'end' });
     h += t(10, top + hh + 34, `The tail (right of the line) is ${L.tail_share_pct}% of the launch.`, { size: 11.5 });
-    h += t(10, top + hh + 50, `SMs are busy ${L.sm_active_share_pct}% of the time; the rest is idle.`, { size: 11.5 });
+    h += t(10, top + hh + 50, `SMs are busy ${L.sm_active_share_pct}% of the launch (a replay).`, { size: 11.5 });
     pics['gpu-r9-tail'] = svg(top + hh + 60, h);
   }
 }

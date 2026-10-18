@@ -94,6 +94,8 @@ def expected():
     for v, r in full.items():
         if r and r["exit"] == 0:
             E[f"full.{v}.min"], E[f"full.{v}.warm"], E[f"full.{v}.gens"] = r["total"] / 60, r["warm"], r["gens"]
+    if full["tail"] and full["tail"]["exit"] == 0:
+        E["full.tail.latewait"] = full["tail"]["late"]
     for v in ("tail", "certain"):
         if full[v] and full["default"] and full[v]["total"] and full["default"]["total"]:
             E[f"full.{v}.dmin"] = (full[v]["total"] - full["default"]["total"]) / 60

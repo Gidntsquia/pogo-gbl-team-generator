@@ -99,7 +99,17 @@ for (const [file, prefix] of [[resolve('out/gpu-study.html'), ''], [EXPL, 'expla
   // viewport to the whole page first, let the slices land, rebuild the body, and clip from that one layout
   await page.setViewportSize({ width: 390, height: Math.ceil(r.cuts.at(-1)[1]) });
   await page.waitForTimeout(1500);
-  await page.evaluate(() => { document.body.innerHTML = document.body.innerHTML; return new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))); });
+  // Chrome caches the shaped text run with the fallback box; wrapping each emoji in its own font span reshapes it
+  await page.evaluate(() => {
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), nodes = [];
+    while (w.nextNode()) if (/\p{Extended_Pictographic}/u.test(w.currentNode.textContent) && !w.currentNode.parentElement.closest('svg, style, script')) nodes.push(w.currentNode);
+    for (const n of nodes) {
+      const s = document.createElement('span');
+      s.innerHTML = n.textContent.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]).replace(/(\p{Extended_Pictographic}\uFE0F?)/gu, `<span style="font-family:'Noto Color Emoji'">$1</span>`);
+      n.replaceWith(...s.childNodes);
+    }
+    return new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+  });
   await page.waitForTimeout(500);
   const shots = [];
   for (const [i, [a, b, err]] of r.cuts.entries()) {
