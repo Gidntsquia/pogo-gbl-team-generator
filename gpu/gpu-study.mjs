@@ -173,7 +173,7 @@ const summary = [
   `Warm time per generation: default ${s('default')}, tail filler ${s('tail')} (${verdict('ab.tail.delta', vT.word)}), certain feed ${s('certain')} (${verdict('ab.certain.delta', vC.word)}).`,
   `In the 19:44 ET replay, SMs are busier (${num('tl.10k.default.active', tl10.off?.sm_active_share_pct, 1, { unit: '%' })} to ${num('tl.10k.tail.active', tl10.tail?.sm_active_share_pct, 1, { unit: '%' })} on 10k); a launch still ends with its longest battle.`,
   `Nsight on the 5k launch (10:37 ET run): ${pct('ncu.5k.stall.long_scoreboard', longSb)} of warp cycles wait on memory loads, mostly battle state.`,
-  `Keep the default: the 100-gen tail-filler run took ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })} (one run); the certain feed had ${verdict('ab.certain.delta', vC.word)}.`,
+  `Keep the default: the 100-gen tail-filler run (18:54 ET) took ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })} vs default; the certain feed had ${verdict('ab.certain.delta', vC.word)}.`,
 ];
 const sup = (...k) => `<p class="sup">Supports summary point${k.length > 1 ? 's' : ''} ${k.length > 1 ? `${k.slice(0, -1).join(', ')} and ${k.at(-1)}` : k[0]}.</p>`;
 
@@ -326,22 +326,23 @@ ${sup(1, 2, 3)}
 <p>The winner check re-runs the battles on the CPU engine, pvpoke's own battle code.</p>
 <ul>
 <li>Checkpoints of a 5-generation run with the same seed: tail filler ${detOk('tail') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'} to default, certain feed ${detOk('tail,certain') ? '<b class="ok">identical</b>' : '<b class="bad">differ</b>'}.</li>
-<li>100-generation runs vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
+<li>100-generation runs (r9-full-*) vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
 <li>Winner check against the CPU engine: tail filler ${verifyOk('tail') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}, certain feed ${verifyOk('tail-certain') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}.</li>
 </ul>
 <h3>Six bugs the runs found</h3>
 <p>Runs failed or slowed down, so all six were fixed.</p>
 <p>Times and exits below are from r9chain.log and the fix commits (all ET, 2026-10-17).</p>
 <p>The runs named here came before their fix.</p>
-<p>Every other tail and certain-feed number on this page came after all six, except the 5k Nsight run.</p>
+<p>Every other tail and certain-feed number on this page came after all six.</p>
 <p>The certain feed crashed on its first real run (fixed 11:48).</p>
-<p>Rows read early hold only the winner, and saving them as full results threw.</p>
+<p>Battles it read before the launch ended carry only the winner. Storing them as complete results raised an error.</p>
 <p>A read of results could start before the launch's inputs were uploaded and return old values. It now waits for the uploads.</p>
 <p>Unfinished early battles ran on past the launch end and slowed the next launch. </p>
 <p>They now stop within one lookahead, the move search a battle runs each turn.</p>
 <p>Both were fixed in the 13:49 commit.</p>
 <p>The 100-generation tail and certain-feed runs before it failed (exit 1 at 13:17 and 13:35).</p>
-<p>The result collector did not set its early-return flag when it waited. The replay failed (exit 1 at 13:56); fixed 13:59.</p>
+<p>When the code that gathers a launch's results waited for late battles, it did not mark the launch as ended early.</p>
+<p>The replay failed (exit 1 at 13:56); fixed 13:59.</p>
 <p>A new stream (GPU work queue) per launch blocked memory reuse, and late generations slowed down.</p>
 <p>Now one stream serves all (18:06 commit).</p>
 <p>Before it, the 100-generation tail run took 134 min (14:26-16:39); after it, ${fullWall('tail') != null ? (fullWall('tail') / 60).toFixed(1) : '?'} min.</p>
@@ -390,7 +391,8 @@ ${table(['variant', 'wall min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full
 <p class="cap">Wall min: run start to process exit, from the wall start and wall end lines of each log.</p>
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}.</p>
 <p>The late wait in the 100-generation tail-filler run was ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} in total.</p>
-<p>Each variant has one 100-generation run, so these differences have no noise measure. The filler did not save time in its run.</p>
+<p>Each variant has one 100-generation run on the fixed code.</p>
+<p>So these differences have no noise measure. The filler did not save time in its run.</p>
 </section>
 
 <section id="todo"><h2>What to do 🚀</h2>
