@@ -417,7 +417,7 @@ time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
 - **Four bugs the long runs found**, all fixed before the reference runs: a state read could run before its upload
   (now waits on the upload); late filler battles ran past the launch end (now stop within one lookahead, and the next
   launch waits for them); a new CUDA stream per launch kept cupy's freed blocks from being reused, so the pool grew
-  ~7 MB a launch and late generations ran up to 150× slower (one module stream now); an early read of the timing
+  ~7 MB a launch and late generations slowed (the 100-gen tail run took 134 min, 14:26–16:39 ET; 17.5 min after the fix; one module stream now); an early read of the timing
   buffer saw old bytes from reused memory and overflowed the int32 reply (buffer zeroed per launch, unwritten rows
   dropped).
 - **GPU time.** About 7 h of chain stages against the ~3 h budget, because the four bugs forced three chain restarts.

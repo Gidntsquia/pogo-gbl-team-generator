@@ -303,7 +303,7 @@ const glossary = [
 
 // ---------------------------------------------------------------- page
 const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json, 19:44 ET).</p><p class="cap">The tail kernel is the GPU program with the filler built in. Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
-const ncuCaption = `First five cards: Nsight Compute runs of 2026-10-17 (summary.json): 5k at 10:37 ET, 10k at 10:50 ET.</p><p class="cap">The 10k run stopped at pass 25 of 42; its values come from passes 1-24.</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json).</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
+const ncuCaption = `First five cards: Nsight Compute runs of 2026-10-17 (summary.json): 5k at 10:37 ET, 10k at 10:50 ET.</p><p class="cap">The 10k run stopped at pass 25 of 42; its values come from passes 1-24.</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json, 19:44 ET).</p><p class="cap">Tail and certain rows use a stand-in pool. 5k: the first 6,000 battles of the 10k launch.</p><p class="cap">10k: the 4,788 battles of the 5k launch. 36k: the first 6,000 of another recorded launch.</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). A captioned table or chart uses the runs its caption names.</p></header>
@@ -337,7 +337,7 @@ ${sup(1, 2, 3)}
 <p>They now stop within one lookahead, the move search a battle runs each turn.</p>
 <p>Both were fixed in the 13:49 commit.</p>
 <p>The 100-generation tail and certain-feed runs before it failed (exit 1 at 13:17 and 13:35).</p>
-<p>A new stream (GPU work queue) per launch blocked memory reuse. Late generations took up to 150 times as long.</p>
+<p>A new stream (GPU work queue) per launch blocked memory reuse, and late generations slowed down.</p>
 <p>Now one stream serves all (18:06 commit).</p>
 <p>Before it, the 100-generation tail run took 134 min (14:26-16:39); after it, ${fullWall('tail') != null ? (fullWall('tail') / 60).toFixed(1) : '?'} min.</p>
 <p>Timing records read while late battles ran could hold old bytes. The buffer is now cleared each launch (18:31 commit).</p>
