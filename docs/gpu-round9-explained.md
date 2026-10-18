@@ -33,7 +33,7 @@ Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per gene
 
 ## Each scheduling idea added time
 
-![Six round-8 scheduling ideas each added 2.0 to 7.3 s per generation](gpu-r9-scheduling.png)
+![Five round-8 scheduling ideas each added 2.0 to 7.3 s per generation](gpu-r9-scheduling.png)
 
 Two streams overlap CPU-side work with the GPU. CPU share auto moves some battles to the CPU.
 

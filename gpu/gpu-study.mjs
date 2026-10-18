@@ -265,7 +265,7 @@ const glossary = [
   ['halving round', 'one cut inside a generation: all teams fight a few opponents, the bottom half is cut, the rest go on.'],
   ['tail', 'the end of a launch, from when half its battles are done until the last one ends. SMs run out of work one by one.'],
   ['tail share', 'the tail\'s time as a share of a generation\'s time, summed over a run\'s warm generations.'],
-  ['tail filler', 'POGO_GPU_STUDY=tail: idle SMs run the next round\'s likely battles early. Their results are only reused.'],
+  ['tail filler', 'POGO_GPU_STUDY=tail: idle SMs run likely next-round battles early. A result is used only if asked for.'],
   ['certain feed', 'POGO_GPU_STUDY=tail,certain: adds next-round battles of teams already sure to pass the cut.'],
   ['cache hit rate', 'share of battles answered from saved results instead of simulated (a program cache, apart from L1 and L2).'],
   ['warm s/gen', 'mean seconds per generation from the saturation generation on, once the cache hit rate has levelled off.'],
@@ -304,7 +304,7 @@ const glossary = [
 ];
 
 // ---------------------------------------------------------------- page
-const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json, 19:44 ET).</p><p class="cap">The tail kernel is the GPU program with the filler built in. Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
+const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json, 19:44 ET).</p><p class="cap">The tail kernel is the GPU program with the filler built in. Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, ',')} battles of the 5k launch.`;
 const ncuCaption = `First five cards: Nsight Compute runs of 2026-10-17 (summary.json): 5k at 10:37 ET, 10k at 10:50 ET.</p><p class="cap">Nsight replays a launch once per group of counters (a profiler pass).</p><p class="cap">The 10k run stopped at profiler pass 25 of 42; its values come from passes 1-24.</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json, 19:44 ET).</p><p class="cap">Tail and certain rows use a stand-in pool. 5k: the first 6,000 battles of the 10k launch.</p><p class="cap">10k: the 4,788 battles of the 5k launch. 36k: the first 6,000 of another recorded launch.</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
@@ -362,7 +362,7 @@ ${table(['variant', 'mean', 'spread', 'vs default'], abSum, 'The same runs: mean
 <p>Tail share is the tail's time as a share of generation time, over the warm generations.</p>
 <p>A/B means: default ${tailPct('default')}, tail filler ${tailPct('tail')}, certain feed ${tailPct('certain')}.</p>
 <p>The filler runs its battles in the tail. Why the share rises is not measured.</p>
-<p>A pool is the set of next-round battles the filler may run. Per launch with a pool, the filler ran ${num('ab.tail.spec', TLg.tail.speculated / Math.max(1, TLg.tail.launches), 0)} battles early on average.</p>
+<p>A pool is the set of next-round battles the filler may run. Per launch with a pool, the filler ran ${num('ab.tail.spec', TLg.tail.speculated / Math.max(1, TLg.tail.launches), ',')} battles early on average.</p>
 <p>Of those, ${pct('ab.tail.keptpct', 100 * TLg.tail.kept / Math.max(1, TLg.tail.speculated), 0)} finished before the launch ended and ${pct('ab.tail.servedpct', 100 * TLg.tail.served / Math.max(1, TLg.tail.speculated), 0)} were later used.</p>
 ${timelinePicture('10k')}
 <p class="cap">${tlCaption}</p>
