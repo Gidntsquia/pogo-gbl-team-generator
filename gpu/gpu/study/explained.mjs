@@ -33,11 +33,13 @@ const pics = {};
 // 1. island halving: round 7 runs (r7.* keys of round8-numbers.json, islands on/off, two runs each)
 {
   const { g, y } = bars('Warm s/gen, round 7 (two runs each)', [
-    { label: 'teams together', v: 12.2, fill: C.a, text: '12.20 / 12.05' },
+    { label: 'no islands', v: 12.2, fill: C.a, text: '12.20 / 12.05' },
     { label: 'island halving', v: 17.64, fill: C.b, text: '17.64 / 17.51' },
   ], 24);
   let h = g, yy = y + 14;
-  h += t(10, yy, 'One launch runs an island\'s halving rounds in turn.', { size: 11.5 });
+  h += t(10, yy, 'No islands: each halving round is one launch of all teams.', { size: 11.5 });
+  yy += 16;
+  h += t(10, yy, 'Islands: one launch runs an island\'s halving rounds in turn.', { size: 11.5 });
   yy += 10;
   // sketch: three rounds of four parallel battles; each round waits for its longest battle
   const rounds = [[5, 8, 4, 6], [3, 4, 9, 5], [6, 3, 4, 4]];

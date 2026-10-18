@@ -13,6 +13,7 @@ import { runStats, compareRuns } from './gpu/study/runs.mjs';
 const S = 'out/gpu/study';
 const rd = (p) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null);
 const txt = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+const R8N = JSON.parse(txt('out/gpu/study/detail/round8-numbers.json') || '{}');
 const sum = (a, f = (x) => x) => a.reduce((s, x) => s + f(x), 0);
 const mean = (a) => (a.length ? sum(a) / a.length : null);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -309,7 +310,7 @@ const body = `
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). A captioned table or chart uses the runs its caption names.</p></header>
 
 <section id="summary"><h2>Summary 📌</h2><ol>${summary.map((x, i) => `<li id="s${i + 1}">${x}</li>`).join('')}</ol>
-<p class="cap">Words in the summary:</p><ul class="cap"><li>default: the current code, both new flags off.</li><li>round: one cut inside a generation; the bottom half of the teams is dropped. The next round fights the rest.</li><li>launch: one batch of battles sent to the GPU. 5k and 10k are recorded launches of 4,788 and 10,920 battles.</li><li>tail filler: idle GPU cores run next-round battles early. Certain feed: adds battles of teams sure to pass.</li><li>SM: one of the GPU's 68 cores. Replay: a recorded launch run again alone, with timers.</li><li>warm: from the generation on which the share of battles answered from saved results levels off.</li><li>Nsight: NVIDIA's profiler. A warp is 32 battles run together.</li></ul></section>
+<p class="cap">Words in the summary:</p><ul class="cap"><li>default: the current code, both new flags off.</li><li>round: one cut inside a generation; the bottom half of the teams is dropped. The next round fights the rest.</li><li>round 8, round 9: study rounds of this GPU work (this page is round 9).</li><li>launch: one batch of battles sent to the GPU. 5k and 10k are recorded launches of 4,788 and 10,920 battles.</li><li>tail filler: idle GPU cores run next-round battles early. Certain feed: adds battles of teams sure to pass.</li><li>SM: one of the GPU's 68 cores. Replay: a recorded launch run again alone, with timers.</li><li>warm: from the generation on which the share of battles answered from saved results levels off.</li><li>Nsight: NVIDIA's profiler. A warp is 32 battles run together.</li></ul></section>
 
 <section id="built"><h2>What I built and what it gained 🔧</h2>
 ${sup(1, 2, 3)}
@@ -328,20 +329,25 @@ ${sup(1, 2, 3)}
 <li>100-generation runs vs default: tail filler ${fullSame('tail')}, certain feed ${fullSame('certain')}.</li>
 <li>Winner check against the CPU engine: tail filler ${verifyOk('tail') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}, certain feed ${verifyOk('tail-certain') ? '<b class="ok">all agree, 0 flagged</b>' : '<b class="bad">failed</b>'}.</li>
 </ul>
-<h3>Four bugs the runs found</h3>
-<p>Runs failed or slowed down, so all four were fixed.</p>
-<p>Every tail and certain-feed run on this page was made after the fixes, except the failed 5k profile.</p>
+<h3>Six bugs the runs found</h3>
+<p>Runs failed or slowed down, so all six were fixed.</p>
 <p>Times and exits below are from r9chain.log and the fix commits (all ET, 2026-10-17).</p>
+<p>The runs named here came before their fix.</p>
+<p>Every other tail and certain-feed number on this page came after all six, except the 5k Nsight run.</p>
+<p>The certain feed crashed on its first real run (fixed 11:48).</p>
+<p>Rows read early hold only the winner, and saving them as full results threw.</p>
 <p>A read of results could start before the launch's inputs were uploaded and return old values. It now waits for the uploads.</p>
 <p>Unfinished early battles ran on past the launch end and slowed the next launch. </p>
 <p>They now stop within one lookahead, the move search a battle runs each turn.</p>
 <p>Both were fixed in the 13:49 commit.</p>
 <p>The 100-generation tail and certain-feed runs before it failed (exit 1 at 13:17 and 13:35).</p>
+<p>The result collector did not set its early-return flag when it waited. The replay failed (exit 1 at 13:56); fixed 13:59.</p>
 <p>A new stream (GPU work queue) per launch blocked memory reuse, and late generations slowed down.</p>
 <p>Now one stream serves all (18:06 commit).</p>
 <p>Before it, the 100-generation tail run took 134 min (14:26-16:39); after it, ${fullWall('tail') != null ? (fullWall('tail') / 60).toFixed(1) : '?'} min.</p>
 <p>Timing records read while late battles ran could hold old bytes. The buffer is now cleared each launch (18:31 commit).</p>
-<p>Before it, the third certain-feed A/B run crashed (exit 1 at 18:28).</p>
+<p>Before it, an earlier A/B (started 18:09) crashed in its third certain-feed run (exit 1 at 18:28).</p>
+<p>The reference A/B began after the fix.</p>
 <p>The next launch waits for unfinished early battles (the late wait). In the A/B: ${num('ab.tail.latewait', ST.tail.runs.length ? mean(ST.tail.runs.map((r) => (r.tailLog?.lateWaitS ?? 0) / r.gens)) : null, 2, { unit: ' s' })} per generation with the tail filler.</p>
 <h3>Time per generation</h3>
 <p>${num('ab.rounds', rounds.length, 0)} passes, each running default, tail filler and certain feed back to back, 10 generations each.</p>
@@ -391,7 +397,7 @@ ${table(['variant', 'wall min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full
 ${sup(5)}
 <ul>
 <li>Run today with the default: <code>bash scripts/sim.sh &lt;csv&gt; --gpu</code> (its defaults).</li>
-<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8).</li>
+<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state).</li><li>In round 8's A/B it saved ${R8N['ab.ab-stack.delta'] ? Math.abs(R8N['ab.ab-stack.delta'].v).toFixed(2) : '?'} s/gen, beyond both spreads (${R8N['ab.ab-stack.spread']?.t} and default ${R8N['ab.ab-base.spread']?.t}).</li>
 <li>Tail flags stay off: the tail filler's gain did not show in the 100-generation run (fact 3) and the certain feed had ${verdict('ab.certain.delta', vC.word)}.</li>
 <li>Build next: cut more bytes from each battle's state, the source of fact 2's waits.</li>
 </ul>

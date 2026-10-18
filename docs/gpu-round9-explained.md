@@ -15,7 +15,7 @@ Five ideas from GPU study rounds 7-9, one picture each. Sources: `out/gpu-study.
 
 ## Island halving costs 5.4 s per generation
 
-![Round 7 warm s/gen: all teams together 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
+![Round 7 warm s/gen: no islands 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
 
 Island halving splits the teams into groups (islands) and runs each island's halving rounds in one launch.
 
