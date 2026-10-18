@@ -33,7 +33,7 @@ const pics = {};
 // 1. island halving: round 7 runs (r7.* keys of round8-numbers.json, islands on/off, two runs each)
 {
   const { g, y } = bars('Warm s/gen, round 7 (two runs each)', [
-    { label: 'one pool', v: 12.2, fill: C.a, text: '12.20 / 12.05' },
+    { label: 'teams together', v: 12.2, fill: C.a, text: '12.20 / 12.05' },
     { label: 'island halving', v: 17.64, fill: C.b, text: '17.64 / 17.51' },
   ], 24);
   let h = g, yy = y + 14;
@@ -79,8 +79,8 @@ const pics = {};
   const { g, y } = bars('Round 8 scheduling ideas: s/gen added vs default', [
     { label: 'CPU share auto', v: 2.0, fill: C.b, text: '+2.0 s' },
     { label: 'two streams', v: 4.4, fill: C.b, text: '+4.4 s' },
-    { label: 'smaller pool', v: 4.4, fill: C.b, text: '+4.4 s' },
-    { label: 'lockstep, big slice', v: 5.2, fill: C.b, text: '+5.2 s' },
+    { label: 'less lookahead', v: 4.4, fill: C.b, text: '+4.4 s' },
+    { label: 'longer lockstep', v: 5.2, fill: C.b, text: '+5.2 s' },
     { label: 'lockstep', v: 7.3, fill: C.b, text: '+7.3 s' },
     { label: 'queue kernel', v: 7.3, fill: C.b, text: '+7.3 s' },
   ], 9);

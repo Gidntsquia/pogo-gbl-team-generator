@@ -3,19 +3,21 @@
 Five ideas behind GPU rounds 8 and 9, one picture each. Sources: `out/gpu-study.html` and `out/gpu/study/` (branch `gpu`).
 
 ## Terms
-- **SM:** one of the GPU's 68 cores. A **warp** is 32 threads an SM runs together.
-- **Launch:** one batch of battles sent to the GPU; it ends when its last battle ends.
-- **Lookahead:** a battle's search of possible next moves.
+- **Generation:** one step of the team search; its **halving rounds** each cut the bottom half of teams.
+- **SM:** one of the GPU's 68 cores. A **warp** is 32 threads it runs together.
+- **Registers, shared memory:** small, fast storage on an SM. **L1, L2:** caches between the SMs and GPU main memory.
+- **Launch:** one batch of battles sent to the GPU; it ends with its last battle. A **stream** is a queue of GPU work.
+- **5k launch:** a recorded launch of 4,788 battles. A **replay** runs a recorded launch again with timers.
+- **Lookahead:** a battle's search of next moves. **Nsight Compute:** NVIDIA's GPU profiler.
+- **Tail filler, certain feed:** round 9 fills idle SMs with next-round battles, or battles of teams sure to pass.
 - **Warm s/gen:** seconds per generation, early generations left out (see the last section).
-- **A/B:** default and a change run in turns; a pass is one run of each.
+- **A/B:** default and a change run in turns; a pass is one run of each. **Longer lockstep:** more steps per launch.
 
 ## Island halving costs 5.4 s per generation
 
-![Round 7 warm s/gen: one pool 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
+![Round 7 warm s/gen: all teams together 12.20 and 12.05, island halving 17.64 and 17.51](gpu-r9-island.png)
 
-A halving round lets every team fight a few opponents, then cuts the bottom half.
-
-Island halving splits teams into islands and runs each island's rounds in one launch. One pool keeps teams together.
+Island halving splits the teams into groups (islands) and runs each island's halving rounds in one launch.
 
 Each round waits for its longest battle while the other threads sit idle.
 
@@ -25,7 +27,7 @@ Each round waits for its longest battle while the other threads sit idle.
 
 Each battle keeps about 39,000 bytes of state in local memory: teams, HP, energy and its lookahead.
 
-Local memory is GPU main memory, behind the L1 and L2 caches. NVIDIA's profiler shows half of warp cycles wait on it.
+Local memory is GPU main memory, behind L1 and L2. Nsight Compute shows half of warp cycles wait on it.
 
 Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per generation in a 3-pass A/B.
 
@@ -33,11 +35,11 @@ Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per gene
 
 ![Six round-8 scheduling ideas each added 2.0 to 7.3 s per generation](gpu-r9-scheduling.png)
 
-Two streams overlap host (CPU-side) work with the GPU. CPU share auto moves some battles to the CPU.
+Two streams overlap CPU-side work with the GPU. CPU share auto moves some battles to the CPU.
 
-The smaller pool gives the lookahead less memory and re-runs battles that overflow it, one at a time.
+Less lookahead memory re-runs battles that overflow it, one at a time.
 
-The queue kernel hands threads whole battles from a list. Lockstep runs a few steps of every battle per launch.
+The queue kernel hands threads whole battles from a list. Lockstep runs some steps of all battles per launch.
 
 None makes a battle shorter, and a launch still waits for its longest one. Why each added time was not measured.
 
@@ -47,7 +49,7 @@ None makes a battle shorter, and a launch still waits for its longest one. Why e
 
 The tail runs from when half a launch's battles are done to its end. SMs run out of work one by one.
 
-Round 9 filled that idle time with the next round's battles. The SMs stayed busier, but the launch still ends with its longest battle.
+Round 9's tail filler and certain feed run more battles there. SMs stayed busier; a launch still ends with its longest battle.
 
 ## Reading warm s/gen and its noise
 
@@ -55,6 +57,4 @@ Round 9 filled that idle time with the next round's battles. The SMs stayed busi
 
 Warm s/gen: mean seconds per generation once the share of battles answered from saved results has levelled off.
 
-The same run repeated gives a slightly different time. The spread, slowest minus fastest, is that noise.
-
-A change counts only if it moves the mean by more than both spreads.
+Repeated runs differ a little; the spread (slowest minus fastest) is that noise. A change counts only if it beats both spreads.

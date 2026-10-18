@@ -204,7 +204,7 @@ const metrics = [
   },
   {
     name: 'Achieved occupancy', unit: '%', healthy: { lo: 60 },
-    what: 'warps resident on an SM, as a share of the 48 it can hold.',
+    what: 'warps loaded on an SM at once, as a share of the 48 it can hold.',
     ours: `${pct('ncu.5k.occ', n5.achieved_occupancy_pct)}: each thread needs so many registers that only 8 warps fit.`,
     means: 'with few warps, a wait on memory leaves the SM idle.',
     rows: [ncuRow('5k default', n5, (o) => o.achieved_occupancy_pct, 'ncu.5k.occ', COL.default), ncuRow('5k tail filler', vOn, (o) => o.achieved_occupancy_pct, 'ncu.5kon.occ', COL.tail), ncuRow('10k default', n10, (o) => o.achieved_occupancy_pct, 'ncu.10k.occ', COL.default), ncuRow('36k default', n36, (o) => o.achieved_occupancy_pct, 'ncu.36k.occ', COL.default)],
@@ -363,7 +363,7 @@ ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
 <h3>3. The 10-generation gain did not show in a 100-generation run</h3>
 <p>The A/B runs 10 generations. A full run is 100; the table has one run of each.</p>
-${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), after the A/B (r9-full-*). Default was rerun last.')}
+${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full run each with the A/B\'s command and settings, 100 generations, after the A/B (r9-full-*). Default was rerun last.')}
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
 <p>The late wait in the 100-generation tail-filler run was ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} in total.</p>
 <p>Each variant has one 100-generation run, so these differences have no noise measure. The filler did not save time in its run.</p>
