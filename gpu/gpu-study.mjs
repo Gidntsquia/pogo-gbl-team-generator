@@ -273,6 +273,7 @@ const glossary = [
   ['spread', 'the slowest minus the fastest of a variant\'s A/B runs: the noise.'],
   ['A/B', 'the same 10-generation run for each variant, repeated in passes.'],
   ['pass', 'default, tail filler and certain feed, run back to back.'],
+  ['profiler pass', 'one Nsight replay of a launch, reading one group of counters.'],
   ['stall', 'a cycle in which a warp has an instruction but cannot run it yet.'],
   ['long scoreboard', 'the stall where a warp waits for data from L1, L2 or main memory.'],
   ['local memory', 'per-thread memory in the GPU\'s main memory, cached in L1 and L2. Battle state lives there.'],
@@ -304,7 +305,7 @@ const glossary = [
 
 // ---------------------------------------------------------------- page
 const tlCaption = `Replay of the 10k launch three ways through the tail kernel (tail-timeline.json, 19:44 ET).</p><p class="cap">The tail kernel is the GPU program with the filler built in. Its pool is a stand-in: the ${num('tl.10k.tail.pool', tl10.tail?.pool, 0)} battles of the 5k launch.`;
-const ncuCaption = `First five cards: Nsight Compute runs of 2026-10-17 (summary.json): 5k at 10:37 ET, 10k at 10:50 ET.</p><p class="cap">The 10k run stopped at pass 25 of 42; its values come from passes 1-24.</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json, 19:44 ET).</p><p class="cap">Tail and certain rows use a stand-in pool. 5k: the first 6,000 battles of the 10k launch.</p><p class="cap">10k: the 4,788 battles of the 5k launch. 36k: the first 6,000 of another recorded launch.</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
+const ncuCaption = `First five cards: Nsight Compute runs of 2026-10-17 (summary.json): 5k at 10:37 ET, 10k at 10:50 ET.</p><p class="cap">Nsight replays a launch once per group of counters (a profiler pass).</p><p class="cap">The 10k run stopped at profiler pass 25 of 42; its values come from passes 1-24.</p><p class="cap">The 36k launch (generation 0's three launches merged) has no Nsight.</p><p class="cap">SM-active share: replay timing records (tail-timeline.json, 19:44 ET).</p><p class="cap">Tail and certain rows use a stand-in pool. 5k: the first 6,000 battles of the 10k launch.</p><p class="cap">10k: the 4,788 battles of the 5k launch. 36k: the first 6,000 of another recorded launch.</p><p class="cap">Healthy ranges: <a href="https://docs.nvidia.com/nsight-compute/ComputeTriage/index.html">NVIDIA's Compute Triage guide</a>, as read in round 8.`;
 const body = `
 <header><h1>GPU round 9: filling the tail ⏱️</h1>
 <p class="mut">Reference runs: ${esc(REF)} (r9-ab-*). An A/B runs default and each change in turns.</p><p class="mut"> A captioned table or chart uses the runs its caption names.</p></header>
