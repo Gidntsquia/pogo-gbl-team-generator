@@ -25,9 +25,9 @@ Each round waits for its longest battle while the other threads sit idle.
 
 ![Battle state lives in GPU main memory and reaches the SM through L1 and L2](gpu-r9-memory.png)
 
-Each battle keeps 39,088 bytes of state in local memory: teams, HP, energy and its lookahead.
+Round 8 counted 39,088 bytes of state per battle in local memory: teams, HP, energy and its lookahead.
 
-Local memory is GPU main memory, behind L1 and L2. Nsight Compute shows half of warp cycles wait on it.
+It sits in GPU main memory, behind L1 and L2. In the 10:37 ET Nsight run (5k launch), half of warp cycles wait on it.
 
 Round 8's compact state packs fields into 8 and 16 bits. It saved 0.5 s per generation in an A/B of 3 runs each.
 
