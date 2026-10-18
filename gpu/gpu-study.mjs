@@ -163,13 +163,6 @@ const activeGain = tl10.tail && tl10.off ? tl10.tail.sm_active_share_pct - tl10.
 const spanGain = tl10.tail && tl10.off ? tl10.tail.main_span_s - tl10.off.main_span_s : null;
 
 const fullW = (id) => (full[id]?.warmPerGen != null && full.default?.warmPerGen != null ? full[id].warmPerGen - full.default.warmPerGen : null);
-/** Mean wall of generations a..b (inclusive) of a full run minus the default's, from gpu-profile.json. */
-const fullRange = (id, a, b) => {
-  const w = (r) => (rd(`${r.dir}/gpu-profile.json`)?.generations ?? []).slice(a, b + 1).map((g) => g.wall);
-  if (!full[id] || !full.default) return null;
-  const x = w(full[id]), y = w(full.default);
-  return x.length === b - a + 1 && y.length === b - a + 1 ? mean(x) - mean(y) : null;
-};
 const fullD = (id) => (full[id]?.total && full.default?.total ? (full[id].total - full.default.total) / 60 : null);
 const verdictLine = (id, v) => `${VARIANTS.find((x) => x.id === id).label}: ${delta(id)} per warm generation, ${verdict(`ab.${id}.delta`, v.word)}${v.beats ? ' (beats both spreads)' : ' (within the spread)'}.`;
 
@@ -333,7 +326,7 @@ ${sup(1, 2, 3)}
 <h3>Four bugs the runs found</h3>
 <p>Runs failed or slowed down, so all four were fixed.</p>
 <p>Every tail and certain-feed run on this page was made after the fixes, except the failed 5k profile.</p>
-<p>A read of the launch's results could run before they were uploaded and use old values. The read now waits.</p>
+<p>A read of results could start before the launch's inputs were uploaded and return old values. It now waits for the uploads.</p>
 <p>Unfinished early battles ran on past the launch end and slowed the next launch. They now stop within one lookahead.</p>
 <p>A new stream per launch blocked memory reuse, so late generations took minutes. Now one stream serves all.</p>
 <p>Timing records read while late battles ran could hold old bytes, which crashed a run. The buffer is now cleared each launch.</p>
@@ -368,13 +361,12 @@ ${stallBars()}
 <ul class="cap"><li>long scoreboard: waiting on memory.</li><li>wait: a fixed pause after an instruction.</li><li>no instruction: the next instruction is not fetched yet.</li><li>selected: the cycle an instruction issues.</li><li>branch resolving: waiting for a jump target.</li></ul>
 ${metrics.map(metricCard).join('\n')}
 <p class="cap">${ncuCaption}</p>
-<h3>3. The 10-generation gain did not hold over 100 generations</h3>
+<h3>3. The 10-generation gain did not show in a 100-generation run</h3>
 <p>The A/B runs 10 generations. A full run is 100; the table has one run of each.</p>
 ${table(['variant', 'total min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full standard run each, 100 generations (the sim.sh default), after the A/B (r9-full-*). Default was rerun last.')}
 <p class="cap">Full-run difference vs default: tail filler ${num('full.tail.dmin', fullD('tail'), 2, { sign: true, unit: ' min' })}, certain feed ${num('full.certain.dmin', fullD('certain'), 2, { sign: true, unit: ' min' })}. One run each, so no spread.</p>
 <p>The late wait in the 100-generation tail-filler run was ${num('full.tail.latewait', full.tail?.tailLog?.lateWaitS ?? null, 2, { unit: ' s' })} in total.</p>
-<p>In that run the filler changed time per generation by ${num('full.tail.early', fullRange('tail', 4, 9), 2, { sign: true, unit: ' s' })} in generations 4-9, as in the A/B.</p>
-<p>It changed it by ${num('full.tail.late', fullRange('tail', 60, 99), 2, { sign: true, unit: ' s' })} in generations 60-99. Why is not measured.</p>
+<p>Each variant has one 100-generation run, so these differences have no noise measure. The filler did not save time in its run.</p>
 </section>
 
 <section id="todo"><h2>What to do 🚀</h2>
@@ -382,7 +374,7 @@ ${sup(5)}
 <ul>
 <li>Run today with the default: <code>bash scripts/sim.sh &lt;csv&gt; --gpu</code> (its defaults).</li>
 <li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state, round 8).</li>
-<li>Tail flags stay off: the tail filler's gain did not hold (fact 3) and the certain feed had ${verdict('ab.certain.delta', vC.word)}.</li>
+<li>Tail flags stay off: the tail filler's gain did not show in the 100-generation run (fact 3) and the certain feed had ${verdict('ab.certain.delta', vC.word)}.</li>
 <li>Build next: cut more bytes from each battle's state, the source of fact 2's waits.</li>
 </ul>
 <p class="more">More: <a href="gpu/study/detail/round8-decide.html">round 8 candidate changes</a></p>
