@@ -39,7 +39,7 @@ def variants():
     prod = K.source()
     yield "default", prod
     yield "stack", stack.source()
-    for st in sorted(lean.STEPS):
+    for st in lean.STEPS:
         yield f"lean{st}", (lean.source(st), lean.maxq(st))
     yield "cap", cap.edit(prod)
     yield "lean,cap", (cap.edit(lean.source()), lean.maxq())

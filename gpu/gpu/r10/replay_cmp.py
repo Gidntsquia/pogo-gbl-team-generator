@@ -15,6 +15,7 @@ import numpy as np
 R = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 D = os.path.join(R, "out/gpu/r10/replay")
 F_CAPPED = 128
+INVALID = 0x6E   # src/engine/gpuExecutor.js INVALID: rows the host re-runs on the CPU
 
 
 def load(launch, var):
@@ -55,19 +56,22 @@ def main():
             flags = rows[:, 10]
             cmpr = rows.copy(); cmpr[:, 10] &= ~F_CAPPED
             identical = bool(cmpr.shape == rr.shape and np.array_equal(cmpr, rr))
+            inval = ((rows[:, 10] | rr[:, 10]) & INVALID) != 0   # a row either side flagged (e.g. POOL_OVERFLOW) is re-run on the CPU in production
+            identical_kept = bool(cmpr.shape == rr.shape and np.array_equal(cmpr[~inval], rr[~inval]))
             agree = float(np.mean(rows[:, 0] == rr[:, 0]) * 100)
             out[launch]["variants"][var] = {
                 "reps": len(spans), "kernel_span_s_median": float(np.median(spans)), "kernel_span_s": spans,
                 "tail_after_50pct_s": tl, "span_of_stamps_s": sp,
                 "tail_vs_default_pct": round(100 * (tl / tail_r - 1), 1) if tail_r else None,
                 "span_vs_default_pct": round(100 * (float(np.median(spans)) / float(np.median([r["kernel_span_s"] for r in jr["reps"]])) - 1), 1),
-                "rows_identical_to_default": identical, "winner_agreement_pct": agree,
+                "rows_identical_to_default": identical, "rows_identical_to_default_excluding_flagged": identical_kept,
+                "flagged_invalid": int(np.count_nonzero(rows[:, 10] & INVALID)), "flagged_invalid_default": int(np.count_nonzero(rr[:, 10] & INVALID)), "winner_agreement_pct": agree,
                 "capped": int(np.count_nonzero(flags & F_CAPPED)), "rows_sha1": j["rows_sha1"],
             }
     json.dump(out, open(os.path.join(D, "summary.json"), "w"), indent=1)
     for launch, d in out.items():
         for var, v in d["variants"].items():
-            print(f"{launch:4s} {var:12s} span {v['kernel_span_s_median']:.2f}s ({v['span_vs_default_pct']:+.1f}%) tail {v['tail_after_50pct_s']:.2f}s ({v['tail_vs_default_pct']:+.1f}%) identical {v['rows_identical_to_default']} agree {v['winner_agreement_pct']:.2f}% capped {v['capped']}")
+            print(f"{launch:4s} {var:12s} span {v['kernel_span_s_median']:.2f}s ({v['span_vs_default_pct']:+.1f}%) tail {v['tail_after_50pct_s']:.2f}s ({v['tail_vs_default_pct']:+.1f}%) identical {v['rows_identical_to_default']} (excl. flagged {v['rows_identical_to_default_excluding_flagged']}, flagged {v['flagged_invalid']} vs {v['flagged_invalid_default']}) agree {v['winner_agreement_pct']:.2f}% capped {v['capped']}")
 
 
 if __name__ == "__main__":
