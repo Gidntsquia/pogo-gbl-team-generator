@@ -425,3 +425,62 @@ time through `out/gpu/study/r9chain.sh` under `flock out/gpu/study/gpu.lock`.
 - **Next:** cut more bytes from each battle's state (round 8's compact state saved 0.5 s/gen); local memory is 99.9% of L1
   traffic, so that targets the long-scoreboard waits. Shared memory is too small to hold it (100 KB per SM vs ~39 KB per battle).
   Keep the tail flags off.
+
+## Round 10: as fast as possible (100-gen re-measure, lean state, battle cap)
+
+Branch `gpu`, 2026-10-18. The user's ask: use what the rounds taught to make `--gpu` runs as fast as possible. Numbers come only from `out/gpu/r10/runs.json` (`python3 gpu/gpu/r10/runs.py`) and the files `python3 gpu/gpu/r10/check.py` re-reads (it rebuilds this section with `gpu/gpu/r10/section.py` and fails on any difference). Warm s/gen = mean wall of generations 2 and later from `gpu-profile.json`; spread = max - min; rule (R1): a variant wins only if its mean beats the default's mean by more than both spreads, else "no gain". Clock times are US Eastern.
+
+### 100-gen runs (R3): one session, start 19:47 EDT, order default / stack / occ / tail / default, same seed
+| run | start ET | total wall (start to exit) | warm s/gen | vs default mean | checkpoints vs default-1 | verdict |
+|---|---|---|---|---|---|---|
+| default-1 | 19:47 EDT | 1101 s (18.4 min) | 10.75 | - | - | - |
+| stack | 20:05 EDT | 1056 s (17.6 min) | 10.30 | -0.43 | 100/100 identical | wins |
+| occ | 20:23 EDT | 1081 s (18.0 min) | 10.55 | -0.18 | 100/100 identical | wins |
+| tail | 20:41 EDT | 1113 s (18.5 min) | 10.84 | +0.11 | 100/100 identical | no gain |
+| default-2 | 20:59 EDT | 1100 s (18.3 min) | 10.71 | - | 100/100 identical | - |
+Default mean 10.73, spread 0.03 (two runs); one run per variant, so its own spread is 0 and "wins" means beating the default mean by more than 0.03. Checkpoints compared by `gpu/gpu/study/runs.mjs` compareRuns (timing fields ignored). Nothing was turned on by default: this table is the decision input.
+
+### 30-gen decision table (R1): session s1, start 23:13 EDT, 3 passes, each pass default then the variants, same seed
+| variant | warm s/gen, 3 runs | mean | spread | vs default | verdict | run starts ET |
+|---|---|---|---|---|---|---|
+| default | 11.16 / 9.67 / 9.75 | 10.19 | 1.49 | - | - | 23:13, 23:36, 23:54 |
+| lean (step 2) | 8.38 / 7.52 / 7.52 | 7.80 | 0.86 | -2.39 | wins | 23:19, 23:41, 00:00 |
+| cap 192 | 9.44 / 9.30 / 9.22 | 9.32 | 0.22 | -0.87 | no gain | 23:24, 23:45, 00:04 |
+| lean,cap 192 | 7.73 / 7.83 / 7.88 | 7.81 | 0.14 | -2.38 | wins | 23:29, 23:50, 00:09 |
+
+### lean (R4): steps are cumulative; results byte-identical to the default path (R5)
+| step | what | stack B/thread | regs | spill st/ld B | 5k replay span | 10k span | 36k span | verify_3v3 |
+|---|---|---|---|---|---|---|---|---|
+| default | production slice kernel | 39,088 (100%) | 255 | 28/36 | 3.17 s (+0.0%) | 9.84 s (+0.0%) | 20.59 s (+0.0%) | 100.00% / 0 flagged |
+| stack | round-8 compact Move / Mon | 36,128 (92%) | 255 | 0/0 | - | - | - | - |
+| lean1 | compact2 fields (8/16-bit act / timer / QA) on stack | 35,440 (91%) | 255 | 0/0 | 3.05 s (-3.9%) | 9.50 s (-3.4%) | 18.99 s (-7.8%) | 100.00% / 0 flagged |
+| lean2 | + binary-search queue insertion (LEAN_BSEARCH) | 35,440 (91%) | 255 | 0/0 | 2.34 s (-26.3%) | 5.29 s (-46.3%) | 16.11 s (-21.8%) | 100.00% / 0 flagged |
+| lean3 | + noinline cold helpers (LEAN_NI) | 35,472 (91%) | 255 | 48/76 | 2.08 s (-34.4%) | 4.48 s (-54.4%) | 13.50 s (-34.4%) | 100.00% / 0 flagged |
+| lean4 | + half lookahead pool (MAXQ 1024) | 21,136 (54%) | 255 | 48/76 | 2.09 s (-33.9%) | 4.91 s (-50.1%) | 14.13 s (-31.4%) | 100.00% / 0 flagged |
+| lean2q | step 2 + half pool, no noinline | 21,104 (54%) | 255 | 0/0 | 2.38 s (-24.8%) | 5.18 s (-47.4%) | 16.47 s (-20.0%) | - |
+Means used: 8/16-bit field packing (step 1), fewer dependent local loads in the lookahead queue (step 2: binary search for the insertion point, same index and order as the scan), noinline of cold helpers (step 3), half the per-thread pool (step 4: a battle whose pool passes 1024 is flagged and re-run on the CPU exactly as at 2048, so run results stay identical; replay rows differ only in those flagged rows). Replays: 5k = prof batch 7, 10k = batch 6, 36k = batches 0-2 merged, median of 3 reps, vs the default replay of the same launch. Registers stay at 255 at every step (a register target below 255 spilled and lost in round 8), so occupancy stays at 8 warps/SM and the >=25% target is not reached; the <=50% local-bytes target is only approached by the pool halving (54% of today's stack bytes), and the spilling step 4 is not the default: plain `POGO_GPU_STUDY=lean` is step 2 (0 spill).
+Steps were judged on these replays instead of 30-gen sessions (the user asked for the smallest test that answers the question); only step 2 went to the A/B. Early-stop rule: step 1 moved the 10k launch under 4%, step 3 over 2 is within replay noise, so the A/B has one lean row.
+Nsight Compute before / after (R4; `out/gpu/r10/ncu/summary.json`, base clocks, kernel replay, same fields as round 9):
+| launch | variant | kernel s | achieved occupancy | long_scoreboard share | local bytes | issue-slot use |
+|---|---|---|---|---|---|---|
+| 5k | default | no Nsight: no report written | | | | |
+| 5k | lean | no Nsight: no report written | | | | |
+| 10k | default | no Nsight: no report written | | | | |
+| 10k | lean | no Nsight: no report written | | | | |
+- cpu-only 2-gen (round 10 code) vs out/gpu/study/cpu2-r9 (round 9): evolve-gen0.json: IDENTICAL; evolve-gen1.json: IDENTICAL
+- POGO_GPU_STUDY=lean 5-gen vs default 5-gen: IDENTICAL (5 checkpoints, timing fields ignored)
+
+### cap (R6/R7): cap on pool entries per lookahead decision; gate = agreement with the CPU engine on the 2,436-battle verify set
+| cap | verify agreement / flagged / win-rate delta | gate (>=99.5%, +-1 pp) | capped in verify | 36k replay tail after 50% done | 36k span | 10k tail | capped in 36k |
+|---|---|---|---|---|---|---|---|
+| 128 | 99.33% / 0 flagged / +0.00 pp | cap: fails agreement at 128 | 141 | 1.23 s (-53.8%) | 16.87 s (-18.1%) | 1.27 s (-73.5%) | 2170 |
+| 192 | 99.58% / 0 flagged / +0.10 pp | pass | 47 | 1.92 s (-28.1%) | 19.35 s (-6.0%) | 1.47 s (-69.3%) | 1076 |
+| 256 | 99.79% / 0 flagged / +0.12 pp | pass | 25 | 2.57 s (-3.9%) | 19.22 s (-6.7%) | 2.08 s (-56.7%) | 846 |
+| 512 | 100.00% / 0 flagged / +0.00 pp | pass | 0 | 2.13 s (-20.3%) | 18.40 s (-10.6%) | 3.88 s (-19.0%) | 148 |
+R6 asked for a cap value that cuts the 36k tail by >=30% in a replay: none that passes the agreement gate does; 128 cuts it most and fails agreement, so the A/B used cap 192 (largest tail cut among the passing values). Every launch logs `gpu cap -- N of M battles hit the pool cap C`.
+Top-12 finalists of each 30-gen run re-battled on the CPU engine against the gen-29 opponent pool of evolve-gpu8-r10-s1-default-1 (round-7 method, 300 opponents): mean CPU win s1-default-1 57.60% (+0.00 pt); s1-default-2 57.60% (+0.00 pt); s1-default-3 57.60% (+0.00 pt); s1-cap-1 57.49% (-0.11 pt); s1-cap-2 57.49% (-0.11 pt); s1-cap-3 57.49% (-0.11 pt); s1-leancap-1 57.49% (-0.11 pt); s1-leancap-2 57.49% (-0.11 pt); s1-leancap-3 57.49% (-0.11 pt). Pass = within 1 pt of the default run.
+
+### What to turn on (three lines, numbers from `runs.json`)
+1. `POGO_GPU_STUDY=stack`-class state packing is real: at 100 gens stack wins (-0.43 s/gen vs the default mean 10.73, default spread 0.03); occ and tail: see the 100-gen table.
+2. `POGO_GPU_STUDY=lean` (step 2, byte-identical): wins at 30 gens (-2.39 s/gen, mean 7.80, spread 0.86 vs default 10.19, spread 1.49).
+3. `POGO_GPU_STUDY=lean,cap`: wins at 30 gens (-2.38 s/gen, mean 7.81, spread 0.14 vs default 10.19, spread 1.49); cap changes winners, so it is a trade the user decides on with the agreement numbers above.
