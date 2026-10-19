@@ -65,3 +65,13 @@ def tail():
 def certain():
     from .tail import certain as c
     return c
+
+
+def lean():
+    from .lean import variant
+    return variant
+
+
+def cap():
+    from .cap import variant
+    return variant
