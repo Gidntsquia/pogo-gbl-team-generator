@@ -34,8 +34,8 @@ for k in "${!GROUPS_[@]}"; do
     flock "$R/out/gpu/study/gpu.lock" env ${NCU_ENV:-} "$NCU" --target-processes all -k "$KERNEL" --launch-skip 1 --launch-count 1 \
       --replay-mode kernel --cache-control all --clock-control "${NCU_CLOCK:-base}" ${GROUPS_[$k]} \
       -f -o "$O/$name.g$k" uv run python -m "$@" > "$O/$name.g$k.log" 2>&1
-    if ! grep -q "==ERROR==" "$O/$name.g$k.log"; then ok=1; break; fi
-    echo "ncu $name group $k try $try: $(grep -m1 -A0 'LaunchFailed\|ERR_\|==ERROR==' "$O/$name.g$k.log")"
+    if ! grep -q "==ERROR==" "$O/$name.g$k.log" && [ -s "$O/$name.g$k.ncu-rep" ]; then ok=1; break; fi
+    echo "ncu $name group $k try $try: $(grep -m1 -A0 'LaunchFailed\|ERR_\|==ERROR==' "$O/$name.g$k.log" || echo 'no report written (driver reset)')"
     sleep 5
   done
   if [ $ok = 1 ]; then

@@ -48,7 +48,7 @@ def main():
             want = "wins" if gain > (max(defs) - min(defs)) else "no gain"
             m = re.search(rf"^\| {v} \|.*\| (wins|no gain) \|$", built, re.M)
             check(m is not None and m.group(1) == want, f"100-gen verdict for {v} is '{want}' (gain {gain:+.3f}, default spread {max(defs) - min(defs):.3f})")
-    sess = sorted({r["session"] for r in runs.values() if r["session"] not in (None, "full")})
+    sess = sorted({r["session"] for r in runs.values() if r["session"] not in (None, "full", "s2", "s3", "s4")})
     check(bool(sess), "a 30-gen A/B session exists")
     for s in sess:
         by = {}
@@ -85,7 +85,7 @@ def main():
         for k, v in sets.items():
             check(ref is not None and abs(v["meanWinPct"] - ref) <= 1, f"finalists: {os.path.basename(k)} within 1 pt of the default ({v['meanWinPct'] - ref:+.2f})")
     nc = S.jload("ncu/summary.json", {})
-    for k in ("5k-default", "5k-lean", "10k-default", "10k-lean"):
+    for k in ("5k-default", "5k-lean2", "10k-default", "10k-lean2"):
         v = nc.get(k, {})
         check(v.get("achieved_occupancy_pct") is not None and v.get("local_bytes_gb") is not None and any(s["reason"] == "long_scoreboard" for s in v.get("top5_stalls", [])),
               f"ncu/summary.json {k}: occupancy, long_scoreboard share and local bytes present")

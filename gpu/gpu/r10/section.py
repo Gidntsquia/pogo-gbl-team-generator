@@ -87,7 +87,7 @@ def full100(L):
 
 
 def ab30(L):
-    rs = [r for r in runs() if r["session"] not in (None, "full") and r["complete"]]
+    rs = [r for r in runs() if r["session"] not in (None, "full", "s2", "s3", "s4") and r["complete"]]
     out = {}
     cap = tload("cap-value.txt").strip() or "?"
     for s in sorted({r["session"] for r in rs}):
@@ -162,11 +162,11 @@ def lean(L):
     L.append("Nsight Compute before / after (R4; `out/gpu/r10/ncu/summary.json`, base clocks, kernel replay, same fields as round 9):")
     L.append("| launch | variant | kernel s | achieved occupancy | long_scoreboard share | local bytes | issue-slot use |")
     L.append("|---|---|---|---|---|---|---|")
-    for k in ("5k-default", "5k-lean", "10k-default", "10k-lean"):
+    for k in ("5k-default", "5k-lean2", "10k-default", "10k-lean2"):
         v = nc.get(k)
         launch, var = k.split("-")
-        if not v or v.get("tool") == "no Nsight":
-            L.append(f"| {launch} | {var} | no Nsight: {(v or {}).get('error', 'not run')} | | | | |")
+        if not v or v.get("tool", "").startswith("missing"):
+            L.append(f"| {launch} | {var} | {(v or {}).get('tool', 'absent')} | | | | |")
             continue
         ls = next((s["share_pct"] for s in v["top5_stalls"] if s["reason"] == "long_scoreboard"), None)
         L.append(f"| {launch} | {var} | {v['kernel_s_at_base_clock']:.2f} | {v['achieved_occupancy_pct']:.1f}% | "

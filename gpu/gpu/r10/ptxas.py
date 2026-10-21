@@ -48,7 +48,11 @@ def variants():
 def main():
     os.makedirs(OUT, exist_ok=True)
     res = {}
+    only = os.environ.get("PTXAS_ONLY")
+    res = json.load(open(os.path.join(OUT, "ptxas.json"))) if only and os.path.exists(os.path.join(OUT, "ptxas.json")) else {}
     for name, src in variants():
+        if only and name not in only.split():
+            continue
         src, mq = src if isinstance(src, tuple) else (src, K.MAXQ)
         log = ""
         for _ in range(4):   # NVRTC sometimes returns no verbose log; ptxas_log already retries 6 times, this is the outer retry

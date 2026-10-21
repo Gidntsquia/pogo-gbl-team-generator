@@ -457,16 +457,16 @@ Default mean 10.73, spread 0.03 (two runs); one run per variant, so its own spre
 | lean2 | + binary-search queue insertion (LEAN_BSEARCH) | 35,440 (91%) | 255 | 0/0 | 2.34 s (-26.3%) | 5.29 s (-46.3%) | 16.11 s (-21.8%) | 100.00% / 0 flagged |
 | lean3 | + noinline cold helpers (LEAN_NI) | 35,472 (91%) | 255 | 48/76 | 2.08 s (-34.4%) | 4.48 s (-54.4%) | 13.50 s (-34.4%) | 100.00% / 0 flagged |
 | lean4 | + half lookahead pool (MAXQ 1024) | 21,136 (54%) | 255 | 48/76 | 2.09 s (-33.9%) | 4.91 s (-50.1%) | 14.13 s (-31.4%) | 100.00% / 0 flagged |
-| lean2q | step 2 + half pool, no noinline | 21,104 (54%) | 255 | 0/0 | 2.38 s (-24.8%) | 5.18 s (-47.4%) | 16.47 s (-20.0%) | - |
+| lean2q | step 2 + half pool, no noinline | 21,104 (54%) | 255 | 0/0 | 2.38 s (-24.8%) | 5.18 s (-47.4%) | 16.47 s (-20.0%) | 100.00% / 0 flagged |
 Means used: 8/16-bit field packing (step 1), fewer dependent local loads in the lookahead queue (step 2: binary search for the insertion point, same index and order as the scan), noinline of cold helpers (step 3), half the per-thread pool (step 4: a battle whose pool passes 1024 is flagged and re-run on the CPU exactly as at 2048, so run results stay identical; replay rows differ only in those flagged rows). Replays: 5k = prof batch 7, 10k = batch 6, 36k = batches 0-2 merged, median of 3 reps, vs the default replay of the same launch. Registers stay at 255 at every step (a register target below 255 spilled and lost in round 8), so occupancy stays at 8 warps/SM and the >=25% target is not reached; the <=50% local-bytes target is only approached by the pool halving (54% of today's stack bytes), and the spilling step 4 is not the default: plain `POGO_GPU_STUDY=lean` is step 2 (0 spill).
 Steps were judged on these replays instead of 30-gen sessions (the user asked for the smallest test that answers the question); only step 2 went to the A/B. Early-stop rule: step 1 moved the 10k launch under 4%, step 3 over 2 is within replay noise, so the A/B has one lean row.
 Nsight Compute before / after (R4; `out/gpu/r10/ncu/summary.json`, base clocks, kernel replay, same fields as round 9):
 | launch | variant | kernel s | achieved occupancy | long_scoreboard share | local bytes | issue-slot use |
 |---|---|---|---|---|---|---|
-| 5k | default | no Nsight: no report written | | | | |
-| 5k | lean | no Nsight: no report written | | | | |
-| 10k | default | no Nsight: no report written | | | | |
-| 10k | lean | no Nsight: no report written | | | | |
+| 5k | default | 3.88 | 15.6% | 51.5% | 842 GB | 12.5% |
+| 5k | lean2 | 2.73 | 16.0% | 31.1% | 760 GB | 13.3% |
+| 10k | default | 11.85 | 15.3% | 54.6% | 1955 GB | 12.3% |
+| 10k | lean2 | 6.14 | 15.9% | 32.0% | 1749 GB | 13.6% |
 - cpu-only 2-gen (round 10 code) vs out/gpu/study/cpu2-r9 (round 9): evolve-gen0.json: IDENTICAL; evolve-gen1.json: IDENTICAL
 - POGO_GPU_STUDY=lean 5-gen vs default 5-gen: IDENTICAL (5 checkpoints, timing fields ignored)
 
@@ -484,3 +484,62 @@ Top-12 finalists of each 30-gen run re-battled on the CPU engine against the gen
 1. `POGO_GPU_STUDY=stack`-class state packing is real: at 100 gens stack wins (-0.43 s/gen vs the default mean 10.73, default spread 0.03); occ and tail: see the 100-gen table.
 2. `POGO_GPU_STUDY=lean` (step 2, byte-identical): wins at 30 gens (-2.39 s/gen, mean 7.80, spread 0.86 vs default 10.19, spread 1.49).
 3. `POGO_GPU_STUDY=lean,cap`: wins at 30 gens (-2.38 s/gen, mean 7.81, spread 0.14 vs default 10.19, spread 1.49); cap changes winners, so it is a trade the user decides on with the agreement numbers above.
+## Round 11: 30-gen A/Bs of every lean step, Nsight on every variant, kernel iteration, top 3 to implement
+
+Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed), `out/gpu/r10/ncu/summary.json` (Nsight) and the files `python3 gpu/gpu/r11/check.py` re-reads; it rebuilds this section and fails on any difference. Yardstick: warm s/gen = mean of generations 2+ over a 30-gen standard run, 3 interleaved runs per variant with a default run in every pass; spread = max - min; "wins" = mean beats the session's default mean by more than both spreads; a gain inside the spreads is "insufficient". Clock times are US Eastern. Nothing is on by default.
+
+### 30-gen session s2: start 11:11 EDT, passes interleaved, each pass default then the variants, same seed
+| variant | warm s/gen, runs | mean | spread | vs default | verdict | spill st/ld B | proof | run starts ET |
+|---|---|---|---|---|---|---|---|---|
+| default | 9.01 / 9.59 / 9.88 | 9.50 | 0.87 | - | - | 28/36 | - | 11:11, 11:44, 12:11 |
+| lean 1 | 8.66 / 8.99 / 9.59 | 9.08 | 0.93 | -0.42 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 11:16, 11:49, 12:16 |
+| lean 2 | 6.98 / 7.37 / 7.90 | 7.42 | 0.92 | -2.08 | wins | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 11:23, 11:54, 12:21 |
+| lean 3 | 6.47 / 6.90 / 7.20 | 6.86 | 0.73 | -2.64 | wins | 48/76 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 11:29, 11:58, 12:25 |
+| lean 4 | 7.23 / 7.57 / 8.08 | 7.63 | 0.85 | -1.87 | wins | 48/76 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 11:33, 12:02, 12:29 |
+| lean 2q | 7.47 / 8.63 / 8.75 | 8.28 | 1.28 | -1.21 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 11:37, 12:06, 12:34 |
+### 30-gen session s3: start 13:31 EDT, passes interleaved, each pass default then the variants, same seed
+| variant | warm s/gen, runs | mean | spread | vs default | verdict | spill st/ld B | proof | run starts ET |
+|---|---|---|---|---|---|---|---|---|
+| default | 9.48 / 9.67 / 9.68 | 9.61 | 0.20 | - | - | 28/36 | - | 13:31, 13:55, 14:20 |
+| lean 5 | 7.20 / 7.25 / 7.28 | 7.24 | 0.08 | -2.37 | wins | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 13:36, 14:01, 14:25 |
+| lean 6 | 6.42 / 6.56 / 6.52 | 6.50 | 0.14 | -3.11 | wins | 48/76 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 13:40, 14:04, 14:29 |
+| lean 3 + cap192 | 6.85 / 6.93 / 7.29 | 7.02 | 0.44 | -2.59 | wins | 48/76 | verify 99.58% / 0 flagged / +0.10 pp; finalists -0.11 pt | 13:44, 14:08, 14:32 |
+| lean 4 + cap192 | 6.90 / 6.93 / 8.22 | 7.35 | 1.32 | -2.26 | wins | 48/76 | verify 99.58% / 0 flagged / +0.10 pp; finalists -0.11 pt | 13:47, 14:12, 14:36 |
+| lean 2q + cap192 | 7.71 / 7.68 / 7.52 | 7.64 | 0.19 | -1.98 | wins | 0/0 | verify 99.58% / 0 flagged / +0.10 pp; finalists -0.11 pt | 13:51, 14:16, 14:41 |
+### 30-gen session s4: start 16:00 EDT, passes interleaved, each pass default then the variants, same seed
+| variant | warm s/gen, runs | mean | spread | vs default | verdict | spill st/ld B | proof | run starts ET |
+|---|---|---|---|---|---|---|---|---|
+| default | 9.24 / 9.54 / 9.58 | 9.46 | 0.34 | - | - | 28/36 | - | 16:00, 16:15, 16:29 |
+| lean 1 | 8.89 / 9.07 / 9.31 | 9.09 | 0.43 | -0.37 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:05, 16:20, 16:34 |
+| lean 2q | 7.99 / 8.26 / 8.81 | 8.35 | 0.82 | -1.11 | wins | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:10, 16:25, 16:39 |
+
+### Nsight Compute (`out/gpu/r10/ncu/summary.json`; 5k = batch 7, 10k = batch 6; base clocks, kernel replay)
+| launch | variant | kernel s | occupancy | long_scoreboard | top stall | local GB | issue-slot use |
+|---|---|---|---|---|---|---|---|
+| 5k | default | 3.88 | 15.6% | 52% | long_scoreboard 52% | 842 | 12.5% |
+| 5k | lean1 | 3.63 | 15.7% | 36% | long_scoreboard 36% | 803 | 13.4% |
+| 5k | lean2 | 2.73 | 16.0% | 31% | no_instruction 34% | 760 | 13.3% |
+| 5k | lean3 | 2.54 | 14.8% | 38% | long_scoreboard 38% | 756 | 16.1% |
+| 5k | lean4 | 2.52 | 14.8% | 38% | long_scoreboard 38% | 756 | 16.2% |
+| 5k | lean2q | 2.90 | 16.0% | 31% | no_instruction 34% | 760 | 13.4% |
+| 5k | lean5 | 2.65 | 16.0% | 29% | no_instruction 36% | 741 | 13.5% |
+| 5k | stack | 3.64 | 15.6% | 38% | long_scoreboard 38% | 822 | 13.4% |
+| 5k | leancap | 2.77 | 15.9% | 31% | no_instruction 34% | 761 | 13.4% |
+| 10k | default | 11.85 | 15.3% | 55% | long_scoreboard 55% | 1955 | 12.3% |
+| 10k | lean1 | 11.24 | 15.4% | 40% | long_scoreboard 40% | 1862 | 13.4% |
+| 10k | lean2 | 6.14 | 15.9% | 32% | no_instruction 32% | 1749 | 13.6% |
+| 10k | lean3 | 5.22 | 15.8% | 40% | long_scoreboard 40% | 1735 | 16.3% |
+| 10k | lean4 | 5.35 | 15.8% | 40% | long_scoreboard 40% | 1741 | 16.3% |
+| 10k | lean2q | 6.20 | 15.8% | 32% | long_scoreboard 32% | 1755 | 13.7% |
+| 10k | lean5 | 6.19 | 15.9% | 30% | no_instruction 34% | 1707 | 13.7% |
+| 10k | stack | 10.92 | 15.4% | 42% | long_scoreboard 42% | 1906 | 13.3% |
+| 10k | leancap | 6.65 | 15.8% | 32% | no_instruction 32% | 1747 | 13.7% |
+
+Unresolved at the end of the budget: lean 1 (session s2: insufficient: 3 runs, needs 3 more); lean 2q (session s2: insufficient: 3 runs, needs 3 more); lean 1 (session s4: insufficient: 3 runs, needs 3 more)
+
+### Top 3 ideas to implement (ranked by s/gen saved; a 100-gen run is the 30-gen mean x 100)
+1. **lean 6**: saves 3.11 s/gen (mean 6.50, spread 0.14 vs default 9.61, spread 0.20, session s3) = 5.2 min per 100-gen run. Proof: 3/3 runs 30/30 identical; verify 100.00% / 0 flagged. Change: make LEAN_STEPS "6" (compact2 fields, binary-search queue, turn-keyed int queue, noinline cold helpers) the kernel the standard run builds, via POGO_GPU_STUDY=lean POGO_GPU_LEAN=6 becoming the default in gpu/gpu/study/lean/variant.py and the run wrapper. Targets long_scoreboard: the turn is read from the key, so no dependent pool load per queue slot. Interacts: Supersedes lean 3 and lean 5; spills 48/76 B like lean 3. Cap can sit on top (untested with step 6).
+2. **lean 3 + cap192**: saves 2.59 s/gen (mean 7.02, spread 0.44 vs default 9.61, spread 0.20, session s3) = 4.3 min per 100-gen run. Proof: verify 99.58% / 0 flagged / +0.10 pp; finalists -0.11 pt. Change: turn on POGO_GPU_CAP=192 with lean 3 (or lean 6). It changes winners slightly, so it needs its own opt-in flag even after the gate passes. Interacts: Gain measured against the default, not on top of lean 6; the two attack the same long lookahead cost, so expect less than the sum.
+3. **lean 5**: saves 2.37 s/gen (mean 7.24, spread 0.08 vs default 9.61, spread 0.20, session s3) = 3.9 min per 100-gen run. Proof: 3/3 runs 30/30 identical; verify 100.00% / 0 flagged. Change: make LEAN_STEPS "5" the default: step 2 plus the turn-keyed queue, 0 spill, 255 registers. The zero-spill choice if lean 6's spills are unwanted. Interacts: Lean 6 is lean 5 plus noinline helpers, so take one of the two.
+
+Glossary: **stack** = the compact per-battle state (smaller Move / Mon structs) the kernel keeps in local memory; **occ** = occupancy edits (noinline cold helpers, fewer live registers) to fit more warps per SM; **lean** = stack + 8/16-bit fields + a binary-search lookahead queue, with steps 1-6 adding noinline, a half pool and a turn-keyed queue; **cap** = give up the lookahead when its pool reaches N entries (changes some winners, so it must pass the agreement gate); **spill** = values the compiler cannot keep in the 255 registers and parks in slow local memory, so each use costs a load.

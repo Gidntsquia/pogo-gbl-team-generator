@@ -344,6 +344,18 @@ typedef int QIdx;
 struct BState { short energy, oppHealth, turn, link; signed char oppShields, buffs, mv, pad; };
 typedef short QIdx;
 #endif
+#ifdef LEAN_KEY
+// LEAN_KEY (step 5): a queue entry is (turn << 12) | pool index, so the sorted-queue searches and the equal-turn scan read the turn
+// from the queue itself instead of a second dependent load pool[qp[i]].turn; the queue order is the same (turn order, equal turns keep
+// their insertion order because the search keys never separate them). Pool indices stay below 4096 (MAXQ <= 2048).
+#define QI(k) ((k) & 4095)
+#define QT(k) ((k) >> 12)
+#define QK(t, i) (((t) << 12) | (i))
+#else
+#define QI(k) (k)
+#define QT(k) (pool[k].turn)
+#define QK(t, i) (i)
+#endif
 __device__ __forceinline__ BState mkB(int e, int h, int t, int s, int bf, int link, int mv, int* flags) {
   BState r;
   r.energy = e; r.oppHealth = h; r.turn = t; r.oppShields = s; r.buffs = bf; r.link = link; r.mv = mv;
@@ -358,7 +370,18 @@ struct TState { int hp, opEnergy, turn, shields; };
 // LEAN FORK (round 10): the DP queue is always sorted by turn (every insert places by turn, pops take the front), so the
 // insertion point is found by binary search instead of a linear scan of dependent local loads. Same index as the scans:
 // qpos_le = first i with turn > t ("while turn <= t"), qpos_lt = first i with turn >= t ("while turn < t").
-#ifdef LEAN_BSEARCH
+#ifdef LEAN_KEY
+__device__ __forceinline__ int qpos_le(const BState* pool, const int* qp, int qn, int t) {
+  int lo = 0, hi = qn; const int key = (t + 1) << 12;
+  while (lo < hi) { int mid = (lo + hi) >> 1; if (qp[mid] < key) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+__device__ __forceinline__ int qpos_lt(const BState* pool, const int* qp, int qn, int t) {
+  int lo = 0, hi = qn; const int key = t << 12;
+  while (lo < hi) { int mid = (lo + hi) >> 1; if (qp[mid] < key) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+#elif defined(LEAN_BSEARCH)
 __device__ __forceinline__ int qpos_le(const BState* pool, const QIdx* qp, int qn, int t) {
   int lo = 0, hi = qn;
   while (lo < hi) { int mid = (lo + hi) >> 1; if (pool[qp[mid]].turn <= t) lo = mid + 1; else hi = mid; }
@@ -565,17 +588,22 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
 
   // dynamic programming over throw plans
   BState pool[MAXQ];
+#ifdef LEAN_KEY
+  int queue[MAXQ];
+  int* qp = queue;
+#else
   QIdx queue[MAXQ];
-  QIdx* qp = queue;  // queue head: a pop advances it instead of shifting the whole queue (same order, same results)
+  QIdx* qp = queue;
+#endif  // queue head: a pop advances it instead of shifting the whole queue (same order, same results)
   int qn = 0, pn = 0;
   int stateCount = 0;
   int finalState = -1;
   pool[pn] = mkB(poke->energy, opp->hp, 0, opp->shields, 0, -1, -1, flags);
-  qp[qn++] = pn++;
+  qp[qn++] = QK(0, pn); pn++;
   while (qn != 0) {
     if (stateCount >= 500) return -1;
     stateCount++;
-    int cur = qp[0];
+    int cur = QI(qp[0]);
     qp++;
     qn--;
     BState* cs = &pool[cur];
@@ -607,7 +635,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         int i = qpos_le(pool, qp, qn, farmTurn);
         pool[pn] = mkB(cs->energy + poke->fast.gain * movesToFarmDown, 0, farmTurn, cs->oppShields, cs->buffs, cur, -1, flags);
         for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-        qp[i] = pn++;
+        qp[i] = QK(farmTurn, pn); pn++;
         qn++;
       }
       cs = &pool[cur];
@@ -625,13 +653,13 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         if (newShields > 0) newShields--;
         int i = 0;
         bool insertElement = true;
-        while (i < qn && pool[qp[i]].turn == cs->turn + 1) {
-          BState* q = &pool[qp[i]];
+        while (i < qn && QT(qp[i]) == cs->turn + 1) {
+          BState* q = &pool[QI(qp[i])];
           if (q->oppHealth == newOppHealth && q->buffs == attackMult) {
             if (q->energy == (cs->energy - am->energy)) {
               int DPDebuffs = 0, currDebuffs = 0;
               int mv[MAXMV];
-              int cnt = movesOf(pool, qp[i], mv);
+              int cnt = movesOf(pool, QI(qp[i]), mv);
               for (int x = 0; x < cnt; x++) {
                 Move* mm = &poke->ch[mv[x]];
                 if (mm->selfDeb) DPDebuffs++;
@@ -657,7 +685,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
           pool[pn] = mkB(cs->energy - am->energy, newOppHealth, cs->turn + 1, newShields, attackMult, cur, poke->act[n], flags);
           for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-          qp[i] = pn++;
+          qp[i] = QK(cs->turn + 1, pn); pn++;
           qn++;
         }
         if (am->selfDeb && am->b0 < 0 && am->energy * 2 <= 100) {
@@ -671,7 +699,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
             if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
             pool[pn] = mkB(newEnergy, nh, newTurn, newShields, attackMult, cur, poke->act[n], flags);
             for (int x = qn; x > j; x--) qp[x] = qp[x - 1];
-            qp[j] = pn++;
+            qp[j] = QK(newTurn, pn); pn++;
             qn++;
           }
         }
@@ -687,7 +715,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
           pool[pn] = mkB(newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n], flags);
           for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-          qp[i] = pn++;
+          qp[i] = QK(newTurn, pn); pn++;
           qn++;
         }
         if (am->selfDeb && am->b0 < 0 && am->energy * 2 <= 100) {
@@ -700,7 +728,7 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
           pool[pn] = mkB(newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n], flags);
           for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-          qp[i] = pn++;
+          qp[i] = QK(newTurn, pn); pn++;
           qn++;
         }
       }

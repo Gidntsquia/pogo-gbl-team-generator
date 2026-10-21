@@ -48,7 +48,7 @@ try {
   }
   const ref = out.sets[dirs[0]].meanWinPct;
   for (const [d, s] of Object.entries(out.sets)) console.log(`${d}: gen ${s.gen}, top-12 mean CPU win ${s.meanWinPct.toFixed(2)}% (delta ${(s.meanWinPct - ref).toFixed(2)} pt)`);
-  writeFileSync('out/gpu/r10/finalists.json', JSON.stringify(out, null, 1));
+  writeFileSync(process.env.FINALISTS_OUT ?? 'out/gpu/r10/finalists.json', JSON.stringify(out, null, 1));
   console.log(`wrote out/gpu/r10/finalists.json in ${Math.round(out.seconds)} s`);
 } finally { await executor.close(); }
 process.exit(0);

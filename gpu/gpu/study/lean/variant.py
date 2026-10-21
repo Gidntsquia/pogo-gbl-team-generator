@@ -11,13 +11,19 @@ Kernel copies in gpu/gpu/study/lean/kernels/ start from the round-8 stack fork (
      pool would pass 1024 is flagged POOL_OVERFLOW and re-run on the CPU exactly as a 2048 overflow is today, so the run's
      results stay identical; the cost is more CPU re-runs (pool study: 0.30% of battles reach 512, far fewer 1024)
   2q = step 2 with the half pool (no noinline): the 0-spill way to the half pool, kept as a measured extra
+  5  (round 11) step 2 + LEAN_KEY: a queue entry is (turn << 12 | pool index), so the binary search and the equal-turn scan read the
+     turn from the queue (one load) instead of pool[qp[i]].turn (two dependent loads, the long_scoreboard stall); same order, same results
+  5q step 5 with the half pool (MAXQ 1024)
+  6  (round 11) step 3 (noinline, the fastest 30-gen step in session s2) + LEAN_KEY
 Battle code is otherwise the production code; nothing here changes a result (checked by verify_3v3 and same-seed checkpoints)."""
 import os
 
 _HERE = os.path.join(os.path.dirname(__file__), "kernels")
 STEPS = {"1": ("STACK_COMPACT2",), "2": ("STACK_COMPACT2", "LEAN_BSEARCH"), "3": ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_NI"),
-         "4": ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_NI"), "2q": ("STACK_COMPACT2", "LEAN_BSEARCH")}
-MAXQ = {"4": 1024, "2q": 1024}   # step -> pool entries per thread when not the production 2048
+         "4": ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_NI"), "2q": ("STACK_COMPACT2", "LEAN_BSEARCH"),
+         "5": ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_KEY"), "5q": ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_KEY"),
+         "6": ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_NI", "LEAN_KEY")}
+MAXQ = {"4": 1024, "2q": 1024, "5q": 1024}   # step -> pool entries per thread when not the production 2048
 DEFAULT_STEP = "2"   # the step turned on by plain POGO_GPU_STUDY=lean (set from the round-10 measurements, see docs)
 STEP = os.environ.get("POGO_GPU_LEAN", DEFAULT_STEP)
 
