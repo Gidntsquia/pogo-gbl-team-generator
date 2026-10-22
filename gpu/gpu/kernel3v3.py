@@ -14,8 +14,12 @@ _cache = {}
 _mods = {}
 
 
+LEAN6_DEFINES = ("STACK_COMPACT2", "LEAN_BSEARCH", "LEAN_NI", "LEAN_KEY")  # the one 3v3 kernel: "lean 6" (docs/gpu-viability.md rounds 10-12)
+KERNEL_NAME = "lean 6"
+
+
 def source():
-    return "\n".join(open(os.path.join(_HERE, f)).read() for f in ("pvp1v1.cuh", "battle1v1.cuh", "battle3v3.cuh"))
+    return "".join(f"#define {d}\n" for d in LEAN6_DEFINES) + "\n".join(open(os.path.join(_HERE, f)).read() for f in ("pvp1v1.cuh", "battle1v1.cuh", "battle3v3.cuh"))
 
 
 MAXQ = 2048  # lookahead DP pool per thread (pvp1v1.cuh, packed 12-byte states); a battle that needs more is flagged POOL_OVERFLOW
@@ -505,11 +509,17 @@ def write_ahead_log(rec, path=None):
 
 
 # ---------------------------------------------------------------------------------------------- round 8 study variants
-# EXPERIMENTAL, off by default (plans round 8 R6/R7; round 9 adds tail, certain; round 10 lean, cap). POGO_GPU_STUDY=<name>[,<name>] selects research prototypes from the
+# EXPERIMENTAL, off by default (rounds 8-12; only the cap study is still opt-in, lean 6 is the kernel). POGO_GPU_STUDY=<name>[,<name>] selects research prototypes from the
 # fixed list below; each lives in this repo at gpu/gpu/study/<name>/variant.py and its apply(module) replaces functions of
 # this module (kernel source, launch or scheduler). Names outside STUDY_VARIANTS are rejected. Unset = production path.
-STUDY_VARIANTS = ("prof", "width", "stack", "pool", "split", "lockstep", "streams", "cpushare", "queue", "early", "occ", "tail", "certain", "lean", "cap")
+STUDY_VARIANTS = ("prof", "width", "pool", "split", "lockstep", "streams", "cpushare", "queue", "early", "cap")
+_GONE = ("lean", "stack", "occ", "tail", "certain")
 STUDY = [f for f in os.environ.get("POGO_GPU_STUDY", "").split(",") if f]
+for _g in [f for f in STUDY if f in _GONE]:
+    sys.stderr.write(f"gpu: POGO_GPU_STUDY={_g} is gone, lean 6 is the kernel\n")
+    STUDY.remove(_g)
+if os.environ.get("POGO_GPU_LEAN"):
+    sys.stderr.write("gpu: POGO_GPU_LEAN is gone, lean 6 is the kernel\n")
 
 
 def _apply_study():

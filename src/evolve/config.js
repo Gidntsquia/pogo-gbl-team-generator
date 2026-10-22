@@ -364,14 +364,26 @@ export function buildRunConfig(csvPath, opts) {
  * matching too.
  */
 export function configsMatch(a, b) {
-  const strip = ({ eliteCount, ...rest }) => rest;
+  const strip = ({ eliteCount, engine, ...rest }) => rest; // engine: cpu-fallback is a record, not a fingerprint
   return JSON.stringify(strip(a ?? {})) === JSON.stringify(strip(b ?? {}));
+}
+
+/**
+ * One-line reason a stale checkpoint cannot be resumed because of the engine (GPU vs --cpu-only), else null.
+ * A checkpoint written with `gpu: true` (before or after the GPU became the default) resumes without any flag.
+ */
+export function engineMismatch(stale, current) {
+  if (!!stale?.gpu === !!current?.gpu) return null;
+  return stale?.gpu
+    ? 'was written by the GPU engine; drop --cpu-only to resume it (or --force-fresh to discard it)'
+    : 'was written by the CPU-only engine; pass --cpu-only to resume it (or --force-fresh to discard it)';
 }
 
 /** Which config keys differ between a stale checkpoint and this run, for a resume-refusal error message. */
 export function describeConfigMismatch(stale, current) {
   const keys = new Set([...Object.keys(stale ?? {}), ...Object.keys(current ?? {})]);
   keys.delete('eliteCount');
+  keys.delete('engine');
   const diffs = [];
   for (const key of keys) {
     const a = (stale ?? {})[key];

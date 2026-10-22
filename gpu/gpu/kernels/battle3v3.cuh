@@ -50,8 +50,13 @@
 #define MAXTM 16
 #define MAXACT 8
 
+#ifdef STACK_COMPACT2  // STACK FORK: turn <= 481; actor/type/prio/flags and timer kind / mon slots / shield flag fit 8 bits
+struct Act { int value; short turn; signed char actor, type, prio, processed, valid; };
+struct Timer { int at, id, c; signed char kind, a, b, d; };
+#else
 struct Act { int actor, type, turn, value, prio, processed, valid; };
 struct Timer { int at, id, kind, a, b, c, d; };
+#endif
 struct Ply { int shields, switchTimer, priority, curStrat, prevStrat, turnLastEval; double noBaitAvg; };
 
 struct B3 {
@@ -134,24 +139,7 @@ __device__ __noinline__ void queueAction(B3* b, int actor, int type, int value);
 
 // ------------------------------------------------------------------ TrainingAI.runScenario
 
-#ifdef TAIL
-// Round 9 study only (POGO_GPU_STUDY=tail, gpu/gpu/study/tail/tail.cuh; production never defines TAIL). A lane running a POOL
-// battle (g_tailPoolLane[thread] = 1) stops its lookahead as soon as the launch's last main battle has ended (live == 0): the
-// rest of the step then runs on stale lookahead results and is cheap, and tail.cuh discards that pool battle (it writes a pool
-// row only if live is still > 0 after the step, so an aborted battle is never kept). Main battles never take this path.
-__device__ const unsigned* g_tailLive = 0;
-__device__ const int* g_tailPoolLane = 0;
-static __device__ __forceinline__ bool tail_abort() {
-  const int* pl = g_tailPoolLane;
-  return pl && *(volatile const int*)(pl + blockIdx.x * blockDim.x + threadIdx.x) && *(volatile const unsigned*)g_tailLive == 0u;
-}
-#define TAIL_ABORT_RET(v) do { if (tail_abort()) return (v); } while (0)
-#else
-#define TAIL_ABORT_RET(v) do { } while (0)
-#endif
-
 __device__ __noinline__ double runScenario(B3* b, int type, int gi, int gj) {
-  TAIL_ABORT_RET(0.0);
   Mon* A = &b->mon[gi];
   Mon* O = &b->mon[gj];
   int sbait0 = A->bait, sfarm0 = A->farm, sprio0 = A->priority;
@@ -176,7 +164,6 @@ __device__ __noinline__ double runScenario(B3* b, int type, int gi, int gj) {
     for (int n = 0; n <= sh1; n++) {
       s->m[0].startShields = i; s->m[1].startShields = n;
       s->flags = 0; s->poolMax = 0;
-      TAIL_ABORT_RET(0.0);
       simulate1v1(s);
       b->flags |= (s->flags & F_INVALID_MASK);
       if (s->poolMax > b->poolMax) b->poolMax = s->poolMax;
@@ -887,7 +874,7 @@ __device__ __noinline__ void step3(B3* b) {
 
 #define B_OUT 24
 
-__device__ void freshMon(Mon* m, const double* srow, const double* drow, int player, const double* st) {
+__device__ LEAN_NOINLINE void freshMon(Mon* m, const double* srow, const double* drow, int player, const double* st) {
   loadMon(m, srow, drow, player, st);
   m->startHp = m->hpMax; m->startEnergy = 0; m->startCd = 0; m->startShields = 2;
   m->ssb0 = 0; m->ssb1 = 0; m->nsb0 = 0; m->nsb1 = 0;
@@ -900,7 +887,7 @@ __device__ void freshMon(Mon* m, const double* srow, const double* drow, int pla
 #define LANES 1  // threads per battle: 32 = one warp per battle, every lane runs the same battle (no divergence)
 #endif
 #ifdef QUEUE
-#define BATTLE_INLINE __noinline__
+#define BATTLE_INLINE LEAN_NOINLINE
 #else
 #define BATTLE_INLINE __forceinline__
 #endif
@@ -917,7 +904,7 @@ static __device__ __forceinline__ unsigned long long gtimer() {
 // teamBattle.js battleTeams up to the first turn: load the six mons, setNewPokemon x2, resets, battle.start(), evaluations.
 // Battle setup from two team rows (3 mon indices + 3 dyn rows each, lead first) and a seed. battle_init below is this with the
 // rows of battle t; the island kernel (round 7) passes team rows directly. Same code either way.
-static __device__ __forceinline__ void battle_init_teams(B3& b, Run& r, const double* st, const int* miA, const double* dyA, const int* miB,
+static __device__ LEAN_NOINLINE void battle_init_teams(B3& b, Run& r, const double* st, const int* miA, const double* dyA, const int* miB,
                                                          const double* dyB, unsigned seed, int* dbgp) {
   b.flags = 0; b.poolMax = 0; b.innerSims = 0; b.draws = 0; b.dbg = dbgp; b.ndbg = 0;
   for (int i = 0; i < 6; i++) {
@@ -961,7 +948,7 @@ static __device__ __forceinline__ void battle_init_teams(B3& b, Run& r, const do
   r.leadFaintA = -1; r.leadFaintB = -1;   // teamBattle.js leadFaintTurnA/B: first turn the designated lead (slot 0 / 3) is at 0 hp
 }
 
-static __device__ __forceinline__ void battle_init(B3& b, Run& r, const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int t, int* dbgp) {
+static __device__ LEAN_NOINLINE void battle_init(B3& b, Run& r, const double* st, const int* monIdx, const double* dyn, const unsigned* seeds, int t, int* dbgp) {
   battle_init_teams(b, r, st, monIdx + (long long)t * 6, dyn + (long long)t * 6 * D_N, monIdx + (long long)t * 6 + 3,
                     dyn + ((long long)t * 6 + 3) * D_N, seeds[t], dbgp);
 }
@@ -987,7 +974,7 @@ static __device__ __forceinline__ bool battle_steps(B3& b, Run& r, int maxSteps)
 }
 
 // Output row t (cols 20..23 = %globaltimer at the battle's first start / its end; profiling only, no effect on the battle).
-static __device__ __forceinline__ void battle_write(const B3& b, const Run& r, int* out, int t) {
+static __device__ LEAN_NOINLINE void battle_write(const B3& b, const Run& r, int* out, int t) {
   int remA = remaining(&b, 0), remB = remaining(&b, 1);
   int hpA = 0, hpB = 0;
   for (int i = 0; i < 3; i++) { hpA += imax(0, b.mon[i].hp); hpB += imax(0, b.mon[3 + i].hp); }
@@ -997,7 +984,9 @@ static __device__ __forceinline__ void battle_write(const B3& b, const Run& r, i
   int* o = out + (long long)t * B_OUT;
   o[0] = winner; o[1] = remA; o[2] = remB;
   for (int i = 0; i < 6; i++) o[3 + i] = imax(0, b.mon[i].hp);
-  o[9] = b.turns - 1; o[10] = b.flags; o[11] = b.innerSims; o[12] = b.draws; o[13] = b.poolMax;
+  int nbad = 0;
+  for (int i = 0; i < 6; i++) nbad |= b.mon[i].narrowBad;   // STACK FORK: a narrowed value did not fit
+  o[9] = b.turns - 1; o[10] = b.flags | (nbad ? F_BADSTATE : 0); o[11] = b.innerSims; o[12] = b.draws; o[13] = b.poolMax;
   o[14] = b.chargedUsed; o[15] = hpA; o[16] = hpB; o[17] = b.ndbg; o[18] = r.leadFaintA; o[19] = r.leadFaintB;
   unsigned long long tEnd = gtimer();
   o[20] = (int)(r.tStart & 0xffffffffull); o[21] = (int)(r.tStart >> 32); o[22] = (int)(tEnd & 0xffffffffull); o[23] = (int)(tEnd >> 32);
@@ -1070,14 +1059,14 @@ extern "C" __global__ void battle3v3_kernel(const double* st, const int* monIdx,
 
 static __device__ __forceinline__ unsigned vload(const unsigned* p) { return *(const volatile unsigned*)p; }
 
-static __device__ __forceinline__ void save_state(unsigned long long* slot, const B3& b, const Run& r) {
+static __device__ LEAN_NOINLINE void save_state(unsigned long long* slot, const B3& b, const Run& r) {
   const unsigned long long* pb = reinterpret_cast<const unsigned long long*>(&b);
   for (int i = 0; i < (int)(sizeof(B3) / 8); i++) __stcg(slot + i, pb[i]);
   const unsigned long long* pr = reinterpret_cast<const unsigned long long*>(&r);
   for (int i = 0; i < (int)(sizeof(Run) / 8); i++) __stcg(slot + sizeof(B3) / 8 + i, pr[i]);
   __threadfence();
 }
-static __device__ __forceinline__ void load_state(const unsigned long long* slot, B3& b, Run& r) {
+static __device__ LEAN_NOINLINE void load_state(const unsigned long long* slot, B3& b, Run& r) {
   unsigned long long* pb = reinterpret_cast<unsigned long long*>(&b);
   for (int i = 0; i < (int)(sizeof(B3) / 8); i++) pb[i] = __ldcg(slot + i);
   unsigned long long* pr = reinterpret_cast<unsigned long long*>(&r);

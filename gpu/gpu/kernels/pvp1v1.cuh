@@ -1,3 +1,9 @@
+// lean fork: LEAN_NI makes the round-8 occ 'ni' cold / entry helpers __noinline__ (step 3); otherwise they inline as in production.
+#ifdef LEAN_NI
+#define LEAN_NOINLINE __noinline__
+#else
+#define LEAN_NOINLINE
+#endif
 // CUDA port of pvpoke's 1v1 `Battle.simulate()` (simulate mode, sandbox=false, buffChanceModifier=-1)
 // as TrainingAI.runScenario uses it. One battle per thread.
 //
@@ -35,31 +41,39 @@
 #define K_SE ((REAL)1.60000002384185791015625)
 #define K_BONUS ((REAL)1.2999999523162841796875)
 
+// STACK FORK (round 8): compact Move. Every narrowed field is loaded from the static table or set to a small constant, and
+// loadMove records in nb any value that did not survive the narrowing (the battle row is then flagged F_BADSTATE, re-run on the CPU).
 struct Move {
-  int present, power, energy, gain, cd, turns, type, pct, megaMove, hasBuffs, b0, b1, target;
-  int bs0, bs1, bo0, bo1, selfDeb, selfBuf, selfAtkDeb, selfDefDeb, instant, code;
   REAL chance;
   REAL stab, dpe, meter;
   int damage;
-  int meterDefined;
+  short power, energy, gain, cd, turns, code;
+  signed char present, type, pct, megaMove, hasBuffs, b0, b1, target, bs0, bs1, bo0, bo1, selfDeb, selfBuf, selfAtkDeb, selfDefDeb, instant;
+  signed char meterDefined, nb;
 };
 
+// STACK FORK (round 8): compact Mon. Fields that change by arithmetic during a battle (hp, energy, cooldown, shields, buffs, start*,
+// counters) stay int; table values, flags, form slots and small indices are 8-bit, checked at load (narrowBad -> F_BADSTATE).
 struct Mon {
   const double* tbl;   // static table base (form snapshot rows, Gulp Missile rows 0/1)
-  int kind, form, startForm, origForm, fc, forms[4];   // form changer state (kind 0 = none)
+  int forms[4];
   REAL atk, def;
-  int hpMax, t0, t1, shadow;
   REAL sAtk, sDef;
   REAL eff[18];
-  int special, mega, megaLevel, formChange;
+  int hpMax;
+  int startHp, startEnergy, startCd, startShields, turnsToKO;
+  // runtime
+  int hp, energy, cooldown, shields, sb0, sb1;
+  int csi, shUsed;  // chargedSinceSwitchIn (throw-and-go wrapper), battleStats.shieldsUsed (3v3 only)
   Move fast;
   Move ch[3];
-  int startHp, startEnergy, startCd, startShields, ssb0, ssb1, nsb0, nsb1, priority, turnsToKO, bait, farm, opt, e_sb0, e_sb1;
-  // runtime
-  int hp, energy, cooldown, shields, sb0, sb1, hasActed, faintSource, index;
-  int csi, shUsed;  // chargedSinceSwitchIn (throw-and-go wrapper), battleStats.shieldsUsed (3v3 only)
-  int act[3], nact, best, fastest;
+  signed char kind, form, startForm, origForm, fc, t0, t1, shadow, special, mega, megaLevel, formChange;   // form changer state (kind 0 = none)
+  signed char ssb0, ssb1, nsb0, nsb1, priority, bait, farm, opt, e_sb0, e_sb1;
+  signed char hasActed, faintSource, index;
+  signed char act[3], nact, best, fastest;
+  signed char narrowBad;
 };
+#define NARROW_CHK(dst, v) do { int _v = (v); (dst) = _v; if ((int)(dst) != _v) bad = 1; } while (0)
 
 __device__ __forceinline__ int imin(int a, int b) { return a < b ? a : b; }
 __device__ __forceinline__ int imax(int a, int b) { return a > b ? a : b; }
@@ -67,34 +81,40 @@ __device__ __forceinline__ int imax(int a, int b) { return a > b ? a : b; }
 __device__ __forceinline__ int ceilDiv(int a, int b) { return a >= 0 ? (a + b - 1) / b : -((-a) / b); }
 
 __device__ void loadMove(Move* m, const double* r) {
-  m->present = (int)r[0]; m->power = (int)r[1]; m->energy = (int)r[2]; m->gain = (int)r[3]; m->cd = (int)r[4];
-  m->turns = (int)r[5]; m->type = (int)r[6]; m->pct = (int)r[7]; m->megaMove = (int)r[8]; m->hasBuffs = (int)r[9];
-  m->b0 = (int)r[10]; m->b1 = (int)r[11]; m->target = (int)r[12]; m->bs0 = (int)r[13]; m->bs1 = (int)r[14];
-  m->bo0 = (int)r[15]; m->bo1 = (int)r[16]; m->chance = (REAL)r[17]; m->selfDeb = (int)r[18]; m->selfBuf = (int)r[19];
-  m->selfAtkDeb = (int)r[20]; m->selfDefDeb = (int)r[21]; m->instant = (int)r[22]; m->code = (int)r[23];
+  int bad = 0;
+  NARROW_CHK(m->present, (int)r[0]); NARROW_CHK(m->power, (int)r[1]); NARROW_CHK(m->energy, (int)r[2]); NARROW_CHK(m->gain, (int)r[3]);
+  NARROW_CHK(m->cd, (int)r[4]); NARROW_CHK(m->turns, (int)r[5]); NARROW_CHK(m->type, (int)r[6]); NARROW_CHK(m->pct, (int)r[7]);
+  NARROW_CHK(m->megaMove, (int)r[8]); NARROW_CHK(m->hasBuffs, (int)r[9]); NARROW_CHK(m->b0, (int)r[10]); NARROW_CHK(m->b1, (int)r[11]);
+  NARROW_CHK(m->target, (int)r[12]); NARROW_CHK(m->bs0, (int)r[13]); NARROW_CHK(m->bs1, (int)r[14]); NARROW_CHK(m->bo0, (int)r[15]);
+  NARROW_CHK(m->bo1, (int)r[16]); m->chance = (REAL)r[17]; NARROW_CHK(m->selfDeb, (int)r[18]); NARROW_CHK(m->selfBuf, (int)r[19]);
+  NARROW_CHK(m->selfAtkDeb, (int)r[20]); NARROW_CHK(m->selfDefDeb, (int)r[21]); NARROW_CHK(m->instant, (int)r[22]); NARROW_CHK(m->code, (int)r[23]);
   m->stab = 1; m->dpe = 0; m->meter = 0; m->damage = 0; m->meterDefined = 0;
+  m->nb = bad;
 }
 
-__device__ void loadMon(Mon* p, const double* s, const double* d, int index, const double* tbl) {
+__device__ LEAN_NOINLINE void loadMon(Mon* p, const double* s, const double* d, int index, const double* tbl) {
+  int bad = 0;
   p->tbl = tbl;
-  p->kind = (int)s[130]; p->form = (int)s[131];
+  NARROW_CHK(p->kind, (int)s[130]); NARROW_CHK(p->form, (int)s[131]);
   for (int i = 0; i < 4; i++) p->forms[i] = (int)s[132 + i];
-  p->fc = (int)s[136];
-  p->startForm = (int)d[15]; p->origForm = (int)d[16];
-  p->atk = (REAL)s[0]; p->def = (REAL)s[1]; p->hpMax = (int)s[2]; p->t0 = (int)s[3]; p->t1 = (int)s[4];
-  p->shadow = (int)s[5]; p->sAtk = (REAL)s[6]; p->sDef = (REAL)s[7];
+  NARROW_CHK(p->fc, (int)s[136]);
+  NARROW_CHK(p->startForm, (int)d[15]); NARROW_CHK(p->origForm, (int)d[16]);
+  p->atk = (REAL)s[0]; p->def = (REAL)s[1]; p->hpMax = (int)s[2]; NARROW_CHK(p->t0, (int)s[3]); NARROW_CHK(p->t1, (int)s[4]);
+  NARROW_CHK(p->shadow, (int)s[5]); p->sAtk = (REAL)s[6]; p->sDef = (REAL)s[7];
   for (int i = 0; i < 18; i++) p->eff[i] = (REAL)s[8 + i];
-  p->special = (int)s[26]; p->mega = (int)s[27]; p->megaLevel = (int)s[28]; p->formChange = (int)s[29];
+  NARROW_CHK(p->special, (int)s[26]); NARROW_CHK(p->mega, (int)s[27]); NARROW_CHK(p->megaLevel, (int)s[28]); NARROW_CHK(p->formChange, (int)s[29]);
   loadMove(&p->fast, s + 30);
   for (int k = 0; k < 3; k++) loadMove(&p->ch[k], s + 30 + M_N * (1 + k));
+  bad |= p->fast.nb | p->ch[0].nb | p->ch[1].nb | p->ch[2].nb;
   p->startHp = (int)d[0]; p->startEnergy = (int)d[1]; p->startCd = (int)d[2]; p->startShields = (int)d[3];
-  p->ssb0 = (int)d[4]; p->ssb1 = (int)d[5]; p->nsb0 = (int)d[6]; p->nsb1 = (int)d[7]; p->priority = (int)d[8];
-  p->turnsToKO = (int)d[9]; p->bait = (int)d[10]; p->farm = (int)d[11]; p->opt = (int)d[12];
-  p->e_sb0 = (int)d[13]; p->e_sb1 = (int)d[14];
-  p->index = index; p->hasActed = 0; p->faintSource = 0; p->csi = 0; p->shUsed = 0;
+  NARROW_CHK(p->ssb0, (int)d[4]); NARROW_CHK(p->ssb1, (int)d[5]); NARROW_CHK(p->nsb0, (int)d[6]); NARROW_CHK(p->nsb1, (int)d[7]); NARROW_CHK(p->priority, (int)d[8]);
+  p->turnsToKO = (int)d[9]; NARROW_CHK(p->bait, (int)d[10]); NARROW_CHK(p->farm, (int)d[11]); NARROW_CHK(p->opt, (int)d[12]);
+  NARROW_CHK(p->e_sb0, (int)d[13]); NARROW_CHK(p->e_sb1, (int)d[14]);
+  NARROW_CHK(p->index, index); p->hasActed = 0; p->faintSource = 0; p->csi = 0; p->shUsed = 0;
   p->hp = p->startHp; p->energy = p->startEnergy; p->cooldown = p->startCd; p->shields = p->startShields;
   p->sb0 = p->e_sb0; p->sb1 = p->e_sb1;
   p->nact = 0; p->best = -1; p->fastest = -1;
+  p->narrowBad = bad;
 }
 
 // ------------------------------------------------------------------ stats and damage
@@ -158,7 +178,7 @@ __device__ void rotateAct(Mon* p) {
   p->act[p->nact - 1] = f;
 }
 
-__device__ void resetMoves(Mon* p, const Mon* opp) {
+__device__ LEAN_NOINLINE void resetMoves(Mon* p, const Mon* opp) {
   initializeMove(p, opp, &p->fast);
   for (int k = 0; k < 3; k++) if (p->ch[k].present) initializeMove(p, opp, &p->ch[k]);
   p->nact = 0;
@@ -240,29 +260,29 @@ __device__ void resetMoves(Mon* p, const Mon* opp) {
 }
 
 // Pokemon.js changeForm 2473-2525: switch to form slot `slot` using the group's snapshot row for that form.
-__device__ void changeForm(Mon* p, const Mon* opp, int slot) {
+__device__ LEAN_NOINLINE void changeForm(Mon* p, const Mon* opp, int slot) {
   const double* r = p->tbl + (long long)p->forms[slot] * S_N;
   p->form = slot;
-  p->t0 = (int)r[3]; p->t1 = (int)r[4];
+  { int bad = 0; NARROW_CHK(p->t0, (int)r[3]); NARROW_CHK(p->t1, (int)r[4]); p->narrowBad |= bad; }
   for (int i = 0; i < 18; i++) p->eff[i] = (REAL)r[8 + i];
-  if ((int)r[137]) p->fc = (int)r[136];                      // form.formChange, only if the form has one
+  if ((int)r[137]) { int bad = 0; NARROW_CHK(p->fc, (int)r[136]); p->narrowBad |= bad; }                      // form.formChange, only if the form has one
   p->atk = (REAL)r[0]; p->def = (REAL)r[1];                  // stats from getFormStats when base stats differ (same value otherwise)
-  if ((int)r[138]) { p->nsb0 = (int)r[139]; p->nsb1 = (int)r[140]; applyBuffs(p, p->nsb0, p->nsb1); }
+  if ((int)r[138]) { int bad = 0; NARROW_CHK(p->nsb0, (int)r[139]); NARROW_CHK(p->nsb1, (int)r[140]); p->narrowBad |= bad; applyBuffs(p, p->nsb0, p->nsb1); }
   if (p->kind == 4) {                                        // Morpeko: replaceMove AURA_WHEEL_*
     int oldCode = slot == 1 ? 10 : 11;
     for (int k = 0; k < 3; k++)
-      if (p->ch[k].present && p->ch[k].code == oldCode) { loadMove(&p->ch[k], r + 30 + M_N * (1 + k)); break; }
+      if (p->ch[k].present && p->ch[k].code == oldCode) { loadMove(&p->ch[k], r + 30 + M_N * (1 + k)); p->narrowBad |= p->ch[k].nb; break; }
   } else if (p->kind == 1) {                                 // Aegislash: replaceMove fast between the plain and CHARGE variants
     int c = p->fast.code;
-    if (slot == 0 && (c == 12 || c == 13)) loadMove(&p->fast, r + 30);
-    if (slot == 1 && (c == 14 || c == 15)) loadMove(&p->fast, r + 30);
+    if (slot == 0 && (c == 12 || c == 13)) { loadMove(&p->fast, r + 30); p->narrowBad |= p->fast.nb; }
+    if (slot == 1 && (c == 14 || c == 15)) { loadMove(&p->fast, r + 30); p->narrowBad |= p->fast.nb; }
   }
   resetMoves(p, opp);
 }
 __device__ __forceinline__ bool fcResetsOnSwitch(int fc) { return fc != 3 && fc != 4; }
 
 // Pokemon.reset(isSwitch) 1925-1937
-__device__ void resetMon(Mon* p, const Mon* opp, int isSwitch = 0) {
+__device__ LEAN_NOINLINE void resetMon(Mon* p, const Mon* opp, int isSwitch = 0) {
   p->hp = p->startHp;
   p->energy = p->startEnergy;
   p->cooldown = p->startCd;
@@ -277,7 +297,7 @@ __device__ void resetMon(Mon* p, const Mon* opp, int isSwitch = 0) {
 // ------------------------------------------------------------------ ActionLogic
 
 // Math.floor-free helpers for the shield decision
-__device__ bool wouldShield(const Mon* attacker_c, const Mon* defender_c, Move* move, Mon* attacker, Mon* defender) {
+__device__ LEAN_NOINLINE bool wouldShield(const Mon* attacker_c, const Mon* defender_c, Move* move, Mon* attacker, Mon* defender) {
   (void)attacker_c; (void)defender_c;
   bool useShield = false;
   int damage = calcDamage(attacker, defender, move);
@@ -324,6 +344,18 @@ typedef int QIdx;
 struct BState { short energy, oppHealth, turn, link; signed char oppShields, buffs, mv, pad; };
 typedef short QIdx;
 #endif
+#ifdef LEAN_KEY
+// LEAN_KEY (step 5): a queue entry is (turn << 12) | pool index, so the sorted-queue searches and the equal-turn scan read the turn
+// from the queue itself instead of a second dependent load pool[qp[i]].turn; the queue order is the same (turn order, equal turns keep
+// their insertion order because the search keys never separate them). Pool indices stay below 4096 (MAXQ <= 2048).
+#define QI(k) ((k) & 4095)
+#define QT(k) ((k) >> 12)
+#define QK(t, i) (((t) << 12) | (i))
+#else
+#define QI(k) (k)
+#define QT(k) (pool[k].turn)
+#define QK(t, i) (i)
+#endif
 __device__ __forceinline__ BState mkB(int e, int h, int t, int s, int bf, int link, int mv, int* flags) {
   BState r;
   r.energy = e; r.oppHealth = h; r.turn = t; r.oppShields = s; r.buffs = bf; r.link = link; r.mv = mv;
@@ -334,6 +366,36 @@ __device__ __forceinline__ BState mkB(int e, int h, int t, int s, int bf, int li
   return r;
 }
 struct TState { int hp, opEnergy, turn, shields; };
+
+// LEAN FORK (round 10): the DP queue is always sorted by turn (every insert places by turn, pops take the front), so the
+// insertion point is found by binary search instead of a linear scan of dependent local loads. Same index as the scans:
+// qpos_le = first i with turn > t ("while turn <= t"), qpos_lt = first i with turn >= t ("while turn < t").
+#ifdef LEAN_KEY
+__device__ __forceinline__ int qpos_le(const BState* pool, const int* qp, int qn, int t) {
+  int lo = 0, hi = qn; const int key = (t + 1) << 12;
+  while (lo < hi) { int mid = (lo + hi) >> 1; if (qp[mid] < key) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+__device__ __forceinline__ int qpos_lt(const BState* pool, const int* qp, int qn, int t) {
+  int lo = 0, hi = qn; const int key = t << 12;
+  while (lo < hi) { int mid = (lo + hi) >> 1; if (qp[mid] < key) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+#elif defined(LEAN_BSEARCH)
+__device__ __forceinline__ int qpos_le(const BState* pool, const QIdx* qp, int qn, int t) {
+  int lo = 0, hi = qn;
+  while (lo < hi) { int mid = (lo + hi) >> 1; if (pool[qp[mid]].turn <= t) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+__device__ __forceinline__ int qpos_lt(const BState* pool, const QIdx* qp, int qn, int t) {
+  int lo = 0, hi = qn;
+  while (lo < hi) { int mid = (lo + hi) >> 1; if (pool[qp[mid]].turn < t) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+#else
+__device__ __forceinline__ int qpos_le(const BState* pool, const QIdx* qp, int qn, int t) { int i = 0; while (i < qn && pool[qp[i]].turn <= t) i++; return i; }
+__device__ __forceinline__ int qpos_lt(const BState* pool, const QIdx* qp, int qn, int t) { int i = 0; while (i < qn && pool[qp[i]].turn < t) i++; return i; }
+#endif
 
 __device__ int movesOf(const BState* pool, int s, int* out) {
   // returns count; moves in order of use
@@ -526,17 +588,22 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
 
   // dynamic programming over throw plans
   BState pool[MAXQ];
+#ifdef LEAN_KEY
+  int queue[MAXQ];
+  int* qp = queue;
+#else
   QIdx queue[MAXQ];
-  QIdx* qp = queue;  // queue head: a pop advances it instead of shifting the whole queue (same order, same results)
+  QIdx* qp = queue;
+#endif  // queue head: a pop advances it instead of shifting the whole queue (same order, same results)
   int qn = 0, pn = 0;
   int stateCount = 0;
   int finalState = -1;
   pool[pn] = mkB(poke->energy, opp->hp, 0, opp->shields, 0, -1, -1, flags);
-  qp[qn++] = pn++;
+  qp[qn++] = QK(0, pn); pn++;
   while (qn != 0) {
     if (stateCount >= 500) return -1;
     stateCount++;
-    int cur = qp[0];
+    int cur = QI(qp[0]);
     qp++;
     qn--;
     BState* cs = &pool[cur];
@@ -565,13 +632,10 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
       int farmTurn = cs->turn + movesToFarmDown * poke->fast.turns;
       if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
       {
-        int i = 0;
-        if (qn != 0) {
-          while (pool[qp[i]].turn <= farmTurn) { i++; if (i == qn) break; }
-        }
+        int i = qpos_le(pool, qp, qn, farmTurn);
         pool[pn] = mkB(cs->energy + poke->fast.gain * movesToFarmDown, 0, farmTurn, cs->oppShields, cs->buffs, cur, -1, flags);
         for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-        qp[i] = pn++;
+        qp[i] = QK(farmTurn, pn); pn++;
         qn++;
       }
       cs = &pool[cur];
@@ -589,13 +653,13 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         if (newShields > 0) newShields--;
         int i = 0;
         bool insertElement = true;
-        while (i < qn && pool[qp[i]].turn == cs->turn + 1) {
-          BState* q = &pool[qp[i]];
+        while (i < qn && QT(qp[i]) == cs->turn + 1) {
+          BState* q = &pool[QI(qp[i])];
           if (q->oppHealth == newOppHealth && q->buffs == attackMult) {
             if (q->energy == (cs->energy - am->energy)) {
               int DPDebuffs = 0, currDebuffs = 0;
               int mv[MAXMV];
-              int cnt = movesOf(pool, qp[i], mv);
+              int cnt = movesOf(pool, QI(qp[i]), mv);
               for (int x = 0; x < cnt; x++) {
                 Move* mm = &poke->ch[mv[x]];
                 if (mm->selfDeb) DPDebuffs++;
@@ -617,12 +681,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
           } else { i++; }
         }
         if (insertElement) {
-          i = 0;
-          while (i < qn && pool[qp[i]].turn <= cs->turn + 1) { i++; }
+          i = qpos_le(pool, qp, qn, cs->turn + 1);
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
           pool[pn] = mkB(cs->energy - am->energy, newOppHealth, cs->turn + 1, newShields, attackMult, cur, poke->act[n], flags);
           for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-          qp[i] = pn++;
+          qp[i] = QK(cs->turn + 1, pn); pn++;
           qn++;
         }
         if (am->selfDeb && am->b0 < 0 && am->energy * 2 <= 100) {
@@ -632,12 +695,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
             int nh = cs->oppHealth - fastSimDamage * (newTurn / poke->fast.turns);
             if (cs->oppShields > 0) nh = nh - 1; else nh = nh - moveDamage;
             newTurn += cs->turn + 1;
-            int j = 0;
-            while (j < qn && pool[qp[j]].turn <= newTurn) { j++; }
+            int j = qpos_le(pool, qp, qn, newTurn);
             if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
             pool[pn] = mkB(newEnergy, nh, newTurn, newShields, attackMult, cur, poke->act[n], flags);
             for (int x = qn; x > j; x--) qp[x] = qp[x - 1];
-            qp[j] = pn++;
+            qp[j] = QK(newTurn, pn); pn++;
             qn++;
           }
         }
@@ -649,12 +711,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
         int newShields = cs->oppShields;
         if (newShields > 0) newShields--;
         {
-          int i = 0;
-          while (i < qn && pool[qp[i]].turn < newTurn) { i++; }
+          int i = qpos_lt(pool, qp, qn, newTurn);
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
           pool[pn] = mkB(newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n], flags);
           for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-          qp[i] = pn++;
+          qp[i] = QK(newTurn, pn); pn++;
           qn++;
         }
         if (am->selfDeb && am->b0 < 0 && am->energy * 2 <= 100) {
@@ -663,12 +724,11 @@ __device__ __noinline__ int decideAction(Mon* poke, Mon* opp, int turns, int que
           newOppHealth = cs->oppHealth - fastSimDamage * (newTurn / poke->fast.turns);
           if (cs->oppShields > 0) newOppHealth = newOppHealth - 1; else newOppHealth = newOppHealth - moveDamage;
           newTurn += cs->turn + 1;
-          int i = 0;
-          while (i < qn && pool[qp[i]].turn < newTurn) { i++; }
+          int i = qpos_lt(pool, qp, qn, newTurn);
           if (pn >= MAXQ) { *flags |= F_POOL_OVERFLOW; return -1; }
           pool[pn] = mkB(newEnergy, newOppHealth, newTurn, newShields, attackMult, cur, poke->act[n], flags);
           for (int x = qn; x > i; x--) qp[x] = qp[x - 1];
-          qp[i] = pn++;
+          qp[i] = QK(newTurn, pn); pn++;
           qn++;
         }
       }

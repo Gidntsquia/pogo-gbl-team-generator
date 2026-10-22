@@ -210,9 +210,6 @@ export async function evaluateTeamsInOrder(ctx, params) {
     if (pendingSpecs.length > 0) {
       try {
         executor.noteMemoHits?.(memoHits);
-        // EXPERIMENTAL (round 9 GPU study, POGO_GPU_STUDY=tail,certain): the plan the certainty test reads during the launch.
-        // Only the GPU executor under that flag has notePlan; nothing here feeds a result.
-        if (executor.notePlan) executor.notePlan(planRecord());
         ranStep = true;
         slots = await executor.run(pendingSpecs);
       } catch (err) {

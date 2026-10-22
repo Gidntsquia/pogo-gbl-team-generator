@@ -89,6 +89,7 @@ export function simShArgv(a, kind, flags) {
   opt('--generations', a.generations);
   opt('--population', a.population);
   if (kind === 'meta') opt('--meta-pool', a.meta_pool);
+  if (a.cpuOnly) argv.push('--cpu-only');
   if (a.quick) argv.push('--quick');
   if (a.dry_run) argv.push('--dry-run');
   const extra = flagsToArgv(a.extra, flags);
@@ -135,6 +136,7 @@ export function configToArgv(config, launch) {
     argv.push(`--${flag}`, String(v));
   }
   if (config.halvingRounds === undefined) argv.push('--halving-rounds', '0');
+  if (!config.gpu) argv.push('--cpu-only'); // the GPU is the default engine; a CPU-only run's config has no gpu key
   if (config.hoeffdingRaces) argv.push('--hoeffding-races');
   if (config.evolutions === false && !config.metaMode) argv.push('--no-evolutions');
   if (config.metaMode) argv.push('--meta-mode', '--no-evolutions');
@@ -203,6 +205,12 @@ const round = (x, n = 4) => (typeof x === 'number' ? Number(x.toFixed(n)) : x);
  * @param {string} logText
  * @param {{teams?: number, mons?: number}} [depth] rows per team section (default 15) and per mon section (default 5)
  */
+/** Engine a run used: gpu, cpu-only, or cpu-fallback (the sidecar could not start; config.engine or the log's fallback line). */
+export function engineOf(config, logText = '') {
+  if (config?.engine === 'cpu-fallback' || /^gpu: .*, running on CPU$/m.test(logText)) return 'cpu-fallback';
+  return config?.gpu ? 'gpu' : 'cpu-only';
+}
+
 export function buildStatus(cp, logText, { teams: nTeams = 15, mons: nMons = 5 } = {}) {
   const a = cp.analytics ?? {};
   const allTeams = a.topTeams ?? [];
@@ -243,6 +251,7 @@ export function buildStatus(cp, logText, { teams: nTeams = 15, mons: nMons = 5 }
   const lastLog = logGens.at(-1);
   return {
     checkpointGeneration: gen,
+    engine: engineOf(cp.config, logText),
     generations: cp.config?.generations,
     config: {
       csv: cp.config?.csvPath, cup: cp.config?.cup, cp: cp.config?.cp, population: cp.config?.population,

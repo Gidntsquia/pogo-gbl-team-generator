@@ -58,7 +58,7 @@ def main():
                 check(row is not None and "insufficient" in row.group(0), f"session {s}: {v} has {len(vals)} runs and is 'insufficient'")
                 continue
             gain = sum(dv) / len(dv) - sum(vals) / len(vals)
-            sp = max(max(dv) - min(dv), max(vals) - min(vals))
+            sp = (max(dv) - min(dv)) + (max(vals) - min(vals))  # both spreads added (round 12 R13)
             want = "wins" if gain > sp else ("insufficient" if gain > 0 else "no gain")
             check(row is not None and f"| {want}" in row.group(0), f"session {s}: {v} verdict '{want}' (gain {gain:+.3f}, spread bound {sp:.3f})")
             if v.endswith("cap"):

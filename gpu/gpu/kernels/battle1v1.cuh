@@ -1,6 +1,10 @@
 // 1v1 battle loop (Battle.js step/useMove/simulate); included after pvp1v1.cuh
 
+#ifdef STACK_COMPACT2  // STACK FORK: turn <= 481 (240 s / 500 ms), actor/type/prio 0..2; value stays int (Gulp rows are 100 + row)
+struct QA { int value; short turn; signed char actor, type, prio; };
+#else
 struct QA { int actor, type, turn, value, prio; };  // type 0 = fast, 1 = charged
+#endif
 
 struct Sim {
   Mon m[2];
@@ -16,7 +20,7 @@ struct Sim {
 
 // Action value >= 100 names a Gulp Missile move (static rows 0 = ARROKUDA, 1 = PIKACHU); else a charged slot index.
 __device__ __forceinline__ Move* chargedOf(Move* scratch, Mon* p, int value) {
-  if (value >= 100) { loadMove(scratch, p->tbl + (long long)(value - 100) * S_N + 30); return scratch; }
+  if (value >= 100) { loadMove(scratch, p->tbl + (long long)(value - 100) * S_N + 30); p->narrowBad |= scratch->nb; return scratch; }
   return &p->ch[value];
 }
 __device__ __forceinline__ bool fcAttackerTrigger(const Mon* a, const Move* mv) {   // Battle.js 1548-1549

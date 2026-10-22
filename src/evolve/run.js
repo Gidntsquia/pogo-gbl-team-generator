@@ -7,6 +7,7 @@ import { initRunState } from './state.js';
 import { runGeneration } from './generation.js';
 import { buildResult, closeExecutor, writeOutputs } from './output.js';
 import { saveBattleCacheFile } from './cache.js';
+import { startGpuEngine } from './engine.js';
 
 /** One startup line under --gpu: device name, memory, batch limit, cpu share. */
 async function gpuStartupLine(share) {
@@ -39,14 +40,20 @@ export async function runEvolution(csvPath, opts = {}) {
     : null;
   let executor = cpuExecutor;
   let gpuProfile = null;
+  if (opts.gpuFlag) log('gpu: --gpu is the default');
   if (opts.gpu) {
     const tSc0 = performance.now();
     const { createGpuExecutor, GPU_BATCH_LIMIT } = await import('../engine/gpuExecutor.js');
     gpuProfile = createGpuProfile(outDir, { cpuShare: config.gpuCpuShare, batchLimit: GPU_BATCH_LIMIT, threads });
     gpuProfile.setPhase('setup', setupS);
-    executor = await createGpuExecutor({ ctx, cpuExecutor, cpuShare: config.gpuCpuShare, log, profile: gpuProfile });
-    log(await gpuStartupLine(config.gpuCpuShare));
-    gpuProfile.setPhase('sidecarStart', (performance.now() - tSc0) / 1000);
+    const started = await startGpuEngine({ create: createGpuExecutor, ctx, cpuExecutor, config, log, profile: gpuProfile });
+    if (started.executor) {
+      executor = started.executor;
+      log(await gpuStartupLine(config.gpuCpuShare));
+      gpuProfile.setPhase('sidecarStart', (performance.now() - tSc0) / 1000);
+    } else {
+      gpuProfile = null; // nothing ran on the GPU: no gpu-profile.json
+    }
   }
   const env = { ...setup, opts, threaded, executor, profileDir, gpuProfile };
 

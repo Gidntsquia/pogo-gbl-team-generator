@@ -1,5 +1,5 @@
-"""cap fork (round 10 R6/R7): a bound on what the slowest battles cost. Selected with POGO_GPU_STUDY=cap (after lean when
-both: POGO_GPU_STUDY=lean,cap); POGO_GPU_CAP=<entries> (default CAP) caps the lookahead DP pool per decision.
+"""cap fork (round 10 R6/R7): a bound on what the slowest battles cost. Selected with POGO_GPU_STUDY=cap (composes with the kernel; one
+study flag); POGO_GPU_CAP=<entries> (default CAP) caps the lookahead DP pool per decision.
 
 The longest battles are the ones whose charged-move lookahead (pvpoke ActionLogic DynamicProgramming, pvp1v1.cuh
 decideCharged) grows a big state pool: in the 10k launch replay a battle with poolMax 1,420 ran 4.9 s alone against
@@ -9,7 +9,7 @@ CAP entries, instead of growing to MAXQ (2,048) or overflowing to the CPU. A dec
 outside the host's invalid mask, so the row is kept) and the host logs per launch "gpu cap -- N of M battles hit the pool
 cap C". This CAN change winners: its gate is agreement with the CPU engine (verify_3v3), not identity.
 
-The edits are text substitutions on whatever kernel source is current (production or the lean fork), so the two combine."""
+The edits are text substitutions on whatever kernel source is current."""
 import os
 import re
 import sys

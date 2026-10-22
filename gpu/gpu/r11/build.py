@@ -48,11 +48,11 @@ def sessions():
 
 
 def verdict_row(vals, dv):
-    """R1/R2: 3+ runs needed; wins = mean better than the default's by more than both spreads; a gain > 0 inside the spreads is insufficient."""
+    """R1/R2: 3+ runs needed; wins = mean better than the default's by more than both spreads added (default's + variant's); a gain > 0 inside the spreads is insufficient."""
     if len(vals) < 3:
         return "insufficient: %d runs, needs %d more" % (len(vals), 3 - len(vals)), None
     gain = S10.mean(dv) - S10.mean(vals)
-    if gain > max(S10.spread(dv), S10.spread(vals)):
+    if gain > S10.spread(dv) + S10.spread(vals):  # round 12 R13: "both spreads" = the two spreads added (s4 lean 2q: 1.106 < 0.34 + 0.82)
         return "wins", gain
     if gain > 0:
         return "insufficient: %d runs, needs 3 more" % len(vals), gain
@@ -173,15 +173,19 @@ def top3(L):
 
 
 def insufficient(L):
-    out = []
+    """Round 12 R13: a candidate is unresolved only if NO session gave it a clear verdict (wins / no gain); sessions that repeated it count."""
+    clear, notes = set(), {}
     for s, by in sorted(sessions().items()):
         dv = [r["warm_s_per_gen"] for r in by.get("default", [])]
         for v, rr in by.items():
             if v != "default" and len(dv) >= 3:
                 vd, _ = verdict_row([r["warm_s_per_gen"] for r in rr], dv)
                 if vd.startswith("insufficient"):
-                    out.append(f"{LABEL[v]} (session {s}: {vd})")
-    L.append("Unresolved at the end of the budget: " + ("; ".join(out) if out else "none; every row above is wins or no gain."))
+                    notes.setdefault(v, []).append(f"session {s}: {vd}")
+                else:
+                    clear.add(v)
+    out = [f"{LABEL[v]} ({'; '.join(n)})" for v, n in notes.items() if v not in clear]
+    L.append("Unresolved at the end of the budget: " + ("; ".join(out) if out else "none; every candidate has a wins or no gain verdict in some session."))
 
 
 def build():
@@ -189,7 +193,7 @@ def build():
          "Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed), `out/gpu/r10/ncu/summary.json` (Nsight) and the files "
          "`python3 gpu/gpu/r11/check.py` re-reads; it rebuilds this section and fails on any difference. Yardstick: warm s/gen = mean of generations 2+ over a "
          "30-gen standard run, 3 interleaved runs per variant with a default run in every pass; spread = max - min; \"wins\" = mean beats the session's default "
-         "mean by more than both spreads; a gain inside the spreads is \"insufficient\". Clock times are US Eastern. Nothing is on by default.", ""]
+         "mean by more than both spreads added together; a gain inside the spreads is \"insufficient\". Clock times are US Eastern. Nothing is on by default.", ""]
     tables(L)
     L.append("")
     nsight(L)

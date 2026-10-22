@@ -12,10 +12,6 @@ def width():
     return variant
 
 
-def stack():
-    from .stack import variant
-    return variant
-
 
 def pool():
     from .pool import variant
@@ -52,24 +48,7 @@ def early():
     return variant
 
 
-def occ():
-    from .occ import variant
-    return variant
 
-
-def tail():
-    from .tail import variant
-    return variant
-
-
-def certain():
-    from .tail import certain as c
-    return c
-
-
-def lean():
-    from .lean import variant
-    return variant
 
 
 def cap():

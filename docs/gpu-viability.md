@@ -486,7 +486,7 @@ Top-12 finalists of each 30-gen run re-battled on the CPU engine against the gen
 3. `POGO_GPU_STUDY=lean,cap`: wins at 30 gens (-2.38 s/gen, mean 7.81, spread 0.14 vs default 10.19, spread 1.49); cap changes winners, so it is a trade the user decides on with the agreement numbers above.
 ## Round 11: 30-gen A/Bs of every lean step, Nsight on every variant, kernel iteration, top 3 to implement
 
-Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed), `out/gpu/r10/ncu/summary.json` (Nsight) and the files `python3 gpu/gpu/r11/check.py` re-reads; it rebuilds this section and fails on any difference. Yardstick: warm s/gen = mean of generations 2+ over a 30-gen standard run, 3 interleaved runs per variant with a default run in every pass; spread = max - min; "wins" = mean beats the session's default mean by more than both spreads; a gain inside the spreads is "insufficient". Clock times are US Eastern. Nothing is on by default.
+Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed), `out/gpu/r10/ncu/summary.json` (Nsight) and the files `python3 gpu/gpu/r11/check.py` re-reads; it rebuilds this section and fails on any difference. Yardstick: warm s/gen = mean of generations 2+ over a 30-gen standard run, 3 interleaved runs per variant with a default run in every pass; spread = max - min; "wins" = mean beats the session's default mean by more than both spreads added together; a gain inside the spreads is "insufficient". Clock times are US Eastern. Nothing is on by default.
 
 ### 30-gen session s2: start 11:11 EDT, passes interleaved, each pass default then the variants, same seed
 | variant | warm s/gen, runs | mean | spread | vs default | verdict | spill st/ld B | proof | run starts ET |
@@ -511,7 +511,7 @@ Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed)
 |---|---|---|---|---|---|---|---|---|
 | default | 9.24 / 9.54 / 9.58 | 9.46 | 0.34 | - | - | 28/36 | - | 16:00, 16:15, 16:29 |
 | lean 1 | 8.89 / 9.07 / 9.31 | 9.09 | 0.43 | -0.37 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:05, 16:20, 16:34 |
-| lean 2q | 7.99 / 8.26 / 8.81 | 8.35 | 0.82 | -1.11 | wins | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:10, 16:25, 16:39 |
+| lean 2q | 7.99 / 8.26 / 8.81 | 8.35 | 0.82 | -1.11 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:10, 16:25, 16:39 |
 
 ### Nsight Compute (`out/gpu/r10/ncu/summary.json`; 5k = batch 7, 10k = batch 6; base clocks, kernel replay)
 | launch | variant | kernel s | occupancy | long_scoreboard | top stall | local GB | issue-slot use |
@@ -535,7 +535,7 @@ Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed)
 | 10k | stack | 10.92 | 15.4% | 42% | long_scoreboard 42% | 1906 | 13.3% |
 | 10k | leancap | 6.65 | 15.8% | 32% | no_instruction 32% | 1747 | 13.7% |
 
-Unresolved at the end of the budget: lean 1 (session s2: insufficient: 3 runs, needs 3 more); lean 2q (session s2: insufficient: 3 runs, needs 3 more); lean 1 (session s4: insufficient: 3 runs, needs 3 more)
+Unresolved at the end of the budget: lean 1 (session s2: insufficient: 3 runs, needs 3 more; session s4: insufficient: 3 runs, needs 3 more); lean 2q (session s2: insufficient: 3 runs, needs 3 more; session s4: insufficient: 3 runs, needs 3 more)
 
 ### Top 3 ideas to implement (ranked by s/gen saved; a 100-gen run is the 30-gen mean x 100)
 1. **lean 6**: saves 3.11 s/gen (mean 6.50, spread 0.14 vs default 9.61, spread 0.20, session s3) = 5.2 min per 100-gen run. Proof: 3/3 runs 30/30 identical; verify 100.00% / 0 flagged. Change: make LEAN_STEPS "6" (compact2 fields, binary-search queue, turn-keyed int queue, noinline cold helpers) the kernel the standard run builds, via POGO_GPU_STUDY=lean POGO_GPU_LEAN=6 becoming the default in gpu/gpu/study/lean/variant.py and the run wrapper. Targets long_scoreboard: the turn is read from the key, so no dependent pool load per queue slot. Interacts: Supersedes lean 3 and lean 5; spills 48/76 B like lean 3. Cap can sit on top (untested with step 6).

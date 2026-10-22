@@ -47,7 +47,7 @@ tool('status_sim', 'One-call sim report; needs no name (defaults to the live run
     const nT = a.teams ?? 15, nM = a.mons ?? 5;
     const rep = (p) => `${p.species} ${Math.round(p.representation * 1000) / 10}% ${f3(p.meanFitness)}`;
     const lines = [
-      `${n} ${state}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}${others.length ? ` | other live: ${others.join(', ')}` : ''}`,
+      `${n} ${state} ${s.engine}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}${others.length ? ` | other live: ${others.join(', ')}` : ''}`,
       `${s.speed.lastGenElapsedSec}s/gen (last) ${s.speed.meanGenSec ?? '?'}s/gen (mean 5) ${s.speed.msPerBattle}ms/battle sim ${s.speed.battlesSimulated} cached ${s.speed.battlesCached} ETA ${s.speed.etaMinutes}m RSS ${liveRssMB ?? s.memory.lastLoggedRssMB}MB${liveRssMB === null ? ' (last logged)' : ''}`,
       `teams${note(s.topTeams.length, nT)} [rank members(lead first) fitness win snowball consistency comeback closer]: ${join(s.topTeams, (t) => `#${t.rank} ${t.members.join('/')} ${f3(t.fitness)} ${f3(t.winRate)} ${f3(t.snowball)} ${f3(t.consistency)} ${f3(t.comeback)} ${t.closer ?? '-'}`)}`,
       `mons${note(s.topSpecies.length, nM)} [species representation meanFitness]: ${join(s.topSpecies, rep)}`,

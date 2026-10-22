@@ -1,7 +1,7 @@
 """Round 10/11 Nsight summary: out/gpu/r10/ncu/summary.json, the only source of profile numbers.
 
     python3 gpu/gpu/r10/ncu_summary.py        (no GPU; reads out/gpu/r10/ncu/<launch>-<variant>.g<k>.csv)
-Entries "<5k|10k>-<variant>" for variants in VARIANT. Same fields as round 9 (gpu/gpu/study/tail/ncu_summary.py). A metric group
+Entries "<5k|10k>-<variant>" for variants in VARIANT. Same fields as round 9 (gpu/gpu/study/ncu/ncu_summary.py). A metric group
 (g0 stalls, g1 occupancy/issue, g2 local bytes, g3 cache hits, g4 time) with no report is named in "missing_groups"; an entry with
 none of them is "missing: driver reset xN" (N = failed tries in its logs), never "no Nsight"."""
 import glob
@@ -11,7 +11,7 @@ import sys
 
 R = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, os.path.join(R, "gpu"))
-from gpu.study.tail import ncu_summary as N  # noqa: E402
+from gpu.study.ncu import ncu_summary as N  # noqa: E402
 
 D = os.path.join(R, "out/gpu/r10/ncu")
 LAUNCH = {"5k": "batch 7 (4,788 battles)", "10k": "batch 6 (10,920 battles)"}
@@ -21,6 +21,8 @@ VARIANT = {
     "lean4": "POGO_GPU_STUDY=lean POGO_GPU_LEAN=4", "lean2q": "POGO_GPU_STUDY=lean POGO_GPU_LEAN=2q",
     "lean5": "POGO_GPU_STUDY=lean POGO_GPU_LEAN=5 (round 11 candidate: turn-keyed queue)",
     "leancap": "POGO_GPU_STUDY=lean,cap POGO_GPU_CAP=192",
+    "lean6": "lean 6 (round 12 standard kernel: step 3 + turn-keyed queue)",
+    "lean6cap": "lean 6 + POGO_GPU_STUDY=cap POGO_GPU_CAP=192",
 }
 VARIANT.update(json.load(open(os.path.join(D, "extra-variants.json"))) if os.path.exists(os.path.join(D, "extra-variants.json")) else {})
 GROUPS = {0: "stalls", 1: "occupancy/issue", 2: "local bytes", 3: "cache hits", 4: "kernel time"}

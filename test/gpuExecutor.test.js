@@ -88,3 +88,19 @@ test('a later step with new mons resends the static table before its batch (ever
   await ex.run([spec(0)]);
   await ex.run([{ ...spec(0), teamB: team(['medicham', 'swampert', 'skarmory']) }]);
 });
+
+test('a sidecar that cannot start falls back to the CPU with one line; a resume with the other engine is refused', async () => {
+  const { startGpuEngine } = await import('../src/evolve/engine.js');
+  const { engineMismatch } = await import('../src/evolve/config.js');
+  const lines = [];
+  const config = { gpu: true, gpuCpuShare: 0 };
+  const start = (err) => startGpuEngine({ create: async () => { throw err; }, ctx: {}, cpuExecutor: {}, config, log: (l) => lines.push(l) });
+  const fail = Object.assign(new Error('no CUDA device visible'), { gpuStart: true });
+  assert.deepEqual(await start(fail), { executor: null });
+  assert.deepEqual(lines, ['gpu: no CUDA device visible, running on CPU']);
+  assert.equal(config.engine, 'cpu-fallback');
+  await assert.rejects(start(new Error('boom')), /boom/); // not a start failure: exit 1 as before
+  assert.match(engineMismatch({ gpu: true }, {}), /drop --cpu-only/);
+  assert.match(engineMismatch({}, { gpu: true }), /pass --cpu-only/);
+  assert.equal(engineMismatch({ gpu: true }, { gpu: true, engine: 'cpu-fallback' }), null);
+});

@@ -3,6 +3,7 @@ import { initPopulation, DEFAULT_CONVERGENCE_TRAILING, DEFAULT_CONVERGENCE_WINDO
 import {
   assertCollectionMatchesCheckpoint,
   configsMatch,
+  engineMismatch,
   describeConfigMismatch,
   selectionTrailingOf,
 } from './config.js';
@@ -110,6 +111,8 @@ export function initRunState(env) {
   if (state.generation === 0) {
     const stale = readCheckpoint(outDir, 0);
     if (stale && !configsMatch(stale.config, config) && !opts.forceFresh) {
+      const engine = engineMismatch(stale.config, config);
+      if (engine) throw new UserError(`${checkpointPath(outDir, 0)} ${engine}`, undefined, 1);
       throw new UserError(
         `${checkpointPath(outDir, 0)} config differs from this run's flags (${describeConfigMismatch(stale.config, config)}); refusing to overwrite it`,
         `use a different --out-dir (optionally --seed-from ${checkpointPath(outDir, 0)}), ` +

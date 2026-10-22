@@ -7,8 +7,8 @@
 # failed group is retried on its own instead of losing every pass. The SourceCounters section (SASS patching) is not asked for:
 # nothing on the page reads it.
 #
-#   bash gpu/gpu/study/tail/ncu.sh <name> <python -m module and args...>
-#   e.g. bash gpu/gpu/study/tail/ncu.sh 10k gpu.study.prof.replay launch --dump D --spec 6 --name ncu-10k --reps 1 --outdir O
+#   bash gpu/gpu/study/ncu/ncu.sh <name> <python -m module and args...>
+#   e.g. bash gpu/gpu/study/ncu/ncu.sh 10k gpu.study.prof.replay launch --dump D --spec 6 --name ncu-10k --reps 1 --outdir O
 # Writes out/gpu/study/prof/ncu/<name>.g<k>.{ncu-rep,csv} and <name>.stalls.csv. Env: NCU_ENV="VAR=val ..." for the replay,
 # NCU_KERNEL (default battle3v3_slice), NCU_CLOCK (base), NCU_TRIES (4).
 set -u

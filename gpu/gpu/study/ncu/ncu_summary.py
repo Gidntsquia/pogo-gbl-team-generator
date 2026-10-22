@@ -1,6 +1,6 @@
 """Round 9 R2/R3: merge Nsight Compute CSVs into out/gpu/study/prof/ncu/summary.json (the numbers the study page reads).
 
-    python3 gpu/gpu/study/tail/ncu_summary.py            (no GPU; reads only CSV files)
+    python3 gpu/gpu/study/ncu/ncu_summary.py            (no GPU; reads only CSV files)
 
 Per launch it takes, metric by metric, the first non-zero value from: <name>.csv (one full ncu run), <name>.g<k>.csv (ncu.sh
 groups), r8-sourcecounters/<name>.csv (a run that died part way: ncu keeps the passes before the failure, and a metric from a

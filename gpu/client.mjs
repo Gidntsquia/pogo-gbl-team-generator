@@ -11,6 +11,8 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 
 const MAGIC = 0x31504247, HDR = 24, D_N = 17;
+/** The sidecar could not start (no NVIDIA device, cupy or uv missing, died while booting): the run may fall back to the CPU. */
+export class GpuStartError extends Error {}
 export const OP = { PING: 1, STATIC: 2, BATCH3: 3, BATCH1: 4, FILE: 5, STREAMS: 6, BATCH3T: 7, ISLAND: 8, QUIT: 9, TAIL: 10, PEEK: 11, FEED: 12 };
 const TAGGED_OK = 16, TAGGED_ERR = 17;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -105,19 +107,21 @@ export function packTail(job) {
 export class GpuSidecar {
   /** Spawn `python -m gpu.sidecar --binary` via uv and wait for its ready frame. Rejects if the sidecar exits first (e.g. no CUDA device). */
   static async start({ streams = 1 } = {}) {
-    const child = spawn('uv', ['run', 'python', '-m', 'gpu.sidecar', '--binary'], { cwd: here, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` } });
+    const child = spawn('uv', ['run', 'python', '-m', 'gpu.sidecar', '--binary'], { cwd: here, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` } });
     const c = new GpuSidecar(child);
     c.#booting = true;
-    await c.#frame();
-    c.#booting = false;
+    // the sidecar's own one-line `gpu: <reason>` is held back while it boots, so a CPU fallback prints one line, not two
+    createInterface({ input: child.stderr }).on('line', (l) => { if (c.#booting && l.startsWith('gpu:')) c.#reason = l.replace(/^gpu:\s*/, ''); else process.stderr.write(l + '\n'); });
+    child.on('error', (e) => { c.#reason ??= e.code === 'ENOENT' ? 'uv not found' : `sidecar did not start (${e.message})`; c.#dead = new GpuStartError(c.#reason); c.#waiters.splice(0).forEach((w) => w.reject(c.#dead)); });
+    try { await c.#frame(); } catch (e) { throw e instanceof GpuStartError ? e : new GpuStartError(c.#reason ?? e.message); } finally { c.#booting = false; }
     if (streams > 1) await c.#call(header(OP.STREAMS, 0, streams));
     return c;
   }
-  #booting = false; #child; #buf = Buffer.alloc(0); #waiters = []; #tagged = new Map(); #nextTag = 1; #dead = null; #chain = Promise.resolve();
+  #booting = false; #reason = null; #child; #buf = Buffer.alloc(0); #waiters = []; #tagged = new Map(); #nextTag = 1; #dead = null; #chain = Promise.resolve();
   constructor(child) {
     this.#child = child;
     child.stdout.on('data', (d) => { this.#buf = Buffer.concat([this.#buf, d]); this.#pump(); });
-    child.on('exit', (code) => { if (this.#booting) process.exit(1); /* sidecar already printed its one-line reason (no CUDA device, cupy missing) */ this.#dead = new Error(`sidecar exited (${code})`); this.#waiters.splice(0).forEach((w) => w.reject(this.#dead)); for (const w of this.#tagged.values()) w.reject(this.#dead); this.#tagged.clear(); });
+    child.on('exit', (code) => { this.#dead = this.#booting ? new GpuStartError(this.#reason ?? `sidecar exited (${code}) before it was ready`) : new Error(`sidecar exited (${code})`); this.#waiters.splice(0).forEach((w) => w.reject(this.#dead)); for (const w of this.#tagged.values()) w.reject(this.#dead); this.#tagged.clear(); });
   }
   #pump() {
     while (this.#waiters.length || this.#tagged.size) {
@@ -214,7 +218,7 @@ export class GpuSidecar {
 
 /** JSON-lines fallback client: returns {call(req), close()}. */
 export async function startJson() {
-  const child = spawn('uv', ['run', 'python', '-m', 'gpu.sidecar'], { cwd: here, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` } });
+  const child = spawn('uv', ['run', 'python', '-m', 'gpu.sidecar'], { cwd: here, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` } });
   const rl = createInterface({ input: child.stdout });
   const waiting = [];
   rl.on('line', (l) => waiting.shift()?.(JSON.parse(l)));

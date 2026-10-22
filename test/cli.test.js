@@ -35,3 +35,14 @@ test('--gpu runs at CPU share 0 unless --gpu-cpu-share is given (auto stays sele
   assert.equal(share('--gpu-cpu-share', 'auto'), 'auto');
   assert.equal(share('--gpu-cpu-share', '0.2'), 0.2);
 });
+
+test('the GPU is the default engine; --cpu-only opts out, --gpu is a no-op, --threads 0 is CPU', () => {
+  const o = (...a) => parseEvolveArgs(['fixtures/sample-pokegenie.csv', '--threads', '4', ...a]).opts;
+  const cfg = (opts) => buildRunConfig('fixtures/sample-pokegenie.csv', opts);
+  assert.equal(cfg(o()).gpu, true);
+  assert.equal(cfg(o('--gpu')).gpu, true);
+  assert.equal(o('--gpu').gpuFlag, true);
+  assert.equal(cfg(o('--cpu-only')).gpu, undefined); // a CPU-only config is byte-identical to the pre-GPU-default one
+  assert.equal(parseEvolveArgs(['fixtures/sample-pokegenie.csv', '--threads', '0']).opts.gpu, false);
+  assert.throws(() => o('--gpu', '--cpu-only'), UserError);
+});
