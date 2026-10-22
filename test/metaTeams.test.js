@@ -392,3 +392,28 @@ test('loadMetaTeams leaves vendor presets out unless includeVendor is set', () =
   assert.equal(without.length, 0);
   assert.ok(withVendor.length > 0);
 });
+
+test('per-cup curated file: used when present for that cup; absent -> default file ignored; cup all unchanged', async () => {
+  const { defaultCommunityFile } = await import('../src/meta/teams.js');
+  const { mkdirSync } = await import('node:fs');
+  const orig = process.cwd();
+  const dir = mkdtempSync(path.join(tmpdir(), 'percup-'));
+  try {
+    process.chdir(dir);
+    mkdirSync('data');
+    const team = { id: 't1', members: ['azumarill', 'registeel', 'skarmory'] };
+    writeFileSync('data/meta-teams-community.json', JSON.stringify({ teams: [team] })); // cup all
+    const fantasy = Object.create(ctx, { cup: { value: 'fantasy' } });
+    assert.equal(defaultCommunityFile('fantasy'), 'data/meta-teams-community.json');
+    assert.equal(loadCommunityTeams(fantasy).length, 0, 'default (cup all) file ignored under fantasy');
+    writeFileSync('data/meta-teams-community-fantasy.json', JSON.stringify({ cup: 'fantasy', teams: [team] }));
+    assert.equal(defaultCommunityFile('fantasy'), 'data/meta-teams-community-fantasy.json');
+    assert.equal(loadCommunityTeams(fantasy).length, 1, 'per-cup file loaded');
+    assert.equal(defaultCommunityFile('all'), 'data/meta-teams-community.json');
+    assert.equal(defaultCommunityFile(undefined), 'data/meta-teams-community.json');
+    assert.equal(loadCommunityTeams(Object.create(ctx, { cup: { value: 'all' } })).length, 1, 'cup all still reads default file');
+  } finally {
+    process.chdir(orig);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

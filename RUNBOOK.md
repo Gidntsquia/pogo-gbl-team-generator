@@ -23,7 +23,7 @@ does not rank is last place).
 cd /home/jaxon/files/pogo-gbl-team-generator
 test "$(git branch --show-current)" = "main"
 bash scripts/setup.sh          # materializes/repairs vendor/pvpoke (gitignored) at the pin
-test "$(git -C vendor/pvpoke rev-parse HEAD)" = "e87448291024aff808f21a2e5f74e69f68b521df"
+test "$(git -C vendor/pvpoke rev-parse HEAD)" = "415436c1af47389c299104a83d46be0df5fa5f08"
 ```
 
 `setup.sh` is idempotent and fixes an existing checkout to the pin.
@@ -257,9 +257,9 @@ curated opponents for real-collection runs.
    (flags as in the meta-vs-meta recipe above; `--meta` supplies `--meta-mode`,
    the symmetric weights and the pool). Wait for `evolve-DONE`. Example:
    `meta-vs-meta-retro-3` (50 generations, population 100 vs 100).
-2. **Archive the old file.** The loader reads only `data/meta-teams-community.json`,
-   so the old pool must move out of the way:
-   `git mv data/meta-teams-community.json data/archive/meta-teams-community-<label>.json`.
+2. **Old file stays.** With `--cup <cup>` the loader reads `data/meta-teams-community-<cup>.json` when it
+   exists, else `data/meta-teams-community.json` (ignored on a cup mismatch). Per-cup files sit beside the
+   old one; nothing is archived. (`--cup all` still reads the old file.)
 3. **Generate the new file** from the last checkpoint:
    `node scripts/build-curated-from-meta.mjs out/evolve-<meta-run> --cup <cup> [--candidates 50] [--opponents 50]`.
    It takes the top N candidate teams by `selectionFitness` and the top M
@@ -276,6 +276,23 @@ curated opponents for real-collection runs.
    teams enter at `--curated-ratio 0.66`. Set `--opponent-meta-pool` to about
    the cup's field size (retro: 200, as the meta-vs-meta run used).
 
+
+### Chain: meta-vs-meta → curated → standard
+
+One detached command runs a full meta-vs-meta run for a cup, builds `data/meta-teams-community-<cup>.json`
+from it (skipped if that file exists), then runs a standard run of a collection under the same cup, which
+loads the new file. All on the GPU default (`--cpu-only` is passed to both runs if set).
+
+```
+scripts/chain.sh --name fantasy-1 --cup fantasy jaxon-gl-collection.csv [--meta-generations 100] [--generations 100] \
+  [--candidates 50] [--opponents 50] [--threads 8] [--cpu-only] [--dry-run] [-- extra sim.sh flags]
+```
+
+Runs are `<name>-meta` and `<name>-std`; log `out/chain-<name>.log`; state `out/chain-<name>.json`
+(`stage 1|2|3`, `status running|done|failed`). A failed stage stops the chain (nothing is retried).
+Resume: MCP `resume_sim` with the chain name resumes the unfinished run, then continues the chain; finished
+stages never re-run. The standard run's `curated: N loaded of N` log line must match the file's team count.
+Check meta symmetry with `node scripts/fitness-sides.mjs out/evolve-<name>-meta`.
 
 ### `sim.sh` reference
 
@@ -731,6 +748,7 @@ never kills a sim.
 
 | tool | RUNBOOK counterpart |
 |---|---|
+| `run_chain` | section 3 "Chain" (`scripts/chain.sh`; `resume_sim <chain>` continues it; `status_sim` header shows `chain N stage k/3`) |
 | `run_standard`, `run_meta` | section 3 `scripts/sim.sh [--meta]` (`dry_run` prints the command; `extra` goes after `--`) |
 | `status_sim` (no name needed: the live run, or the most recently launched of several by `launch.json.at` -> checkpoint `runStartedAt` -> dir mtime; params `teams` default 15, `mons` default 5 -> 15 candidate teams / 5 mons / 15 opponent teams / 5 opponent mons, mons by representation %, `(N of M available in this checkpoint)` when short; compact text), `list_runs`, `tail_log` | `sim.sh status`, `tail -f`, section 2. `status_sim` on a DONE run ends with `report: <abs html path>` (renders if stale) |
 | `stop_sim` (`after_generation` / `hard`), `cancel_stop` | section 4; soft stop = detached `mcp/soft-stop.mjs` (polls every 10 s, SIGTERM after the next checkpoint) |

@@ -2,7 +2,7 @@
 // Build a curated opponent-team file from a finished meta-vs-meta run.
 //
 //   node scripts/build-curated-from-meta.mjs out/evolve-<meta-run> --cup retro \
-//     [--candidates 50] [--opponents 50] [--gen N] [--out data/meta-teams-community.json]
+//     [--candidates 50] [--opponents 50] [--gen N] [--out data/meta-teams-community-<cup>.json]
 //
 // Reads one generation's checkpoint (default: the latest) and takes the top N
 // candidate teams by selectionFitness and the top M opponent teams by
@@ -11,7 +11,8 @@
 // moveset for each. The file carries a top-level "cup" so it is used only by
 // runs of that cup (readCommunityEntries in src/meta/teams.js).
 //
-// Refuses to overwrite an existing --out; archive the old file first (see
+// Default --out is data/meta-teams-community-<cup>.json (data/meta-teams-community.json for cup all).
+// Refuses to overwrite an existing --out; move it aside first (see
 // RUNBOOK.md, "New meta: curated teams from a meta-vs-meta run").
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -80,7 +81,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error('usage: build-curated-from-meta.mjs <run-dir> --cup <cup> [--candidates 50] [--opponents 50] [--gen N] [--out FILE]');
     process.exit(2);
   }
-  const out = flag('out', 'data/meta-teams-community.json');
+  const out = flag('out', cup === 'all' ? 'data/meta-teams-community.json' : `data/meta-teams-community-${cup}.json`);
   if (existsSync(out)) {
     console.error(`${out} exists; archive it to data/archive/ first`);
     process.exit(1);

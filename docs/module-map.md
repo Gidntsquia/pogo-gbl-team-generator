@@ -55,6 +55,7 @@ files.
 
 | script | what it does |
 |---|---|
+| `scripts/chain.sh` (+ `chain.mjs`) | meta-vs-meta → per-cup curated file → standard run chain; tests `test/chain.test.js`; see `RUNBOOK.md` |
 | `scripts/sim.sh` | preferred evolve launcher (recipe, detached runs, `status`); see `RUNBOOK.md` |
 | `scripts/evolve.mjs` | thin entry point into `src/evolve/`; `--help` lists every flag, `--check` validates inputs only |
 | `mcp/server.mjs`, `mcp/server-extra.mjs` | `pogo-sim` (always loaded) and `pogo-sim-extra` (off by default) MCP servers (`.mcp.json`); tool tables in `RUNBOOK.md`, soft stop in `mcp/soft-stop.mjs` |

@@ -3,7 +3,7 @@
 import {
   z, execFileSync, spawn, existsSync, readFileSync, writeFileSync, statSync, path, OUT, REPO, makeServer, flags, alive, pidOf, isLive,
   dirOf, logOf, gens, readLog, runNames, runState, reply, fail, sh, resolveName, resolveStatusName, safeName, waitFirstLine, writeLaunch,
-  launchDetached, guardLaunch, ensureReport, commonShape, launchViaSim, latestGen, buildStatus, processTree, configToArgv,
+  launchDetached, guardLaunch, ensureReport, commonShape, launchViaSim, latestGen, chainNames, readChain, chainOfRun, STAGE_LABEL, runChainTool, buildStatus, processTree, configToArgv,
 } from './common.mjs';
 
 const { tool, start } = makeServer('pogo-sim');
@@ -13,6 +13,14 @@ tool('run_standard', 'Launch a detached standard evolve run (sim.sh recipe).',
 tool('run_meta', 'Launch a detached meta-vs-meta evolve run.',
   { ...commonShape, meta_pool: z.number().optional() },
   (a) => launchViaSim(a, 'meta'));
+
+tool('run_chain', 'Launch a detached chain: meta-vs-meta run -> per-cup curated file (data/meta-teams-community-<cup>.json) -> standard run on csv, same cup. State out/chain-<name>.json; resume with resume_sim.',
+  {
+    name: z.string(), cup: z.string(), csv: z.string(),
+    meta_generations: z.number().optional(), generations: z.number().optional(),
+    candidates: z.number().optional(), opponents: z.number().optional(), threads: z.number().optional(),
+    cpuOnly: z.boolean().optional(), dry_run: z.boolean().optional(), extra: commonShape.extra,
+  }, runChainTool);
 
 function latestCheckpoint(n) {
   const g = latestGen(gens(n));
@@ -46,8 +54,10 @@ tool('status_sim', 'One-call sim report; needs no name (defaults to the live run
     const note = (got, asked) => (got < asked ? ` (${got} of ${asked} available in this checkpoint)` : '');
     const nT = a.teams ?? 15, nM = a.mons ?? 5;
     const rep = (p) => `${p.species} ${Math.round(p.representation * 1000) / 10}% ${f3(p.meanFitness)}`;
+    const ch = chainOfRun(n);
+    const chainTag = ch ? `chain ${ch.name} stage ${ch.stage}/3 (${STAGE_LABEL[ch.stage - 1]}) | ` : '';
     const lines = [
-      `${n} ${state} ${s.engine}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}${others.length ? ` | other live: ${others.join(', ')}` : ''}`,
+      `${chainTag}${n} ${state} ${s.engine}${pending} gen ${s.checkpointGeneration}/${s.generations}${state.startsWith('RUNNING') ? ` "${lastLine.slice(0, 80)}"` : ''}${others.length ? ` | other live: ${others.join(', ')}` : ''}`,
       `${s.speed.lastGenElapsedSec}s/gen (last) ${s.speed.meanGenSec ?? '?'}s/gen (mean 5) ${s.speed.msPerBattle}ms/battle sim ${s.speed.battlesSimulated} cached ${s.speed.battlesCached} ETA ${s.speed.etaMinutes}m RSS ${liveRssMB ?? s.memory.lastLoggedRssMB}MB${liveRssMB === null ? ' (last logged)' : ''}`,
       `teams${note(s.topTeams.length, nT)} [rank members(lead first) fitness win snowball consistency comeback closer]: ${join(s.topTeams, (t) => `#${t.rank} ${t.members.join('/')} ${f3(t.fitness)} ${f3(t.winRate)} ${f3(t.snowball)} ${f3(t.consistency)} ${f3(t.comeback)} ${t.closer ?? '-'}`)}`,
       `mons${note(s.topSpecies.length, nM)} [species representation meanFitness]: ${join(s.topSpecies, rep)}`,
@@ -63,7 +73,11 @@ tool('list_runs', 'Only lists run names, states and last log line. Not needed be
   const rows = runNames().map((n) => ({
     name: n, state: runState(n), checkpointGen: latestGen(gens(n)), lastLog: readLog(n).trim().split('\n').at(-1) ?? '',
   }));
-  return reply(rows.map((r) => `${r.name}: ${r.state}, gen ${r.checkpointGen}\n  ${r.lastLog.slice(0, 80)}`).join('\n') || 'no runs');
+  const chains = chainNames().map((c) => {
+    const st = readChain(c);
+    return `chain ${c}: ${st.status} stage ${st.stage}/3 (${STAGE_LABEL[st.stage - 1]}), cup ${st.cup}, ${st.metaRun} -> ${st.stdRun}`;
+  });
+  return reply([...chains, ...rows.map((r) => `${r.name}: ${r.state}, gen ${r.checkpointGen}\n  ${r.lastLog.slice(0, 80)}`)].join('\n') || 'no runs');
 });
 
 tool('tail_log', 'Tail a run log.', { name: z.string(), lines: z.number().optional() }, async (a) => {
@@ -107,6 +121,29 @@ tool('cancel_stop', 'Cancel a pending soft stop.', { name: z.string().optional()
 tool('resume_sim', 'Resume a stopped run from its checkpoint config.',
   { name: z.string(), threads: z.number().optional(), force_fresh: z.boolean().optional(), confirm: z.boolean().optional() },
   async (a) => {
+    const chain = readChain(safeName(a.name)) ? { name: a.name, state: readChain(a.name) } : chainOfRun(safeName(a.name));
+    if (chain) return resumeChain(chain, a);
+    return resumeRun(a);
+  });
+
+async function resumeChain(chain, a) {
+  const st = chain.state;
+  const run = st.stage === 1 ? st.metaRun : st.stage === 3 ? st.stdRun : null;
+  const parts = [];
+  if (run && !isLive(run) && !existsSync(path.join(dirOf(run), 'evolve-DONE')) && latestGen(gens(run)) >= 0) {
+    const r = await resumeRun({ ...a, name: run });
+    if (r.isError) return r;
+    parts.push(r.content[0].text.split('\n')[0]);
+  }
+  const cpid = (() => { try { return Number(readFileSync(path.join(OUT, `chain-${chain.name}.pid`), 'utf8')); } catch { return null; } })();
+  if (cpid && alive(cpid)) return reply(`chain '${chain.name}' driver already running (pid ${cpid})`);
+  const r = await sh('bash', ['scripts/chain.sh', '--name', chain.name, '--continue'], 180000);
+  if (!r.ok) return fail(r.out);
+  parts.push(`Chain '${chain.name}' continued from stage ${st.stage}/3 (${STAGE_LABEL[st.stage - 1]}).`);
+  return reply(parts.join('\n'), { chain: chain.name, stage: st.stage });
+}
+
+async function resumeRun(a) {
     const n = safeName(a.name);
     guardLaunch(n);
     const g = latestGen(gens(n));
@@ -136,7 +173,7 @@ tool('resume_sim', 'Resume a stopped run from its checkpoint config.',
     }
     return reply(`Resumed '${n}' (pid ${pid}).\n${first}${usedLaunch.length ? `\n(took ${usedLaunch.join(', ')} from launch.json)` : ''}`,
       { pid, firstLine: first, argv, fromLaunchJson: usedLaunch, fallbackUsed: usedLaunch.length > 0 });
-  });
+}
 
 tool('check_oom', 'Find earlyoom kills of a run.', { name: z.string() }, async (a) => {
   const n = safeName(a.name);

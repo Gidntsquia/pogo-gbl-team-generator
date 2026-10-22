@@ -19,7 +19,7 @@ export {
 
 const pexec = promisify(execFile);
 export const OUT = path.join(REPO, 'out');
-export const PIN = 'e87448291024aff808f21a2e5f74e69f68b521df';
+export const PIN = '415436c1af47389c299104a83d46be0df5fa5f08';
 let flagTable = null;
 /** evolve.mjs flag table, parsed from `--help` once. */
 export function flags() {
@@ -181,4 +181,45 @@ export async function ensureReport(n) {
     if (!r.ok) return { err: r.out };
   }
   return { html };
+}
+
+// ---- chains (scripts/chain.sh): out/chain-<name>.json state ----
+export const chainStatePath = (c) => path.join(OUT, `chain-${c}.json`);
+export function readChain(c) { try { return JSON.parse(readFileSync(chainStatePath(c), 'utf8')); } catch { return null; } }
+/** Chain names with a state file. */
+export function chainNames() {
+  return (existsSync(OUT) ? readdirSync(OUT) : []).map((f) => /^chain-(.+)\.json$/.exec(f)?.[1]).filter(Boolean).sort();
+}
+/** The chain a run belongs to, as {name, state, stage} (or null). */
+export function chainOfRun(n) {
+  for (const c of chainNames()) {
+    const st = readChain(c);
+    if (st && (st.metaRun === n || st.stdRun === n)) return { name: c, state: st, stage: st.metaRun === n ? 1 : 3 };
+  }
+  return null;
+}
+export const STAGE_LABEL = ['meta', 'curated', 'standard'];
+/** argv for scripts/chain.sh from run_chain input. */
+export function chainArgv(a) {
+  const argv = ['--name', a.name, '--cup', a.cup, a.csv];
+  const opt = (f, v) => { if (v !== undefined && v !== null && v !== '') argv.push(f, String(v)); };
+  opt('--meta-generations', a.meta_generations); opt('--generations', a.generations);
+  opt('--candidates', a.candidates); opt('--opponents', a.opponents); opt('--threads', a.threads ?? 8);
+  if (a.cpuOnly) argv.push('--cpu-only');
+  if (a.dry_run) argv.push('--dry-run');
+  const extra = flagsToArgv(a.extra, flags());
+  if (extra.length) argv.push('--', ...extra);
+  return argv;
+}
+export async function runChainTool(a) {
+  const name = safeName(a.name);
+  guardLaunch(`${name}-meta`);
+  guardLaunch(`${name}-std`);
+  const r = await sh('bash', ['scripts/chain.sh', ...chainArgv(a)], 180000);
+  if (!r.ok) return fail(r.out);
+  if (a.dry_run) return reply(`dry run, nothing launched:\n${r.out.trim()}`, { argv: chainArgv(a), commands: r.out.trim().split('\n') });
+  const pid = Number(/pid (\d+)/.exec(r.out)?.[1]);
+  const first = r.out.trim().split('\n')[0];
+  return reply(`Chain '${name}' launched (pid ${pid}): ${name}-meta -> curated -> ${name}-std.\n${first}`,
+    { name, metaRun: `${name}-meta`, stdRun: `${name}-std`, pid, firstLine: first });
 }

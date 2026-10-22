@@ -41,6 +41,19 @@ function defaultTeamsFile(ctx) {
 // tier back.
 const DEFAULT_COMMUNITY_FILE = 'data/meta-teams-community.json';
 
+/**
+ * Curated-file path for a cup: `data/meta-teams-community-<cup>.json` when
+ * that file exists (built by scripts/build-curated-from-meta.mjs), else the
+ * default file. `all`/unset always means the default file.
+ * @param {string} [cup]
+ * @returns {string}
+ */
+export function defaultCommunityFile(cup) {
+  if (!cup || cup === DEFAULT_CUP) return DEFAULT_COMMUNITY_FILE;
+  const perCup = `data/meta-teams-community-${cup}.json`;
+  return existsSync(perCup) ? perCup : DEFAULT_COMMUNITY_FILE;
+}
+
 // That file is Great-League-only by construction (every
 // team in it was recommended for Great League play in the season it was
 // collected), so it is NOT part of the curated pool at any other CP cap -- an
@@ -237,7 +250,7 @@ function parseCommunityMember(member) {
  */
 function readCommunityEntries(ctx, opts) {
   if (opts.communityEntries) return opts.communityEntries;
-  const filePath = opts.communityFile ?? process.env.POGO_COMMUNITY_FILE ?? DEFAULT_COMMUNITY_FILE;
+  const filePath = opts.communityFile ?? process.env.POGO_COMMUNITY_FILE ?? defaultCommunityFile(ctx.cup);
   if (!existsSync(filePath)) return [];
   const raw = JSON.parse(readFileSync(filePath, 'utf8'));
   const fileCup = raw.cup ?? DEFAULT_CUP;
