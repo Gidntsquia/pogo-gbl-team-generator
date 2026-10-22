@@ -1,0 +1,806 @@
+{
+  "cup": "fantasy",
+  "source": "fantasy-1-meta-gen99",
+  "teams": [
+    {
+      "id": "fantasy-1-meta-gen99-candidate-1",
+      "members": [
+        "mimikyu",
+        "melmetal",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-2",
+      "members": [
+        "doublade",
+        "corviknight",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-3",
+      "members": [
+        "doublade",
+        "empoleon_shadow",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-4",
+      "members": [
+        "doublade",
+        "corviknight_shadow",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-5",
+      "members": [
+        "doublade",
+        "empoleon",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-6",
+      "members": [
+        "mimikyu",
+        "corviknight_shadow",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-7",
+      "members": [
+        "mimikyu",
+        "corviknight_shadow",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-8",
+      "members": [
+        "mimikyu",
+        "turtonator",
+        "orthworm"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-9",
+      "members": [
+        "mimikyu",
+        "corviknight_shadow",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-10",
+      "members": [
+        "togetic",
+        "melmetal",
+        "excadrill"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-11",
+      "members": [
+        "dugtrio_alolan_shadow",
+        "melmetal",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-12",
+      "members": [
+        "togekiss",
+        "doublade",
+        "stunfisk_galarian"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-13",
+      "members": [
+        "mimikyu",
+        "forretress_shadow",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-14",
+      "members": [
+        "melmetal",
+        "mimikyu",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-15",
+      "members": [
+        "turtonator",
+        "melmetal",
+        "forretress"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-16",
+      "members": [
+        "mimikyu",
+        "doublade",
+        "orthworm"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-17",
+      "members": [
+        "corviknight_shadow",
+        "togetic",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-18",
+      "members": [
+        "grimmsnarl",
+        "stunfisk_galarian",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-19",
+      "members": [
+        "excadrill",
+        "melmetal",
+        "togetic"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-20",
+      "members": [
+        "melmetal",
+        "turtonator",
+        "forretress"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-21",
+      "members": [
+        "heatran_shadow",
+        "togetic",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-22",
+      "members": [
+        "grimmsnarl",
+        "doublade",
+        "stunfisk_galarian"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-23",
+      "members": [
+        "melmetal",
+        "corviknight_shadow",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-24",
+      "members": [
+        "corviknight",
+        "togetic",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-25",
+      "members": [
+        "morgrem",
+        "azumarill",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-26",
+      "members": [
+        "sandslash_alolan_shadow",
+        "forretress_shadow",
+        "corviknight_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-27",
+      "members": [
+        "tinkaton",
+        "turtonator",
+        "stunfisk_galarian"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-28",
+      "members": [
+        "sandslash_alolan_shadow",
+        "turtonator",
+        "stunfisk_galarian"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-29",
+      "members": [
+        "togekiss",
+        "tinkaton",
+        "forretress_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-30",
+      "members": [
+        "togekiss",
+        "tinkaton",
+        "stunfisk_galarian"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-31",
+      "members": [
+        "tinkaton",
+        "melmetal",
+        "orthworm"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-32",
+      "members": [
+        "sandslash_alolan_shadow",
+        "primarina",
+        "stunfisk_galarian"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-33",
+      "members": [
+        "dugtrio_alolan_shadow",
+        "melmetal",
+        "registeel"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-34",
+      "members": [
+        "primarina",
+        "turtonator",
+        "registeel"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-35",
+      "members": [
+        "melmetal",
+        "excadrill",
+        "togetic"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-36",
+      "members": [
+        "orthworm",
+        "turtonator",
+        "mimikyu"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-37",
+      "members": [
+        "morgrem",
+        "tinkaton",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-38",
+      "members": [
+        "mimikyu",
+        "empoleon",
+        "tinkaton"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-39",
+      "members": [
+        "turtonator",
+        "registeel",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-40",
+      "members": [
+        "mimikyu",
+        "jirachi",
+        "lucario"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-41",
+      "members": [
+        "sandslash_alolan_shadow",
+        "orthworm",
+        "togetic"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-42",
+      "members": [
+        "primarina",
+        "corviknight",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-43",
+      "members": [
+        "turtonator",
+        "aegislash_shield",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-44",
+      "members": [
+        "registeel",
+        "turtonator",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-45",
+      "members": [
+        "togekiss",
+        "turtonator",
+        "jirachi"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-46",
+      "members": [
+        "sandslash_alolan_shadow",
+        "latias",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-47",
+      "members": [
+        "forretress",
+        "jirachi",
+        "lucario"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-48",
+      "members": [
+        "dugtrio_alolan_shadow",
+        "empoleon_shadow",
+        "kingambit"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-49",
+      "members": [
+        "togetic",
+        "sandslash_alolan_shadow",
+        "altaria"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-candidate-50",
+      "members": [
+        "tapu_fini",
+        "melmetal",
+        "heatran"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-1",
+      "members": [
+        "primarina",
+        "doublade",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-2",
+      "members": [
+        "doublade",
+        "primarina",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-3",
+      "members": [
+        "sandslash_alolan_shadow",
+        "doublade",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-4",
+      "members": [
+        "melmetal",
+        "doublade",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-5",
+      "members": [
+        "empoleon",
+        "altaria",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-6",
+      "members": [
+        "corviknight",
+        "heatran_shadow",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-7",
+      "members": [
+        "mimikyu",
+        "empoleon",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-8",
+      "members": [
+        "mimikyu",
+        "corviknight",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-9",
+      "members": [
+        "togekiss",
+        "turtonator",
+        "altaria"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-10",
+      "members": [
+        "togetic",
+        "melmetal",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-11",
+      "members": [
+        "heatran",
+        "forretress_shadow",
+        "mimikyu"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-12",
+      "members": [
+        "togetic",
+        "turtonator",
+        "registeel"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-13",
+      "members": [
+        "togekiss",
+        "stunfisk_galarian",
+        "mimikyu"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-14",
+      "members": [
+        "togetic",
+        "turtonator",
+        "empoleon_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-15",
+      "members": [
+        "forretress",
+        "turtonator",
+        "jirachi"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-16",
+      "members": [
+        "lucario",
+        "empoleon_shadow",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-17",
+      "members": [
+        "togekiss",
+        "stunfisk_galarian",
+        "forretress"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-18",
+      "members": [
+        "togetic",
+        "gabite_shadow",
+        "forretress"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-19",
+      "members": [
+        "empoleon",
+        "turtonator",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-20",
+      "members": [
+        "doublade",
+        "primarina",
+        "forretress_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-21",
+      "members": [
+        "lucario",
+        "empoleon",
+        "turtonator"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-22",
+      "members": [
+        "primarina",
+        "forretress_shadow",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-23",
+      "members": [
+        "corviknight_shadow",
+        "klefki",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-24",
+      "members": [
+        "turtonator",
+        "melmetal",
+        "steelix_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-25",
+      "members": [
+        "empoleon",
+        "mimikyu",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-26",
+      "members": [
+        "heatran",
+        "forretress_shadow",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-27",
+      "members": [
+        "togetic",
+        "dugtrio_alolan_shadow",
+        "empoleon"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-28",
+      "members": [
+        "togetic",
+        "dugtrio_alolan_shadow",
+        "primarina"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-29",
+      "members": [
+        "mimikyu",
+        "stunfisk_galarian",
+        "melmetal"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-30",
+      "members": [
+        "empoleon",
+        "altaria_shadow",
+        "doublade"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-31",
+      "members": [
+        "mimikyu",
+        "tapu_fini",
+        "orthworm"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-32",
+      "members": [
+        "registeel",
+        "turtonator",
+        "togetic"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-33",
+      "members": [
+        "empoleon",
+        "orthworm",
+        "mimikyu"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-34",
+      "members": [
+        "turtonator",
+        "empoleon",
+        "corviknight"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-35",
+      "members": [
+        "turtonator",
+        "metagross",
+        "morgrem"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-36",
+      "members": [
+        "hydreigon_shadow",
+        "empoleon",
+        "togetic"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-37",
+      "members": [
+        "doublade",
+        "registeel",
+        "forretress_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-38",
+      "members": [
+        "doublade",
+        "forretress",
+        "dragonair_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-39",
+      "members": [
+        "togetic",
+        "tinkaton",
+        "aegislash_shield"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-40",
+      "members": [
+        "dedenne",
+        "azumarill",
+        "forretress"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-41",
+      "members": [
+        "turtonator",
+        "palkia_shadow",
+        "altaria_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-42",
+      "members": [
+        "morgrem",
+        "sandslash_alolan",
+        "forretress_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-43",
+      "members": [
+        "sandslash_alolan_shadow",
+        "corviknight",
+        "orthworm"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-44",
+      "members": [
+        "dugtrio_alolan_shadow",
+        "turtonator",
+        "weezing_galarian_shadow"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-45",
+      "members": [
+        "melmetal",
+        "stunfisk_galarian",
+        "heatran"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-46",
+      "members": [
+        "doublade",
+        "skarmory",
+        "tapu_fini"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-47",
+      "members": [
+        "mimikyu",
+        "orthworm",
+        "aegislash_shield"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-48",
+      "members": [
+        "turtonator",
+        "forretress",
+        "jirachi"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-49",
+      "members": [
+        "turtonator",
+        "doublade",
+        "aegislash_shield"
+      ]
+    },
+    {
+      "id": "fantasy-1-meta-gen99-opponent-50",
+      "members": [
+        "primarina",
+        "corviknight",
+        "azumarill"
+      ]
+    }
+  ]
+}
