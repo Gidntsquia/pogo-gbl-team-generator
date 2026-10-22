@@ -1,0 +1,1385 @@
+{
+ "formatVersion": 1,
+ "meta": {
+  "cpuShare": 0.01,
+  "batchLimit": 36000,
+  "threads": 8
+ },
+ "phases": {
+  "setup": 0.51048961,
+  "sidecarStart": 1.217664123,
+  "finalPass": 0.6580387419999897,
+  "outputs": 0.01929799799999455
+ },
+ "steps": [
+  {
+   "gen": 0,
+   "n": 18000,
+   "memoHits": 0,
+   "gpu": 17820,
+   "cpu": 180,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 180,
+   "cpuShareS": 8.205614765,
+   "gpuPathS": 7.374890547,
+   "cpuIdleS": 0,
+   "wall": 8.433843870999999,
+   "buckets": {
+    "plan": 0.07628150200000004,
+    "pack": 0.22282670499999996,
+    "transport": 0.7461219020000017,
+    "kernel": 5.662943232,
+    "tail": 0.711339008,
+    "waitCpu": 0.8307291179999993,
+    "flagged": 0.000009200000000419095,
+    "map": 0.023684699999998882,
+    "accumulate": 0.15012560399999894
+   },
+   "launches": [
+    {
+     "n": 17820,
+     "flagged": 0,
+     "packMs": 222.82670499999995,
+     "staticMs": 140.5168020000001,
+     "sidecarMs": 6979.887340000001,
+     "kernelUs": 6817470,
+     "pieces": 1,
+     "spanMs": 6374.28224,
+     "bodyMs": 5662.943232,
+     "tailMs": 711.339008,
+     "maxBattleMs": 6000.531456,
+     "p50BattleMs": 3217.98656,
+     "longest": {
+      "turns": 121,
+      "innerSims": 911,
+      "poolMax": 65
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 0,
+   "n": 9000,
+   "memoHits": 9000,
+   "gpu": 8910,
+   "cpu": 90,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 90,
+   "cpuShareS": 3.505661775999999,
+   "gpuPathS": 3.357691272,
+   "cpuIdleS": 0,
+   "wall": 3.6362070779999995,
+   "buckets": {
+    "plan": 0.0765423009999995,
+    "pack": 0.08356270100000074,
+    "transport": 0.304126815000001,
+    "kernel": 2.41839616,
+    "tail": 0.534762496,
+    "waitCpu": 0.14797530399999959,
+    "flagged": 0.000009100000001126318,
+    "map": 0.017935899999998582,
+    "accumulate": 0.052529101000000085
+   },
+   "launches": [
+    {
+     "n": 8910,
+     "flagged": 0,
+     "packMs": 83.56270100000074,
+     "staticMs": 55.574802000001,
+     "sidecarMs": 3201.710669,
+     "kernelUs": 3151748,
+     "pieces": 1,
+     "spanMs": 2953.158656,
+     "bodyMs": 2418.39616,
+     "tailMs": 534.762496,
+     "maxBattleMs": 2755.443712,
+     "p50BattleMs": 1485.073408,
+     "longest": {
+      "turns": 118,
+      "innerSims": 898,
+      "poolMax": 74
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 0,
+   "n": 9000,
+   "memoHits": 9000,
+   "gpu": 8910,
+   "cpu": 90,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 90,
+   "cpuShareS": 3.2477154379999993,
+   "gpuPathS": 3.4588007409999992,
+   "cpuIdleS": 0.21108530299999984,
+   "wall": 3.5803079429999998,
+   "buckets": {
+    "plan": 0.07990510200000063,
+    "pack": 0.0752781019999984,
+    "transport": 0.20715481400000044,
+    "kernel": 2.642531328,
+    "tail": 0.529079296,
+    "waitCpu": 0.0000015000000021245795,
+    "flagged": 0.000005199999999604188,
+    "map": 0.004451700999998138,
+    "accumulate": 0.0414291000000012
+   },
+   "launches": [
+    {
+     "n": 8910,
+     "flagged": 0,
+     "packMs": 75.2781019999984,
+     "staticMs": 72.01750100000027,
+     "sidecarMs": 3306.747937,
+     "kernelUs": 3290551,
+     "pieces": 1,
+     "spanMs": 3171.610624,
+     "bodyMs": 2642.531328,
+     "tailMs": 529.079296,
+     "maxBattleMs": 3087.589376,
+     "p50BattleMs": 1572.5056,
+     "longest": {
+      "turns": 109,
+      "innerSims": 420,
+      "poolMax": 319
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 1,
+   "n": 10112,
+   "memoHits": 7972,
+   "gpu": 10011,
+   "cpu": 101,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 101,
+   "cpuShareS": 4.944545948999999,
+   "gpuPathS": 3.896890241000001,
+   "cpuIdleS": 0,
+   "wall": 5.122296451000002,
+   "buckets": {
+    "plan": 0.07643950100000074,
+    "pack": 0.08536549999999989,
+    "transport": 0.21436138099999927,
+    "kernel": 3.04510976,
+    "tail": 0.5455616,
+    "waitCpu": 1.0476620079999994,
+    "flagged": 0.00001089999999749125,
+    "map": 0.0070947000000014665,
+    "accumulate": 0.10025620100000014
+   },
+   "launches": [
+    {
+     "n": 10011,
+     "flagged": 0,
+     "packMs": 85.36549999999988,
+     "staticMs": 73.28200099999958,
+     "sidecarMs": 3731.7507399999995,
+     "kernelUs": 3696366,
+     "pieces": 1,
+     "spanMs": 3590.67136,
+     "bodyMs": 3045.10976,
+     "tailMs": 545.5616,
+     "maxBattleMs": 3326.855168,
+     "p50BattleMs": 1850.371072,
+     "longest": {
+      "turns": 137,
+      "innerSims": 1387,
+      "poolMax": 97
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 1,
+   "n": 4926,
+   "memoHits": 13158,
+   "gpu": 4877,
+   "cpu": 49,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 49,
+   "cpuShareS": 2.564831119999999,
+   "gpuPathS": 2.0991662169999983,
+   "cpuIdleS": 0,
+   "wall": 2.7394142210000028,
+   "buckets": {
+    "plan": 0.09860480000000098,
+    "pack": 0.08091639999999825,
+    "transport": 0.2705274409999974,
+    "kernel": 1.279152128,
+    "tail": 0.464744448,
+    "waitCpu": 0.4656701030000004,
+    "flagged": 0.000011099999999714782,
+    "map": 0.003777900000000955,
+    "accumulate": 0.07561950100000103
+   },
+   "launches": [
+    {
+     "n": 4877,
+     "flagged": 0,
+     "packMs": 80.91639999999825,
+     "staticMs": 47.18680099999983,
+     "sidecarMs": 1967.2372159999977,
+     "kernelUs": 1929490,
+     "pieces": 1,
+     "spanMs": 1743.896576,
+     "bodyMs": 1279.152128,
+     "tailMs": 464.744448,
+     "maxBattleMs": 1524.073472,
+     "p50BattleMs": 847.40608,
+     "longest": {
+      "turns": 115,
+      "innerSims": 1091,
+      "poolMax": 65
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 1,
+   "n": 4112,
+   "memoHits": 13966,
+   "gpu": 4071,
+   "cpu": 41,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 41,
+   "cpuShareS": 2.411593019,
+   "gpuPathS": 1.772967413999999,
+   "cpuIdleS": 0,
+   "wall": 2.5514230199999983,
+   "buckets": {
+    "plan": 0.06989819999999963,
+    "pack": 0.07850310000000173,
+    "transport": 0.13353552999999851,
+    "kernel": 1.068145664,
+    "tail": 0.48986112000000004,
+    "waitCpu": 0.638631405,
+    "flagged": 0.000011399999999412103,
+    "map": 0.0028386999999966064,
+    "accumulate": 0.06960730100000001
+   },
+   "launches": [
+    {
+     "n": 4071,
+     "flagged": 0,
+     "packMs": 78.50310000000172,
+     "staticMs": 38.697800999998435,
+     "sidecarMs": 1652.844513,
+     "kernelUs": 1645084,
+     "pieces": 1,
+     "spanMs": 1558.006784,
+     "bodyMs": 1068.145664,
+     "tailMs": 489.86112,
+     "maxBattleMs": 1425.401856,
+     "p50BattleMs": 714.371072,
+     "longest": {
+      "turns": 138,
+      "innerSims": 742,
+      "poolMax": 61
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 2,
+   "n": 10056,
+   "memoHits": 8370,
+   "gpu": 9956,
+   "cpu": 100,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 100,
+   "cpuShareS": 4.5551112139999965,
+   "gpuPathS": 3.6939076119999954,
+   "cpuIdleS": 0,
+   "wall": 4.691897314000002,
+   "buckets": {
+    "plan": 0.06775920000000042,
+    "pack": 0.10726070000000254,
+    "transport": 0.20844720800000185,
+    "kernel": 2.902147072,
+    "tail": 0.467090432,
+    "waitCpu": 0.8612091020000007,
+    "flagged": 0.00005559999999968568,
+    "map": 0.0091404999999977,
+    "accumulate": 0.06831720000000496
+   },
+   "launches": [
+    {
+     "n": 9956,
+     "flagged": 0,
+     "packMs": 107.26070000000254,
+     "staticMs": 51.55950099999973,
+     "sidecarMs": 3526.1252110000023,
+     "kernelUs": 3509242,
+     "pieces": 1,
+     "spanMs": 3369.237504,
+     "bodyMs": 2902.147072,
+     "tailMs": 467.090432,
+     "maxBattleMs": 3264.14848,
+     "p50BattleMs": 1693.99296,
+     "longest": {
+      "turns": 135,
+      "innerSims": 958,
+      "poolMax": 93
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 2,
+   "n": 4392,
+   "memoHits": 13858,
+   "gpu": 4349,
+   "cpu": 43,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 43,
+   "cpuShareS": 1.9140186049999974,
+   "gpuPathS": 1.8630539050000006,
+   "cpuIdleS": 0,
+   "wall": 2.02976630499999,
+   "buckets": {
+    "plan": 0.07880549999999494,
+    "pack": 0.038318000999999643,
+    "transport": 0.11439757199999827,
+    "kernel": 1.186491392,
+    "tail": 0.52222464,
+    "waitCpu": 0.050967799999998536,
+    "flagged": 0.000009599999997590203,
+    "map": 0.0017469999999957509,
+    "accumulate": 0.036562799999999694
+   },
+   "launches": [
+    {
+     "n": 4349,
+     "flagged": 0,
+     "packMs": 38.31800099999964,
+     "staticMs": 52.02240000000165,
+     "sidecarMs": 1771.0912039999967,
+     "kernelUs": 1759166,
+     "pieces": 1,
+     "spanMs": 1708.716032,
+     "bodyMs": 1186.491392,
+     "tailMs": 522.22464,
+     "maxBattleMs": 1552.827392,
+     "p50BattleMs": 777.311232,
+     "longest": {
+      "turns": 125,
+      "innerSims": 754,
+      "poolMax": 65
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 2,
+   "n": 3576,
+   "memoHits": 14694,
+   "gpu": 3541,
+   "cpu": 35,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 35,
+   "cpuShareS": 1.730175003999997,
+   "gpuPathS": 1.6288088040000002,
+   "cpuIdleS": 0,
+   "wall": 1.8567065040000015,
+   "buckets": {
+    "plan": 0.07149829999999929,
+    "pack": 0.027747300000002723,
+    "transport": 0.08559538799999382,
+    "kernel": 0.984631296,
+    "tail": 0.52905472,
+    "waitCpu": 0.10137099999999918,
+    "flagged": 0.000010699999998905695,
+    "map": 0.0018020999999935157,
+    "accumulate": 0.054817300000002435
+   },
+   "launches": [
+    {
+     "n": 3541,
+     "flagged": 0,
+     "packMs": 27.747300000002724,
+     "staticMs": 46.61999999999534,
+     "sidecarMs": 1552.6614039999986,
+     "kernelUs": 1544418,
+     "pieces": 1,
+     "spanMs": 1513.686016,
+     "bodyMs": 984.631296,
+     "tailMs": 529.05472,
+     "maxBattleMs": 1197.836288,
+     "p50BattleMs": 663.840768,
+     "longest": {
+      "turns": 139,
+      "innerSims": 1500,
+      "poolMax": 65
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 3,
+   "n": 8360,
+   "memoHits": 9926,
+   "gpu": 8277,
+   "cpu": 83,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 83,
+   "cpuShareS": 3.9167027519999973,
+   "gpuPathS": 3.0135408319999986,
+   "cpuIdleS": 0,
+   "wall": 4.0438947410000035,
+   "buckets": {
+    "plan": 0.07535899300000165,
+    "pack": 0.07398719300000084,
+    "transport": 0.1924450160000092,
+    "kernel": 2.2031872,
+    "tail": 0.537831424,
+    "waitCpu": 0.9031675200000027,
+    "flagged": 0.000011699999995471443,
+    "map": 0.0062437990000034915,
+    "accumulate": 0.05130829600000288
+   },
+   "launches": [
+    {
+     "n": 8277,
+     "flagged": 0,
+     "packMs": 73.98719300000084,
+     "staticMs": 56.33529500000441,
+     "sidecarMs": 2877.1283450000046,
+     "kernelUs": 2864340,
+     "pieces": 1,
+     "spanMs": 2741.018624,
+     "bodyMs": 2203.1872,
+     "tailMs": 537.831424,
+     "maxBattleMs": 2485.895168,
+     "p50BattleMs": 1360.37888,
+     "longest": {
+      "turns": 135,
+      "innerSims": 990,
+      "poolMax": 73
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 3,
+   "n": 3464,
+   "memoHits": 14680,
+   "gpu": 3430,
+   "cpu": 34,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 34,
+   "cpuShareS": 1.5854723599999998,
+   "gpuPathS": 1.489320068000001,
+   "cpuIdleS": 0,
+   "wall": 1.736088346000004,
+   "buckets": {
+    "plan": 0.08269759200000408,
+    "pack": 0.03187189699999726,
+    "transport": 0.07683264000000463,
+    "kernel": 0.93202944,
+    "tail": 0.441787392,
+    "waitCpu": 0.09615759199999593,
+    "flagged": 0.000007100000002537854,
+    "map": 0.0068501989999931534,
+    "accumulate": 0.06764279399999941
+   },
+   "launches": [
+    {
+     "n": 3430,
+     "flagged": 0,
+     "packMs": 31.87189699999726,
+     "staticMs": 30.976598000001104,
+     "sidecarMs": 1419.6728740000035,
+     "kernelUs": 1413175,
+     "pieces": 1,
+     "spanMs": 1373.816832,
+     "bodyMs": 932.02944,
+     "tailMs": 441.787392,
+     "maxBattleMs": 1168.512,
+     "p50BattleMs": 612.178944,
+     "longest": {
+      "turns": 121,
+      "innerSims": 695,
+      "poolMax": 61
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 3,
+   "n": 3436,
+   "memoHits": 14596,
+   "gpu": 3402,
+   "cpu": 34,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 34,
+   "cpuShareS": 1.4392669720000049,
+   "gpuPathS": 1.5396940630000027,
+   "cpuIdleS": 0.10042709099999775,
+   "wall": 1.6810807510000085,
+   "buckets": {
+    "plan": 0.08223279300000286,
+    "pack": 0.027482296999995014,
+    "transport": 0.08112023000000522,
+    "kernel": 0.904042496,
+    "tail": 0.5258086399999999,
+    "waitCpu": 8.00000001618173e-7,
+    "flagged": 0.0000037000000011175873,
+    "map": 0.0011890999999959605,
+    "accumulate": 0.05906429500000377
+   },
+   "launches": [
+    {
+     "n": 3402,
+     "flagged": 0,
+     "packMs": 27.482296999995015,
+     "staticMs": 47.62729600000603,
+     "sidecarMs": 1463.3440699999992,
+     "kernelUs": 1454274,
+     "pieces": 1,
+     "spanMs": 1429.851136,
+     "bodyMs": 904.042496,
+     "tailMs": 525.80864,
+     "maxBattleMs": 1188.279296,
+     "p50BattleMs": 613.07392,
+     "longest": {
+      "turns": 129,
+      "innerSims": 720,
+      "poolMax": 61
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 4,
+   "n": 8744,
+   "memoHits": 9380,
+   "gpu": 8657,
+   "cpu": 87,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 87,
+   "cpuShareS": 4.626503942000003,
+   "gpuPathS": 3.2821514620000016,
+   "cpuIdleS": 0,
+   "wall": 4.761190019000009,
+   "buckets": {
+    "plan": 0.08009738600000128,
+    "pack": 0.13520767799999886,
+    "transport": 0.20564276099999687,
+    "kernel": 2.4332543999999996,
+    "tail": 0.502324224,
+    "waitCpu": 1.3443577799999984,
+    "flagged": 0.000006699999998090789,
+    "map": 0.0059403990000064365,
+    "accumulate": 0.054056091000005836
+   },
+   "launches": [
+    {
+     "n": 8657,
+     "flagged": 0,
+     "packMs": 135.20767799999885,
+     "staticMs": 63.38108999999531,
+     "sidecarMs": 3077.840295000002,
+     "kernelUs": 3061580,
+     "pieces": 1,
+     "spanMs": 2935.578624,
+     "bodyMs": 2433.2544,
+     "tailMs": 502.324224,
+     "maxBattleMs": 2757.909504,
+     "p50BattleMs": 1467.557888,
+     "longest": {
+      "turns": 120,
+      "innerSims": 743,
+      "poolMax": 81
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 4,
+   "n": 4354,
+   "memoHits": 13862,
+   "gpu": 4311,
+   "cpu": 43,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 43,
+   "cpuShareS": 1.7825421080000015,
+   "gpuPathS": 1.756424512000005,
+   "cpuIdleS": 0,
+   "wall": 1.915353885000004,
+   "buckets": {
+    "plan": 0.0929250849999953,
+    "pack": 0.03844119399999909,
+    "transport": 0.1070182430000034,
+    "kernel": 1.142565888,
+    "tail": 0.46582988799999997,
+    "waitCpu": 0.026120695999998132,
+    "flagged": 0.000005199999999604188,
+    "map": 0.00224099899999419,
+    "accumulate": 0.039657593000003544
+   },
+   "launches": [
+    {
+     "n": 4311,
+     "flagged": 0,
+     "packMs": 38.441193999999086,
+     "staticMs": 61.60619000000588,
+     "sidecarMs": 1653.8078289999976,
+     "kernelUs": 1647285,
+     "pieces": 1,
+     "spanMs": 1608.395776,
+     "bodyMs": 1142.565888,
+     "tailMs": 465.829888,
+     "maxBattleMs": 1388.780544,
+     "p50BattleMs": 743.114752,
+     "longest": {
+      "turns": 114,
+      "innerSims": 1060,
+      "poolMax": 61
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 4,
+   "n": 2976,
+   "memoHits": 15324,
+   "gpu": 2947,
+   "cpu": 29,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 29,
+   "cpuShareS": 1.2979768100000002,
+   "gpuPathS": 1.395618899000001,
+   "cpuIdleS": 0.09764208900000085,
+   "wall": 1.5020037839999931,
+   "buckets": {
+    "plan": 0.06906108900000255,
+    "pack": 0.02908209500000521,
+    "transport": 0.08227998000000367,
+    "kernel": 0.775590912,
+    "tail": 0.507686912,
+    "waitCpu": 7.999999943422153e-7,
+    "flagged": 0.0000034000000014202668,
+    "map": 0.0009268000000010943,
+    "accumulate": 0.037223395999993955
+   },
+   "launches": [
+    {
+     "n": 2947,
+     "flagged": 0,
+     "packMs": 29.08209500000521,
+     "staticMs": 51.074092000002565,
+     "sidecarMs": 1314.483712000001,
+     "kernelUs": 1310298,
+     "pieces": 1,
+     "spanMs": 1283.277824,
+     "bodyMs": 775.590912,
+     "tailMs": 507.686912,
+     "maxBattleMs": 1199.623168,
+     "p50BattleMs": 529.243136,
+     "longest": {
+      "turns": 105,
+      "innerSims": 888,
+      "poolMax": 93
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 5,
+   "n": 9268,
+   "memoHits": 8858,
+   "gpu": 9176,
+   "cpu": 92,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 92,
+   "cpuShareS": 4.410607910999999,
+   "gpuPathS": 3.5429467069999956,
+   "cpuIdleS": 0,
+   "wall": 4.540104895999997,
+   "buckets": {
+    "plan": 0.08522348999999667,
+    "pack": 0.07909409200000664,
+    "transport": 0.2110103319999921,
+    "kernel": 2.69192192,
+    "tail": 0.554968064,
+    "waitCpu": 0.8676668040000004,
+    "flagged": 0.000006400000005669426,
+    "map": 0.006239398999998229,
+    "accumulate": 0.04347049500000139
+   },
+   "launches": [
+    {
+     "n": 9176,
+     "flagged": 0,
+     "packMs": 79.09409200000664,
+     "staticMs": 77.80269099999714,
+     "sidecarMs": 3380.097624999995,
+     "kernelUs": 3356930,
+     "pieces": 1,
+     "spanMs": 3246.889984,
+     "bodyMs": 2691.92192,
+     "tailMs": 554.968064,
+     "maxBattleMs": 2962.251776,
+     "p50BattleMs": 1634.571264,
+     "longest": {
+      "turns": 116,
+      "innerSims": 603,
+      "poolMax": 61
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 5,
+   "n": 4084,
+   "memoHits": 14148,
+   "gpu": 4044,
+   "cpu": 40,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 40,
+   "cpuShareS": 1.772494703999997,
+   "gpuPathS": 1.707450810999995,
+   "cpuIdleS": 0,
+   "wall": 1.9179412879999946,
+   "buckets": {
+    "plan": 0.0825845909999989,
+    "pack": 0.04246789500000159,
+    "transport": 0.11370439999999644,
+    "kernel": 1.090808832,
+    "tail": 0.458000384,
+    "waitCpu": 0.06504759300000296,
+    "flagged": 0.000005900000003748573,
+    "map": 0.0024759999999951106,
+    "accumulate": 0.0626574929999988
+   },
+   "launches": [
+    {
+     "n": 4044,
+     "flagged": 0,
+     "packMs": 42.46789500000159,
+     "staticMs": 69.42839300000196,
+     "sidecarMs": 1593.0852229999946,
+     "kernelUs": 1587558,
+     "pieces": 1,
+     "spanMs": 1548.809216,
+     "bodyMs": 1090.808832,
+     "tailMs": 458.000384,
+     "maxBattleMs": 1358.043136,
+     "p50BattleMs": 699.650048,
+     "longest": {
+      "turns": 119,
+      "innerSims": 891,
+      "poolMax": 93
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 5,
+   "n": 2428,
+   "memoHits": 15718,
+   "gpu": 2404,
+   "cpu": 24,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 24,
+   "cpuShareS": 1.166643471000003,
+   "gpuPathS": 1.075054280999997,
+   "cpuIdleS": 0,
+   "wall": 1.309679455999998,
+   "buckets": {
+    "plan": 0.08679939100000048,
+    "pack": 0.01718939799999498,
+    "transport": 0.07657241900000133,
+    "kernel": 0.6965104639999999,
+    "tail": 0.283136,
+    "waitCpu": 0.09159419000000343,
+    "flagged": 0.000006600000000617001,
+    "map": 0.0016573999999964144,
+    "accumulate": 0.05607459399999789
+   },
+   "launches": [
+    {
+     "n": 2404,
+     "flagged": 0,
+     "packMs": 17.18939799999498,
+     "staticMs": 54.12289400000009,
+     "sidecarMs": 1002.0959890000013,
+     "kernelUs": 998992,
+     "pieces": 1,
+     "spanMs": 979.646464,
+     "bodyMs": 696.510464,
+     "tailMs": 283.136,
+     "maxBattleMs": 848.149504,
+     "p50BattleMs": 496.474112,
+     "longest": {
+      "turns": 117,
+      "innerSims": 844,
+      "poolMax": 168
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 6,
+   "n": 8236,
+   "memoHits": 9868,
+   "gpu": 8154,
+   "cpu": 82,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 82,
+   "cpuShareS": 3.837454876000011,
+   "gpuPathS": 3.5987456030000105,
+   "cpuIdleS": 0,
+   "wall": 3.9740573610000065,
+   "buckets": {
+    "plan": 0.08408079100000032,
+    "pack": 0.07558859099999972,
+    "transport": 0.17350285599999143,
+    "kernel": 2.5020293120000003,
+    "tail": 0.843679744,
+    "waitCpu": 0.2387142729999905,
+    "flagged": 0.000005499999999301508,
+    "map": 0.004020199999999022,
+    "accumulate": 0.05210269400000107
+   },
+   "launches": [
+    {
+     "n": 8154,
+     "flagged": 0,
+     "packMs": 75.58859099999972,
+     "staticMs": 63.673792999994475,
+     "sidecarMs": 3455.538118999997,
+     "kernelUs": 3445230,
+     "pieces": 1,
+     "spanMs": 3345.709056,
+     "bodyMs": 2502.029312,
+     "tailMs": 843.679744,
+     "maxBattleMs": 3345.702912,
+     "p50BattleMs": 1458.927616,
+     "longest": {
+      "turns": 96,
+      "innerSims": 946,
+      "poolMax": 1795
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 6,
+   "n": 4366,
+   "memoHits": 13738,
+   "gpu": 4323,
+   "cpu": 43,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 43,
+   "cpuShareS": 1.9359732870000008,
+   "gpuPathS": 1.8171876000000047,
+   "cpuIdleS": 0,
+   "wall": 2.0724692720000166,
+   "buckets": {
+    "plan": 0.0950565889999998,
+    "pack": 0.05966329300000507,
+    "transport": 0.10865770299999598,
+    "kernel": 1.13746944,
+    "tail": 0.508862464,
+    "waitCpu": 0.11879018699999142,
+    "flagged": 0.000005300000004353933,
+    "map": 0.002504899999985355,
+    "accumulate": 0.04121229600001243
+   },
+   "launches": [
+    {
+     "n": 4323,
+     "flagged": 0,
+     "packMs": 59.66329300000507,
+     "staticMs": 60.12289400000009,
+     "sidecarMs": 1694.8667129999958,
+     "kernelUs": 1685212,
+     "pieces": 1,
+     "spanMs": 1646.331904,
+     "bodyMs": 1137.46944,
+     "tailMs": 508.862464,
+     "maxBattleMs": 1463.08096,
+     "p50BattleMs": 752.068608,
+     "longest": {
+      "turns": 112,
+      "innerSims": 1196,
+      "poolMax": 61
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 6,
+   "n": 3228,
+   "memoHits": 15050,
+   "gpu": 3196,
+   "cpu": 32,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 32,
+   "cpuShareS": 1.4989552850000036,
+   "gpuPathS": 1.4240939880000079,
+   "cpuIdleS": 0,
+   "wall": 1.616768675000014,
+   "buckets": {
+    "plan": 0.07273369200000888,
+    "pack": 0.03966729599999962,
+    "transport": 0.07951537600000075,
+    "kernel": 0.878445568,
+    "tail": 0.42301644800000004,
+    "waitCpu": 0.0748659970000008,
+    "flagged": 0.000006699999998090789,
+    "map": 0.003552800000004936,
+    "accumulate": 0.04482109800000035
+   },
+   "launches": [
+    {
+     "n": 3196,
+     "flagged": 0,
+     "packMs": 39.667295999999624,
+     "staticMs": 46.621994000000996,
+     "sidecarMs": 1334.3553979999997,
+     "kernelUs": 1329484,
+     "pieces": 1,
+     "spanMs": 1301.462016,
+     "bodyMs": 878.445568,
+     "tailMs": 423.016448,
+     "maxBattleMs": 1061.788672,
+     "p50BattleMs": 587.532288,
+     "longest": {
+      "turns": 134,
+      "innerSims": 804,
+      "poolMax": 93
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 7,
+   "n": 7392,
+   "memoHits": 10608,
+   "gpu": 7319,
+   "cpu": 73,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 73,
+   "cpuShareS": 3.178691970999993,
+   "gpuPathS": 2.8057291859999967,
+   "cpuIdleS": 0,
+   "wall": 3.3199199649999933,
+   "buckets": {
+    "plan": 0.08361209700000473,
+    "pack": 0.08345949700000346,
+    "transport": 0.19748756100000264,
+    "kernel": 2.016369664,
+    "tail": 0.502436864,
+    "waitCpu": 0.3729684850000049,
+    "flagged": 0.00000819999999657739,
+    "map": 0.006139700000014272,
+    "accumulate": 0.05705439699999988
+   },
+   "launches": [
+    {
+     "n": 7319,
+     "flagged": 0,
+     "packMs": 83.45949700000347,
+     "staticMs": 67.03969700000016,
+     "sidecarMs": 2649.2543920000026,
+     "kernelUs": 2633621,
+     "pieces": 1,
+     "spanMs": 2518.806528,
+     "bodyMs": 2016.369664,
+     "tailMs": 502.436864,
+     "maxBattleMs": 2329.812992,
+     "p50BattleMs": 1239.794688,
+     "longest": {
+      "turns": 145,
+      "innerSims": 1147,
+      "poolMax": 41
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 7,
+   "n": 4224,
+   "memoHits": 13776,
+   "gpu": 4182,
+   "cpu": 42,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 42,
+   "cpuShareS": 1.999489419000005,
+   "gpuPathS": 1.6656644320000051,
+   "cpuIdleS": 0,
+   "wall": 2.1399015139999973,
+   "buckets": {
+    "plan": 0.09172709699999541,
+    "pack": 0.03481949900000472,
+    "transport": 0.12187195700000553,
+    "kernel": 1.065208832,
+    "tail": 0.441196544,
+    "waitCpu": 0.33383008699999484,
+    "flagged": 0.000005799999998998829,
+    "map": 0.0025133999999961817,
+    "accumulate": 0.048464097999996736
+   },
+   "launches": [
+    {
+     "n": 4182,
+     "flagged": 0,
+     "packMs": 34.819499000004726,
+     "staticMs": 69.4952970000013,
+     "sidecarMs": 1558.7820360000042,
+     "kernelUs": 1544449,
+     "pieces": 1,
+     "spanMs": 1506.405376,
+     "bodyMs": 1065.208832,
+     "tailMs": 441.196544,
+     "maxBattleMs": 1379.8144,
+     "p50BattleMs": 700.909568,
+     "longest": {
+      "turns": 117,
+      "innerSims": 793,
+      "poolMax": 93
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": 7,
+   "n": 3164,
+   "memoHits": 14836,
+   "gpu": 3133,
+   "cpu": 31,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 31,
+   "cpuShareS": 1.594629417999997,
+   "gpuPathS": 1.4950422269999981,
+   "cpuIdleS": 0,
+   "wall": 1.750240008000008,
+   "buckets": {
+    "plan": 0.08291129600000567,
+    "pack": 0.026107099000000744,
+    "transport": 0.07925896800000601,
+    "kernel": 0.937017344,
+    "tail": 0.451030016,
+    "waitCpu": 0.09959179099999892,
+    "flagged": 0.000006700000012642704,
+    "map": 0.0016902000000118278,
+    "accumulate": 0.07245369399999618
+   },
+   "launches": [
+    {
+     "n": 3133,
+     "flagged": 0,
+     "packMs": 26.107099000000744,
+     "staticMs": 45.41709800000535,
+     "sidecarMs": 1421.8892300000007,
+     "kernelUs": 1417239,
+     "pieces": 1,
+     "spanMs": 1388.04736,
+     "bodyMs": 937.017344,
+     "tailMs": 451.030016,
+     "maxBattleMs": 1210.732544,
+     "p50BattleMs": 635.225088,
+     "longest": {
+      "turns": 110,
+      "innerSims": 1025,
+      "poolMax": 197
+     }
+    }
+   ],
+   "evalNoted": true
+  },
+  {
+   "gen": "final",
+   "n": 422,
+   "memoHits": 3178,
+   "gpu": 418,
+   "cpu": 4,
+   "flaggedRows": 0,
+   "share": 0.01,
+   "cpuCount": 4,
+   "cpuShareS": 0.25146837800000504,
+   "gpuPathS": 0.5764545490000018,
+   "cpuIdleS": 0.3249861709999968,
+   "wall": 0.6270222450000001,
+   "buckets": {
+    "plan": 0.02833999799999583,
+    "pack": 0.005678400000004331,
+    "transport": 0.011802701000005073,
+    "kernel": 0.148383744,
+    "tail": 0.410159104,
+    "waitCpu": 7.000000041443854e-7,
+    "flagged": 0.000004400000005261972,
+    "map": 0.000375400000018999,
+    "accumulate": 0.022208897999997135
+   },
+   "launches": [
+    {
+     "n": 418,
+     "flagged": 0,
+     "packMs": 5.678400000004331,
+     "staticMs": 3.789799000005587,
+     "sidecarMs": 566.5557499999995,
+     "kernelUs": 564997,
+     "pieces": 1,
+     "spanMs": 558.542848,
+     "bodyMs": 148.383744,
+     "tailMs": 410.159104,
+     "maxBattleMs": 558.511104,
+     "p50BattleMs": 148.281344,
+     "longest": {
+      "turns": 94,
+      "innerSims": 819,
+      "poolMax": 891
+     }
+    }
+   ],
+   "evalNoted": true
+  }
+ ],
+ "generations": [
+  {
+   "gen": 0,
+   "wall": 16.879753305,
+   "buckets": {
+    "plan": 0.23272890500000015,
+    "pack": 0.3816675079999991,
+    "transport": 1.2574035310000031,
+    "kernel": 10.72387072,
+    "tail": 1.7751808000000002,
+    "waitCpu": 0.978705922000001,
+    "flagged": 0.000023500000001149602,
+    "map": 0.046072300999995604,
+    "accumulate": 0.2440838050000002,
+    "ga": 1.1920479130000015,
+    "checkpoint": 0.0026929999999993014,
+    "report": 0.0008070000000006985
+   },
+   "unattributed": 0.044468399999992414,
+   "steps": 3,
+   "battles": 36000,
+   "gpuBattles": 35640,
+   "cpuBattles": 360,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 1,
+   "wall": 11.081965497,
+   "buckets": {
+    "plan": 0.24494250100000137,
+    "pack": 0.24478499999999986,
+    "transport": 0.6184243519999952,
+    "kernel": 5.392407552,
+    "tail": 1.500167168,
+    "waitCpu": 2.151963516,
+    "flagged": 0.000033399999996618135,
+    "map": 0.013711299999999028,
+    "accumulate": 0.2454830030000012,
+    "ga": 0.6465350049999979,
+    "checkpoint": 0.002417700000001787,
+    "report": 0.0006970000000001164
+   },
+   "unattributed": 0.020398000000007244,
+   "steps": 3,
+   "battles": 19150,
+   "gpuBattles": 18959,
+   "cpuBattles": 191,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 2,
+   "wall": 9.124239678999999,
+   "buckets": {
+    "plan": 0.21806299999999465,
+    "pack": 0.17332600100000492,
+    "transport": 0.40844016799999394,
+    "kernel": 5.07326976,
+    "tail": 1.518369792,
+    "waitCpu": 1.0135479019999984,
+    "flagged": 0.00007589999999618158,
+    "map": 0.012689599999986968,
+    "accumulate": 0.1596973000000071,
+    "ga": 0.5190540569999975,
+    "checkpoint": 0.00396549899999809,
+    "report": 0.003383300000001327
+   },
+   "unattributed": 0.020357400000017734,
+   "steps": 3,
+   "battles": 18024,
+   "gpuBattles": 17846,
+   "cpuBattles": 178,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 3,
+   "wall": 7.907217668000005,
+   "buckets": {
+    "plan": 0.2402893780000086,
+    "pack": 0.13334138699999312,
+    "transport": 0.3503978860000191,
+    "kernel": 4.039259136,
+    "tail": 1.5054274559999998,
+    "waitCpu": 0.9993259120000002,
+    "flagged": 0.000022499999999126883,
+    "map": 0.014283097999992604,
+    "accumulate": 0.17801538500000605,
+    "ga": 0.4268078329999989,
+    "checkpoint": 0.002874399000000267,
+    "report": 0.0014808999999950175
+   },
+   "unattributed": 0.01569239799999167,
+   "steps": 3,
+   "battles": 15260,
+   "gpuBattles": 15109,
+   "cpuBattles": 151,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 4,
+   "wall": 8.581614144,
+   "buckets": {
+    "plan": 0.24208355999999912,
+    "pack": 0.20273096700000318,
+    "transport": 0.394940984000004,
+    "kernel": 4.351411199999999,
+    "tail": 1.475841024,
+    "waitCpu": 1.3704792759999909,
+    "flagged": 0.000015299999999115243,
+    "map": 0.009108198000001722,
+    "accumulate": 0.13093708000000331,
+    "ga": 0.3848965570000073,
+    "checkpoint": 0.0022603000000017345,
+    "report": 0.0015777999999991152
+   },
+   "unattributed": 0.01533189799999235,
+   "steps": 3,
+   "battles": 16074,
+   "gpuBattles": 15915,
+   "cpuBattles": 159,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 5,
+   "wall": 8.166482695,
+   "buckets": {
+    "plan": 0.254607471999996,
+    "pack": 0.1387513850000032,
+    "transport": 0.4012871509999899,
+    "kernel": 4.479241216,
+    "tail": 1.2961044480000001,
+    "waitCpu": 1.0243085870000068,
+    "flagged": 0.000018900000010035,
+    "map": 0.010372798999989755,
+    "accumulate": 0.1622025819999981,
+    "ga": 0.37718775900000034,
+    "checkpoint": 0.0027472990000023856,
+    "report": 0.0016892999999981839
+   },
+   "unattributed": 0.017963797000001946,
+   "steps": 3,
+   "battles": 15780,
+   "gpuBattles": 15624,
+   "cpuBattles": 156,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 6,
+   "wall": 8.157282486999996,
+   "buckets": {
+    "plan": 0.251871072000009,
+    "pack": 0.17491918000000442,
+    "transport": 0.3616759349999882,
+    "kernel": 4.517944320000001,
+    "tail": 1.775558656,
+    "waitCpu": 0.4323704569999827,
+    "flagged": 0.000017500000001746228,
+    "map": 0.010077899999989315,
+    "accumulate": 0.13813608800001387,
+    "ga": 0.46168238199999906,
+    "checkpoint": 0.0035889999999926658,
+    "report": 0.002058199000006425
+   },
+   "unattributed": 0.027381798000009283,
+   "steps": 3,
+   "battles": 15830,
+   "gpuBattles": 15673,
+   "cpuBattles": 157,
+   "flaggedRows": 0
+  },
+  {
+   "gen": 7,
+   "wall": 7.2343983860000005,
+   "buckets": {
+    "plan": 0.25825049000000583,
+    "pack": 0.14438609500000893,
+    "transport": 0.39861848600001415,
+    "kernel": 4.01859584,
+    "tail": 1.394663424,
+    "waitCpu": 0.8063903629999987,
+    "flagged": 0.000020700000008218925,
+    "map": 0.010343300000022282,
+    "accumulate": 0.1779721889999928,
+    "ga": 0.006032999000002747,
+    "checkpoint": 0.0022676999999966937,
+    "report": 0.001978300000002491
+   },
+   "unattributed": 0.014878499999947614,
+   "steps": 3,
+   "battles": 14780,
+   "gpuBattles": 14634,
+   "cpuBattles": 146,
+   "flaggedRows": 0
+  }
+ ]
+}

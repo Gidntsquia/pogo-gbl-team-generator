@@ -523,6 +523,8 @@ Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed)
 | 5k | lean4 | 2.52 | 14.8% | 38% | long_scoreboard 38% | 756 | 16.2% |
 | 5k | lean2q | 2.90 | 16.0% | 31% | no_instruction 34% | 760 | 13.4% |
 | 5k | lean5 | 2.65 | 16.0% | 29% | no_instruction 36% | 741 | 13.5% |
+| 5k | lean6 | 2.48 | 15.7% | 36% | long_scoreboard 36% | 737 | 4.4% |
+| 5k | lean6cap | 2.41 | 14.8% | 36% | long_scoreboard 36% | 738 | 16.4% |
 | 5k | stack | 3.64 | 15.6% | 38% | long_scoreboard 38% | 822 | 13.4% |
 | 5k | leancap | 2.77 | 15.9% | 31% | no_instruction 34% | 761 | 13.4% |
 | 10k | default | 11.85 | 15.3% | 55% | long_scoreboard 55% | 1955 | 12.3% |
@@ -532,6 +534,8 @@ Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed)
 | 10k | lean4 | 5.35 | 15.8% | 40% | long_scoreboard 40% | 1741 | 16.3% |
 | 10k | lean2q | 6.20 | 15.8% | 32% | long_scoreboard 32% | 1755 | 13.7% |
 | 10k | lean5 | 6.19 | 15.9% | 30% | no_instruction 34% | 1707 | 13.7% |
+| 10k | lean6 | 5.11 | 15.8% | 37% | long_scoreboard 37% | 1694 | 16.4% |
+| 10k | lean6cap | 5.05 | 15.9% | 36% | long_scoreboard 36% | 1690 | 16.5% |
 | 10k | stack | 10.92 | 15.4% | 42% | long_scoreboard 42% | 1906 | 13.3% |
 | 10k | leancap | 6.65 | 15.8% | 32% | no_instruction 32% | 1747 | 13.7% |
 
@@ -543,3 +547,49 @@ Unresolved at the end of the budget: lean 1 (session s2: insufficient: 3 runs, n
 3. **lean 5**: saves 2.37 s/gen (mean 7.24, spread 0.08 vs default 9.61, spread 0.20, session s3) = 3.9 min per 100-gen run. Proof: 3/3 runs 30/30 identical; verify 100.00% / 0 flagged. Change: make LEAN_STEPS "5" the default: step 2 plus the turn-keyed queue, 0 spill, 255 registers. The zero-spill choice if lean 6's spills are unwanted. Interacts: Lean 6 is lean 5 plus noinline helpers, so take one of the two.
 
 Glossary: **stack** = the compact per-battle state (smaller Move / Mon structs) the kernel keeps in local memory; **occ** = occupancy edits (noinline cold helpers, fewer live registers) to fit more warps per SM; **lean** = stack + 8/16-bit fields + a binary-search lookahead queue, with steps 1-6 adding noinline, a half pool and a turn-keyed queue; **cap** = give up the lookahead when its pool reaches N entries (changes some winners, so it must pass the agreement gate); **spill** = values the compiler cannot keep in the 255 registers and parks in slow local memory, so each use costs a load.
+## Round 12: lean 6 as the only kernel, GPU by default, 100-gen run, CPU split
+
+Branch `gpu`, 2026-10-22. Numbers come only from `out/gpu/r10/runs.json` (speed), `out/gpu/r10/ncu/summary.json`, `out/gpu/r12/*` and the fit data in `gpu/gpu/r12/fitdata/`; `python3 gpu/gpu/r12/check.py` rebuilds this section and fails on any difference. Yardstick as in round 11 (warm s/gen = mean of generations 2+, 3 interleaved runs per variant with a share-0 default in every pass, spread = max - min, "wins" = gain larger than both spreads added, a smaller gain is "insufficient"). Clock times are US Eastern.
+
+### Lean 6 is the only kernel (R1-R3)
+- ptxas for the standard build: 255 registers, entry frame 39,568 B, **spill 48 B stores / 76 B loads** (all functions 104/196 B), pool MAXQ 2048. The sidecar start log names `kernel: lean 6`.
+- Removed: `POGO_GPU_STUDY=lean|stack|occ|tail`, `POGO_GPU_LEAN`, the tail host code (`gpuTail.js`, `tailSpec.js`) and the study forks; the tables in Rounds 8-11 keep their numbers.
+- CPU-only 2-gen checkpoints (round 12 code) vs round 9 and round 10: gen 0 and gen 1 IDENTICAL in both.
+- 30-gen standard run with lean 6 as the default vs round 11's three default runs: 30, 30, 30 checkpoints, all IDENTICAL.
+- verify_3v3: agreement 100.00%, win-rate delta +0.00 pp
+
+### 100-gen run (R8): lean 6 default, same seed and command as round 10's 100-gen runs
+| run | start ET | total wall | warm s/gen | checkpoints vs round 10 default |
+|---|---|---|---|---|
+| round 10 default (2 runs, mean) | 19:47 EDT, 20:59 EDT | 1101 s (18.3 min) | 10.73 | - |
+| lean 6 (session s5) | 22:35 EDT | 623 s (10.4 min) | 6.05 | 2/2 round 10 default runs: 100/100 identical |
+
+### CPU share (R10)
+`node gpu/fit-share.mjs` on two 8-gen lean 6 runs (share 0.01 for the GPU side, 0.05 for the CPU side; `gpu/gpu/r12/fitdata/`): GPU step time = 0.34 s + 0.00035 s per battle (r2 0.98, 22 steps), CPU = 0.46 s + 0.047 s per battle (r2 0.99); the fit puts auto at about 2 battles per step because the whole GPU step is under 3 s. Auto stays off (default 0).
+Session s6, start 03:20 EDT, 3 passes, each pass the share-0 default then the variants:
+| variant | warm s/gen, runs | mean | spread | vs default | verdict | proof | run starts ET |
+|---|---|---|---|---|---|---|---|
+| share 0 (default) | 6.21 / 6.55 / 6.45 | 6.41 | 0.34 | - | - | - | 03:20, 04:42, 06:20 |
+| share auto (refit) | 6.30 / 7.53 / 6.52 | 6.78 | 1.23 | +0.38 | no gain | 0/3 runs 30/30 identical | 03:23, 04:46, 06:23 |
+| share 0.05 | 38.78 / 45.61 / 52.85 | 45.75 | 14.06 | +39.34 | no gain | 0/3 runs 30/30 identical | 03:27, 04:50, 06:27 |
+| share 0.10 | 67.16 / 81.81 / 95.93 | 81.64 | 28.77 | +75.23 | no gain | 0/3 runs 30/30 identical | 03:48, 05:15, 06:56 |
+| CPU below 500 | 6.20 / 6.33 / 6.43 | 6.32 | 0.23 | -0.09 | insufficient: 3 runs, needs 3 more | 0/3 runs 30/30 identical | 04:24, 05:59, 07:47 |
+| CPU below 2000 | 29.81 / 35.74 / 25.50 | 30.35 | 10.24 | +23.94 | no gain | 0/3 runs 30/30 identical | 04:28, 06:03, 07:51 |
+
+### Host overlap (R11)
+- (a) rerun of flagged rows overlapped with the next launch: already how the executor works (flagged rows go to the CPU workers as soon as a launch returns, while the next launch runs), so there is no serial version left to compare against; no change, no A/B.
+- (b) host packing overlapped with the launch: cut, no time left to build and A/B it before the deadline; stays as it is.
+- (c) POGO_GPU_CPU_BELOW=500 or 2000 (steps with fewer battles run only on the CPU): 500 is insufficient (+0.09 s/gen inside the spreads), 2000 is 24 s/gen slower; both stay off (env variable, default off).
+
+### Nsight Compute, lean 6 (standard) and lean 6 + cap192 (`out/gpu/r10/ncu/summary.json`)
+| launch | variant | kernel s | occupancy | long_scoreboard | local GB | issue-slot use |
+|---|---|---|---|---|---|---|
+| 5k | lean6 | 2.48 | 15.7% | 36% | 737 | 4.4% |
+| 5k | lean6cap | 2.41 | 14.8% | 36% | 738 | 16.4% |
+| 10k | lean6 | 5.11 | 15.8% | 37% | 1694 | 16.4% |
+| 10k | lean6cap | 5.05 | 15.9% | 36% | 1690 | 16.5% |
+
+### What became default (R12)
+- nothing besides lean 6 and the GPU engine; share 0.05, share 0.10, share auto and CPU-below 2000 are slower (no gain), CPU-below 500 is insufficient, so every share and overlap candidate stays off with its flag documented.
+
+Glossary: **share** = the fraction of each step's battles the CPU workers run beside the GPU (`--gpu-cpu-share`); **stack**, **occ**, **lean**, **cap**, **spill** as in Round 11.

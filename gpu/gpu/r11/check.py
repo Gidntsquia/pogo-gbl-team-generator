@@ -33,7 +33,7 @@ def main():
         if cur != built:
             import difflib
             sys.stdout.writelines(difflib.unified_diff(cur.splitlines(True), built.splitlines(True), "docs", "rebuilt"))
-        check(cur == built, "docs section equals the section rebuilt from the data files")
+        check(cur.rstrip("\n") == built.rstrip("\n"), "docs section equals the section rebuilt from the data files")
     n = len(built.rstrip("\n").splitlines())
     check(n <= 90, f"section is {n} lines (limit 90)")
     doc = open(S.DOC).read()

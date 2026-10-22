@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Round 8 R8: one run of the round-7 halving-3 pop-1x command and seed (out/gpu/width/run20.sh), 10 generations by default.
 # usage: run10.sh <name> [ENV=VAL ...]  -> out/evolve-gpu8-<name>/ and out/evolve-gpu8-<name>.log (ends "exit N")
-# ENV: any POGO_GPU_* variable (e.g. POGO_GPU_STUDY=stack); GENS=N generations; CPU_SHARE=x passes --gpu-cpu-share x.
+# ENV: any POGO_GPU_* variable (e.g. POGO_GPU_STUDY=cap); GENS=N generations; CPU_SHARE=x passes --gpu-cpu-share x.
 set -u
 cd /home/jaxon/files/pogo-gbl-team-generator
 name=$1; shift

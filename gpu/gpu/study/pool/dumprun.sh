@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pool fork: run10.sh copy that writes to out/gpu/study/pool/dumprun (used with POGO_GPU_DUMP, GENS=2)
 # usage: run10.sh <name> [ENV=VAL ...]  -> out/evolve-gpu8-<name>/ and out/evolve-gpu8-<name>.log (ends "exit N")
-# ENV: any POGO_GPU_* variable (e.g. POGO_GPU_STUDY=stack); GENS=N generations; CPU_SHARE=x passes --gpu-cpu-share x.
+# ENV: any POGO_GPU_* variable (e.g. POGO_GPU_STUDY=cap); GENS=N generations; CPU_SHARE=x passes --gpu-cpu-share x.
 set -u
 cd /home/jaxon/files/pogo-gbl-team-generator
 name=$1; shift

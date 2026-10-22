@@ -30,7 +30,13 @@ export const DEFAULT_GPU_CPU_SHARE = 0;
  * the CPU share to finish inside the shortest measured GPU step (3.87 s) at 0.05 s + battles / 24.9 b/s, the rate the
  * 8 workers reach beside the GPU, i.e. 95 battles a step.
  */
-export const GPU_RATE_MODEL = { gpuFixedS: 3.87, gpuPerBattleS: 0, cpuFixedS: 0.05, cpuBps: 24.9 };
+export const GPU_RATE_MODEL = { gpuFixedS: 0.58, gpuPerBattleS: 0, cpuFixedS: 0.46, cpuBps: 21.3 }; // round 12 refit for lean 6 (8-gen runs, fit data gpu/gpu/r12/fitdata): shortest GPU step 0.58 s
+/**
+ * EXPERIMENTAL (round 12, off by default): POGO_GPU_CPU_BELOW=N runs every step with fewer than N battles (the small halving
+ * rounds) entirely on the CPU workers instead of a GPU launch. Results are CPU float, so they can differ from the GPU's in
+ * ~0.2% of winners (the agreement gate applies).
+ */
+export const GPU_CPU_BELOW = Math.max(0, Number.parseInt(process.env.POGO_GPU_CPU_BELOW ?? '0', 10) || 0);
 /** Battles per sidecar message (the sidecar also splits on its own if GPU memory runs out). */
 export const GPU_BATCH_LIMIT = 36000;
 /**
@@ -202,7 +208,7 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       const memo = memoHitsNext; memoHitsNext = 0;
       const t0 = performance.now();
       const gpuI = [], cpuI = [];
-      const nCpu = cpuCountFor(specs.length, cpuShare);
+      const nCpu = specs.length < GPU_CPU_BELOW ? specs.length : cpuCountFor(specs.length, cpuShare);
       specs.forEach((_, i) => (isCpuSlot(i, nCpu, specs.length) ? cpuI : gpuI).push(i));
       let mapMs = performance.now() - t0;
       let cpuDone = t0;

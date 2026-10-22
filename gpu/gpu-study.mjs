@@ -403,7 +403,7 @@ ${table(['variant', 'wall min', 'ET', 'warm s/gen', 'gens'], fullRows, 'One full
 ${sup(5)}
 <ul>
 <li>Run today with the default: <code>bash scripts/sim.sh &lt;csv&gt; --gpu</code> (its defaults).</li>
-<li>Flag to try: <code>POGO_GPU_STUDY=stack</code> (smaller battle state).</li><li>In round 8's A/B it saved ${R8N['ab.ab-stack.delta'] ? Math.abs(R8N['ab.ab-stack.delta'].v).toFixed(2) : '?'} s/gen, beyond both spreads (${R8N['ab.ab-stack.spread']?.t} and default ${R8N['ab.ab-base.spread']?.t}).</li>
+<li>Flag to try: the stack kernel (since folded into lean 6) (smaller battle state).</li><li>In round 8's A/B it saved ${R8N['ab.ab-stack.delta'] ? Math.abs(R8N['ab.ab-stack.delta'].v).toFixed(2) : '?'} s/gen, beyond both spreads (${R8N['ab.ab-stack.spread']?.t} and default ${R8N['ab.ab-base.spread']?.t}).</li>
 <li>Tail flags stay off: the tail filler's gain did not show in the 100-generation run (fact 3) and the certain feed had ${verdict('ab.certain.delta', vC.word)}.</li>
 <li>Build next: cut more bytes from each battle's state, the source of fact 2's waits.</li>
 </ul>
