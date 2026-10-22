@@ -126,6 +126,38 @@ candidates before because it is too expensive to build; opponents keep it).
 Add `--hours H` when the user gives a time budget; the 8 h marisa run used
 `--hours 7.75` (465 min) to leave room for the final pass.
 
+### GPU battles (default engine since round 12; `--cpu-only` opts out)
+
+Every launcher (`node scripts/evolve.mjs`, `scripts/sim.sh`, the `pogo-sim` MCP tools) sends each step's uncached 3v3
+battles to the CUDA sidecar (`gpu/`, needs `uv` and an NVIDIA GPU); the memo stays in front. The sidecar builds one
+kernel, lean 6 (compact battle state, binary-search turn-keyed lookahead queue, noinline cold helpers; the sidecar start
+log says `kernel: lean 6`). `--cpu-only` (MCP: `cpuOnly: true`) runs every battle on the CPU workers. `--gpu` is accepted
+and does nothing (one `gpu: --gpu is the default` line). With no device, no `uv` or a start failure the run prints one
+`gpu: <reason>, running on CPU` line and continues on the CPU workers; its config records `engine: cpu-fallback`. A
+sidecar that dies mid-run exits 1 with a valid checkpoint; the same command resumes. The engine is in the run config: a
+resume with the opposite flag is refused with a one-line error, and a pre-round-12 checkpoint with `gpu: true` resumes
+with no flag. `status_sim` shows the engine (gpu / cpu-only / cpu-fallback).
+Each step logs `gpu step -- N memo hits, N battles on GPU in Xs, N on CPU in Xs [(F GPU rows flagged invalid, re-run on
+CPU)], share S (N CPU), wall Xs`; `<out-dir>/gpu-profile.json` holds per-step buckets (`node gpu/gpu-profile.mjs`
+renders `out/gpu-profile.html`). Results are float32: ~99.8% winner agreement with the CPU engine.
+Flags and variables (all optional):
+- `--gpu-cpu-share auto|<0..1>`: CPU share of each step, default 0. `auto` sizes it from `GPU_RATE_MODEL` (refit for lean 6 in
+  round 12, `node gpu/fit-share.mjs --gpu <dir> --cpu <dir>`; with lean 6 the GPU step is so short that auto is ~2 battles).
+- `POGO_GPU_STUDY=cap` + `POGO_GPU_CAP=N` (opt-in, off by default): bounds the lookahead pool; 192 is the measured value
+  that passed the agreement gate; it can change winners. Each launch logs `gpu cap -- N of M battles hit the pool cap C`.
+- `POGO_GPU_CPU_BELOW=N` (experimental, off): steps with fewer than N battles run on the CPU workers.
+- Removed in round 12: `POGO_GPU_STUDY=lean|stack|occ|tail` and `POGO_GPU_LEAN` (setting one logs `gpu: POGO_GPU_... is gone,
+  lean 6 is the kernel`). Earlier width/kernel/scheduler variables (`POGO_GPU_KERNEL`, `POGO_GPU_WIDTH`, `POGO_GPU_ISLAND`,
+  `POGO_GPU_STREAMS`, ...) are unchanged and documented, with every measurement, in `docs/gpu-viability.md`.
+Numbers: `out/gpu/r10/runs.json` (`python3 gpu/gpu/r10/runs.py`); docs checks `python3 gpu/gpu/r12/check.py`. Wiki pages: GPU, GPU-Experiments.
+`POGO_COMMUNITY_FILE=<path>` points the curated-team loader at another file. The recipe-ab A/B needs
+`POGO_COMMUNITY_FILE=data/archive/meta-teams-community-mega-great.json`: the live file is base Great League, which
+a mega cup filters to 0 curated teams. Check the startup line says `(N curated)` with N > 0.
+```bash
+POGO_COMMUNITY_FILE=data/archive/meta-teams-community-mega-great.json nohup $(cat out/recipe-ab-cpu-baseline.cmd) \
+  --out-dir out/evolve-recipe-ab-gpu2-halving > out/evolve-recipe-ab-gpu2-halving.log 2>&1 &
+```
+
 ### Bare `evolve.mjs` recipes (no curated opponents)
 
 `sim.sh` fixes the opponent and elite settings, so a run with no curated teams uses bare
@@ -657,7 +689,7 @@ Consult only when this file disagrees with observed behaviour, then fix this fil
 | Curated teams and tier weights | `src/meta/teams.js`, `data/meta-teams-community.json` |
 | pvpoke pin and sparse paths | `scripts/setup.sh` |
 | Thread default | `src/engine/parallel.js` |
-| Feature docs (flags, cost math, GA) | GitHub wiki: `curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"` — pages Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions, Evolutionary-Team-Search, Shared-Collections, Development-and-Tests |
+| Feature docs (flags, cost math, GA) | GitHub wiki: `curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"` — pages Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions, Evolutionary-Team-Search, Shared-Collections, Development-and-Tests, GPU, GPU-Experiments |
 
 ## Sequential Halving (`--halving-rounds`, on by default)
 

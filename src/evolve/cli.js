@@ -48,6 +48,15 @@ Options:
                             --threads 1 for the serial reference mode, or
                             a value above 8 if the machine has memory to
                             spare                                        (default ${defaultThreadCount()} on this machine)
+  --cpu-only              run every battle on the CPU workers. Without it the GPU is the default engine: each batch's uncached
+                            3v3 pairings go to the CUDA sidecar (gpu/, needs uv + an NVIDIA GPU; the CPU workers only re-run rows
+                            the kernel flags invalid). Results are float32, not bit-identical to pvpoke (winner agrees ~99.8%),
+                            but a run is reproducible. If the sidecar cannot start the run prints one "gpu: <reason>, running on
+                            CPU" line and continues on the CPU. Part of the run config: a resume must use the same engine
+  --gpu                   accepted, does nothing (the GPU is the default)
+  --gpu-cpu-share F|auto  fraction of each batch the CPU workers run beside the GPU (default: 0, GPU only;
+                            the CPU share is disabled since round 6, see docs/gpu-viability.md). auto = the round-4
+                            balanced count per step from measured GPU/CPU rates
   --profile                capture a per-worker CPU profile (node:inspector)
                             spanning the whole run, written to
                             <out-dir>/worker-*.cpuprofile and
@@ -365,6 +374,7 @@ const NUMBER_FLAGS = [
   ['hoeffding-keep'], // unset = 0.5 (only meaningful with --hoeffding-races)
   ['sampled-combats'], // unset = off; validated as 1/K below
   ['sampled-opponents'], // unset = off; positive integer K, validated below
+  ['gpu-cpu-share'], // unset = 0 (GPU only, round 6); 'auto' = balanced from measured rates; only meaningful with --gpu
   ['hoeffding-confidence'], // unset = 0.1 (only meaningful with --hoeffding-races)
 ];
 
@@ -375,7 +385,7 @@ const STRING_FLAGS = [
 
 /** Switches. */
 const BOOLEAN_FLAGS = [
-  'profile', 'force-fresh', 'fixed-opponents', 'no-battle-cache', 'no-html', 'no-evolutions', 'meta-mode',
+  'profile', 'gpu', 'cpu-only', 'force-fresh', 'fixed-opponents', 'no-battle-cache', 'no-html', 'no-evolutions', 'meta-mode',
   'no-opponent-fitness-normalised', 'random-opponent-lead', 'hoeffding-races', 'no-hoeffding-races', 'check', 'help',
 ];
 
@@ -404,6 +414,8 @@ const parseInt0 = (value, flag) => checkNumber(value, flag, Number.isInteger, 'a
 
 function numericOpts(values) {
   const out = {};
+  const shareAuto = values['gpu-cpu-share'] === 'auto'; // the round-4 balanced share, now opt-in (disabled by default, round 6)
+  if (shareAuto) values = { ...values, 'gpu-cpu-share': undefined };
   const each = (table, ok, expectation) => {
     for (const [flag, fallback] of table) {
       const n = checkNumber(values[flag], flag, (x) => x >= 0 && ok(x), expectation);
@@ -413,6 +425,7 @@ function numericOpts(values) {
   each(INT_FLAGS, Number.isInteger, 'a non-negative integer');
   each(FRACTION_FLAGS, (x) => x <= 1, 'a number in [0,1]');
   each(NUMBER_FLAGS, () => true, 'a non-negative number');
+  if (shareAuto) out.gpuCpuShare = 'auto';
   return out;
 }
 
@@ -467,11 +480,15 @@ export function parseEvolveArgs(argv) {
     );
   }
 
+  const threadsN = values.threads !== undefined ? parseInt0(values.threads, 'threads') : defaultThreadCount();
   const opts = {
     ...numericOpts(values),
     seed: values.seed ?? DEFAULTS.seed,
-    threads: values.threads !== undefined ? parseInt0(values.threads, 'threads') : defaultThreadCount(),
+    threads: threadsN,
     profile: !!values.profile,
+    gpu: !values['cpu-only'] && (values.gpu || threadsN > 0), // the GPU is the default engine; --gpu is a no-op, --cpu-only opts out
+    cpuOnly: !!values['cpu-only'],
+    gpuFlag: !!values.gpu,
     seedFrom: values['seed-from'],
     forceFresh: !!values['force-fresh'],
     cup: values.cup ?? DEFAULTS.cup,
@@ -515,6 +532,8 @@ export function parseEvolveArgs(argv) {
       }
     }
   }
+  if (values.gpu && values['cpu-only']) throw usageError('--gpu and --cpu-only contradict each other', 'drop one; the GPU is the default engine');
+  if (values.gpu && !(opts.threads > 0)) throw usageError('--gpu requires --threads > 0', 'the CPU workers re-run rows the kernel flags; pass e.g. --threads 8, or --cpu-only');
   if (opts.sampledCombats && opts.hoeffdingRaces) {
     throw usageError('--sampled-combats and --hoeffding-races cannot be combined', 'drop one; sampled combats works with Halving on or off');
   }

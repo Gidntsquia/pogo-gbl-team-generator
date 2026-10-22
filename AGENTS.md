@@ -30,3 +30,15 @@ they don't say.
   restore the in-sim form rewrite, and results would then depend on worker/battle order. Same
   seed must give identical checkpoints at any `--threads`; check with two runs and diff the
   checkpoints ignoring timing fields.
+- `--gpu` timing: a GPU step's time is set by its slowest battles, not its battle count (3.9–11 s for
+  3,000–18,000 battles on the RTX 3080), so moving battles to the CPU never shortens it. Keep the CPU
+  share small (`auto`, ~95 a step); share 0.05 made 5 generations 84% slower. Every `--gpu` run writes
+  `<out-dir>/gpu-profile.json`; `node gpu/gpu-profile.mjs` renders it. GPU kernel changes are checked
+  with `cd gpu && uv run python -m gpu.verify_3v3` (100% winner, 0 flagged) and `gpu.verify_1v1`.
+- `--gpu` launch span equals the longest single battle (one thread per battle), so a work queue cannot shorten a launch;
+  only fewer/bigger launches or more parallelism per battle can (`out/gpu-gap.html`, `docs/gpu-viability.md` round 5).
+- cupy keeps freed device blocks per stream: a sidecar path that makes a new `cp.cuda.Stream` per launch and allocates
+  under it never reuses them, the pool grows every launch, and on this WSL box late generations then run up to 150x
+  slower (round 9 tail variant, fixed by one long-lived stream; `POGO_GPU_TAIL_MEMLOG=1` shows the pool per launch).
+- Once a pool reuses blocks, a `cp.empty` buffer holds old bytes: anything the host reads while a kernel may still be
+  writing it (early reads of a running grid) must be zeroed at allocation (`K._dz`) and its unwritten rows filtered.

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveStatusName, launchTime } from '../mcp/common.mjs';
 import {
-  parseHelpFlags, flagsToArgv, simShArgv, configToArgv, softStopDecision, buildStatus, parseLog, processTree, latestGen,
+  parseHelpFlags, engineOf, flagsToArgv, simShArgv, configToArgv, softStopDecision, buildStatus, parseLog, processTree, latestGen,
 } from '../mcp/lib.mjs';
 
 const HELP = `Options:
@@ -44,6 +44,14 @@ test('configToArgv rebuilds flags; absent halving means off', () => {
   for (const frag of ['--population 30', '--seed s', '--cup mega', '--ban x', '--meta-mode', '--snowball-weight 0.4', '--sampled-opponents 400', '--halving-rounds 0', '--final-fresh 20']) assert.ok(s.includes(frag), frag);
   assert.deepEqual(usedLaunch, ['final-fresh']);
   assert.ok(!configToArgv({ ...cfg, halvingRounds: 3, halvingKeep: 0.5 }).argv.join(' ').includes('--halving-rounds 0'));
+});
+
+test('engine: configToArgv adds --cpu-only for a CPU config, simShArgv passes cpuOnly, status names the engine', () => {
+  assert.ok(configToArgv({ csvPath: '/a.csv' }).argv.includes('--cpu-only'));
+  assert.ok(!configToArgv({ csvPath: '/a.csv', gpu: true }).argv.includes('--cpu-only'));
+  assert.ok(simShArgv({ csv: 'x.csv', cpuOnly: true }, 'standard', flags).includes('--cpu-only'));
+  assert.ok(!simShArgv({ csv: 'x.csv' }, 'standard', flags).includes('--cpu-only'));
+  assert.deepEqual([{ gpu: true }, {}, { gpu: true, engine: 'cpu-fallback' }].map((c) => engineOf(c)), ['gpu', 'cpu-only', 'cpu-fallback']);
 });
 
 test('soft-stop decision (fake clock = injected state)', () => {

@@ -223,6 +223,8 @@ export function buildRunConfig(csvPath, opts) {
     // candidate side draws from the whole ranked field, like the opponent
     // side. Part of the fingerprint.
     metaMode: !!opts.metaMode,
+    // --gpu routes batches through the CUDA sidecar (float32, not bit-identical to pvpoke); CPU share default 0 = DEFAULT_GPU_CPU_SHARE (round 6): only-when-on, so a CPU run's config is byte-identical to before and a resume with the switch flipped is refused.
+    ...(opts.gpu ? { gpu: true, gpuCpuShare: opts.gpuCpuShare ?? 0 } : {}),
     // Changes what a composed opponent's lead IS, not just a weighting --
     // resuming under a different value would silently regenerate every
     // future opponent with a different lead policy than the ones already in
@@ -362,14 +364,26 @@ export function buildRunConfig(csvPath, opts) {
  * matching too.
  */
 export function configsMatch(a, b) {
-  const strip = ({ eliteCount, ...rest }) => rest;
+  const strip = ({ eliteCount, engine, ...rest }) => rest; // engine: cpu-fallback is a record, not a fingerprint
   return JSON.stringify(strip(a ?? {})) === JSON.stringify(strip(b ?? {}));
+}
+
+/**
+ * One-line reason a stale checkpoint cannot be resumed because of the engine (GPU vs --cpu-only), else null.
+ * A checkpoint written with `gpu: true` (before or after the GPU became the default) resumes without any flag.
+ */
+export function engineMismatch(stale, current) {
+  if (!!stale?.gpu === !!current?.gpu) return null;
+  return stale?.gpu
+    ? 'was written by the GPU engine; drop --cpu-only to resume it (or --force-fresh to discard it)'
+    : 'was written by the CPU-only engine; pass --cpu-only to resume it (or --force-fresh to discard it)';
 }
 
 /** Which config keys differ between a stale checkpoint and this run, for a resume-refusal error message. */
 export function describeConfigMismatch(stale, current) {
   const keys = new Set([...Object.keys(stale ?? {}), ...Object.keys(current ?? {})]);
   keys.delete('eliteCount');
+  keys.delete('engine');
   const diffs = [];
   for (const key of keys) {
     const a = (stale ?? {})[key];

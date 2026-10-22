@@ -1,0 +1,59 @@
+{
+  "gpuDirs": [
+    "out/evolve-gpu8-r12-fit-gpu"
+  ],
+  "cpuDirs": [
+    "out/evolve-gpu8-r12-fit-cpu"
+  ],
+  "model": {
+    "gpuFixedS": 0.58,
+    "gpuPerBattleS": 0,
+    "cpuFixedS": 0.46,
+    "cpuBps": 21.3
+  },
+  "gpuFit": {
+    "a": 0.3385109687580665,
+    "b": 0.00034763853019252887,
+    "r2": 0.9837923454727444,
+    "n": 22
+  },
+  "cpuFit": {
+    "a": 0.46070318318829884,
+    "b": 0.04690218733753602,
+    "r2": 0.986187016451246,
+    "n": 22
+  },
+  "gpuQuartiles": [
+    1.4950422269999981,
+    1.756424512000005,
+    2.8057291859999967
+  ],
+  "preview": [
+    {
+      "n": 3000,
+      "cpu": 2,
+      "share": 0.0007
+    },
+    {
+      "n": 4500,
+      "cpu": 2,
+      "share": 0.0004
+    },
+    {
+      "n": 9000,
+      "cpu": 2,
+      "share": 0.0002
+    },
+    {
+      "n": 12000,
+      "cpu": 2,
+      "share": 0.0002
+    },
+    {
+      "n": 18000,
+      "cpu": 2,
+      "share": 0.0001
+    }
+  ],
+  "note": "GPU (out/evolve-gpu8-r12-fit-gpu, gens 1+, 22 steps): step time vs battles r2 0.98 (slope 0.348 ms/battle), quartiles 1.5 / 1.8 / 2.8 s, so the model is flat at the shortest step 0.58 s. CPU (out/evolve-gpu8-r12-fit-cpu, 22 steps): 0.46 s + battles / 21.3 b/s beside the GPU (r2 0.99; through 0: 20.7 b/s). Auto share: 3,000 -> 2 (0.1%), 4,500 -> 2 (0.0%), 9,000 -> 2 (0.0%), 12,000 -> 2 (0.0%), 18,000 -> 2 (0.0%)."
+}

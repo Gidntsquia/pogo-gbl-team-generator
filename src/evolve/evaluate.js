@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { teamBuildCost } from '../cost/powerup.js';
 import { battleTeams } from '../engine/teamBattle.js';
 import { computeSharedWeaknessScore } from '../teams/typeCoverage.js';
@@ -105,6 +106,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
   const cache = params.cache ?? createNullBattleCache();
   const threaded = !!executor;
   const startedAt = Date.now();
+  const tPlan0 = performance.now(); // --gpu profile only (executor.noteEval); never feeds a result
   let battleCount = 0;
   let cachedCount = 0;
   let errorCount = 0;
@@ -142,8 +144,10 @@ export async function evaluateTeamsInOrder(ctx, params) {
   const pendingSpecs = [];
   const pendingBattles = []; // serial-mode inputs, parallel to pendingSpecs
   const queued = new Set();
+  let memoHits = 0; // distinct pairings answered by the memo (reported by the GPU executor's step log)
   function enqueue(key, teamASpec, leadA, teamBSpec, leadB, teamAPokemon, teamBPokemon) {
-    if (cache.get(key) !== undefined || queued.has(key)) return;
+    if (queued.has(key)) return;
+    if (cache.get(key) !== undefined) { memoHits += 1; queued.add(key); return; }
     queued.add(key);
     pendingKeys.push(key);
     pendingSpecs.push({ teamA: teamASpec, teamB: teamBSpec, leadA, leadB, difficulty });
@@ -164,15 +168,52 @@ export async function evaluateTeamsInOrder(ctx, params) {
     }
   }
 
+  /** Round 9 study (certain tier): per planned pairing [team, opp, fwd fresh idx | -1, rev fresh idx | -1, memo wp/ex x2]. */
+  function planRecord() {
+    const fresh = new Map(pendingKeys.map((k, i) => [k, i]));
+    const view = (v, mirror) => {
+      const r = mirror ? mirrorBattleResult(v) : v;
+      const e = leadExchangeLoser(r.summary);
+      return [r.winner === 'a' ? 1 : r.winner === 'tie' ? 0.5 : 0, e === 'b' ? 1 : e === 'a' ? -1 : 0];
+    };
+    const plan = [];
+    let c = 0;
+    prepared.forEach(({ oppPlans }, t) => {
+      for (const { oppIndex, pairings } of oppPlans) {
+        for (let q = 0; q < pairings.length; q++) {
+          const { fwdKey, revKey } = planKeys[c++];
+          const fi = fresh.has(fwdKey) ? fresh.get(fwdKey) : -1, vi = fresh.has(revKey) ? fresh.get(revKey) : -1;
+          const fv = fi < 0 ? cache.get(fwdKey) : undefined, rv = vi < 0 ? cache.get(revKey) : undefined;
+          const [fwp, fex] = fv !== undefined ? view(fv, false) : [0, 0];
+          const [vwp, vex] = rv !== undefined ? view(rv, true) : [0, 0];
+          plan.push([t, oppIndex, fi, vi, fwp, fex, vwp, vex]);
+        }
+      }
+    });
+    return {
+      plan, nTeams: teams.length, nOpp: opponents.length, gamma: opponentStrengthGamma,
+      weights: { snowball: snowballWeight, closer: closerWeight, consistency: consistencyWeight, sharedWeakness: sharedWeaknessWeight },
+      oppWeights: opponentWeights ? opponents.map((_, j) => opponentWeights[j] ?? 1) : null,
+      oppGroups: opponentArchetypeGroups ? opponents.map((_, j) => opponentArchetypeGroups[j] ?? null) : null,
+      closer: prepared.map(({ members }) => computeCloserScore(members, roleScores)),
+      shared: prepared.map(({ members }) => (typeCoverageContext ? computeSharedWeaknessScore(members, typeCoverageContext).score : null)),
+    };
+  }
+
   // ---- (2) run only the distinct, uncached pairings -----------------------
   /** @type {Map<string, {ok:true, value:object}|{ok:false, message:string}>} */
   const outcomes = new Map();
+  const planMs = performance.now() - tPlan0;
+  let ranStep = false;
   if (threaded) {
     let slots = [];
     if (pendingSpecs.length > 0) {
       try {
+        executor.noteMemoHits?.(memoHits);
+        ranStep = true;
         slots = await executor.run(pendingSpecs);
       } catch (err) {
+        if (err.gpuFatal) throw err; // GPU sidecar failure: stop the run (last checkpoint stays valid), never score it as battle errors
         onLog?.(`battle batch error (whole generation's ${pendingSpecs.length} battles skipped): ${err.message}`);
         slots = new Array(pendingSpecs.length).fill({ ok: false, error: { message: err.message } });
       }
@@ -206,6 +247,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
   }
 
   // ---- (3) accumulate --------------------------------------------------
+  const tAcc0 = performance.now();
   const opponentTally = opponents.map(() => ({
     winPoints: 0, battles: 0, weightedWinPoints: 0, weightedBattles: 0, exchangeWon: 0, exchangeLost: 0,
   }));
@@ -551,6 +593,7 @@ export async function evaluateTeamsInOrder(ctx, params) {
 
     results.push(entry); // positional -- NOT sorted
   }
+  executor?.noteEval?.({ planMs, accumulateMs: performance.now() - tAcc0, ranStep, memoHits });
 
   return {
     results,

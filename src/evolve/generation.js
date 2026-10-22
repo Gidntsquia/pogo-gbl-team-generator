@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { archetypeGroups, archetypeWeights } from '../meta/archetypes.js';
 import { trailingFitnessGeneric } from '../ga/core.js';
 import { nextOpponentPool, isProtectedOpponent, serializeOpponentPool } from '../meta/opponentPool.js';
@@ -23,6 +24,7 @@ import {
 } from './analytics.js';
 import { evaluateTeamsInOrder } from './evaluate.js';
 import { evaluateWithHalving } from './halving.js';
+import { islandPrepass } from './islandHalving.js';
 import { evaluateWithHoeffding } from './hoeffding.js';
 import { evaluateWithSampling } from './sampled.js';
 import { trimHistory, trimSupersededRecords } from './state.js';
@@ -147,6 +149,9 @@ export async function runGeneration(env, state) {
     typeCoverageContext, battleCache,
   } = env;
   const { generation, population, history, opponentHistory, generationRecords } = state;
+  const prof = env.gpuProfile ?? null; // --gpu time attribution (gpu-profile.json); timing only
+  const tGen0 = performance.now();
+  prof?.beginGen(generation);
   const opponents = state.opponentPool;
   const curatedInPool = opponents.filter(isProtectedOpponent).length;
   // Archetype grouping over THIS generation's opponents: crowded bred cores
@@ -193,6 +198,7 @@ export async function runGeneration(env, state) {
   const halvingOpts = config.halvingRounds
     ? { rounds: config.halvingRounds, keep: config.halvingKeep, seed: `${config.seed}-gen${generation}`, fitnessOf }
     : null;
+  const tEval0 = performance.now();
   const run = config.sampledCombats || config.sampledOpponents
     ? await evaluateWithSampling(env.ctx, evaluateParams, {
         fraction: config.sampledCombats,
@@ -214,8 +220,10 @@ export async function runGeneration(env, state) {
           keep: config.halvingKeep,
           seed: `${config.seed}-gen${generation}`,
           fitnessOf,
+          prepass: islandPrepass(evaluateParams, `${config.seed}-gen${generation}`) ?? undefined,
         })
       : await evaluateTeamsInOrder(env.ctx, evaluateParams);
+  const tEval1 = performance.now();
   // Both fitness numbers are computed on every result; the mode only picks
   // which one selection/mutation/convergence act on.
   const fitness = run.results.map(fitnessOf);
@@ -304,10 +312,13 @@ export async function runGeneration(env, state) {
     },
     resumed: false,
   };
+  const tCk0 = performance.now();
   writeCheckpoint(outDir, generation, record);
+  const tCk1 = performance.now();
   generationRecords.push(record);
   trimSupersededRecords(generationRecords);
   writeGenerationsAnalytics(outDir, generationRecords);
+  const tRep1 = performance.now();
   state.lastEvaluated = record;
   const workerStatsMsg = executor && profileDir ? await workerStatsSuffix(executor) : '';
   log(
@@ -324,6 +335,10 @@ export async function runGeneration(env, state) {
         : '')
   );
 
+  prof?.endGen({
+    wall: (performance.now() - tGen0) / 1000,
+    ga: (tCk0 - tEval1 + tEval0 - tGen0) / 1000, checkpoint: (tCk1 - tCk0) / 1000, report: (performance.now() - tCk1) / 1000,
+  });
   const conv = hasConverged(history, config.convergence ?? {});
   state.generation += 1;
   if (conv.converged) {

@@ -147,7 +147,7 @@ export const commonShape = {
   ban: z.array(z.string()).optional(),
   hours: z.number().optional(), threads: z.number().optional(),
   generations: z.number().optional(), population: z.number().optional(),
-  quick: z.boolean().optional(),
+  quick: z.boolean().optional(), cpuOnly: z.boolean().optional(),
   dry_run: z.boolean().optional(), extra: extraSchema,
 };
 

@@ -1,10 +1,24 @@
+import { performance } from 'node:perf_hooks';
 import { createExecutor } from '../engine/parallel.js';
+import { createGpuProfile } from './gpuProfile.js';
 import { runFinalPass } from './finalPass.js';
 import { buildEvolveSetup } from './setup.js';
 import { initRunState } from './state.js';
 import { runGeneration } from './generation.js';
 import { buildResult, closeExecutor, writeOutputs } from './output.js';
 import { saveBattleCacheFile } from './cache.js';
+import { startGpuEngine } from './engine.js';
+
+/** One startup line under --gpu: device name, memory, batch limit, cpu share. */
+async function gpuStartupLine(share) {
+  const { execFileSync } = await import('node:child_process');
+  const { GPU_BATCH_LIMIT } = await import('../engine/gpuExecutor.js');
+  let dev = 'CUDA device';
+  try {
+    dev = execFileSync('nvidia-smi', ['--query-gpu=name,memory.total', '--format=csv,noheader'], { encoding: 'utf8' }).split('\n')[0].trim();
+  } catch { /* name unavailable; the sidecar already proved a device exists */ }
+  return `evolve: gpu on -- ${dev}, batch limit ${GPU_BATCH_LIMIT} battles per message (sidecar halves on out-of-memory), cpu share ${share}`;
+}
 
 /**
  * Run (or resume) the whole search on one collection: setup, generation loop,
@@ -15,14 +29,33 @@ import { saveBattleCacheFile } from './cache.js';
  * @returns {Promise<object>} the `result` the reports were rendered from.
  */
 export async function runEvolution(csvPath, opts = {}) {
+  const tSetup0 = performance.now();
   const setup = await buildEvolveSetup(csvPath, opts);
+  const setupS = (performance.now() - tSetup0) / 1000;
   const { config, outDir, log, threads, deadlineMs, ctx, battleCache } = setup;
   const threaded = typeof threads === 'number' && threads > 0;
   const profileDir = opts.profile ? outDir : undefined;
-  const executor = threaded
+  const cpuExecutor = threaded
     ? createExecutor({ threads, vendorRoot: ctx.vendorRoot, continueOnError: true, profileDir, cp: ctx.cp, cup: ctx.cup })
     : null;
-  const env = { ...setup, opts, threaded, executor, profileDir };
+  let executor = cpuExecutor;
+  let gpuProfile = null;
+  if (opts.gpuFlag) log('gpu: --gpu is the default');
+  if (opts.gpu) {
+    const tSc0 = performance.now();
+    const { createGpuExecutor, GPU_BATCH_LIMIT } = await import('../engine/gpuExecutor.js');
+    gpuProfile = createGpuProfile(outDir, { cpuShare: config.gpuCpuShare, batchLimit: GPU_BATCH_LIMIT, threads });
+    gpuProfile.setPhase('setup', setupS);
+    const started = await startGpuEngine({ create: createGpuExecutor, ctx, cpuExecutor, config, log, profile: gpuProfile });
+    if (started.executor) {
+      executor = started.executor;
+      log(await gpuStartupLine(config.gpuCpuShare));
+      gpuProfile.setPhase('sidecarStart', (performance.now() - tSc0) / 1000);
+    } else {
+      gpuProfile = null; // nothing ran on the GPU: no gpu-profile.json
+    }
+  }
+  const env = { ...setup, opts, threaded, executor, profileDir, gpuProfile };
 
   try {
     const state = initRunState(env);
@@ -45,7 +78,11 @@ export async function runEvolution(csvPath, opts = {}) {
     }
 
     const diskHitsInGenerations = battleCache.stats().diskHits ?? 0;
+    gpuProfile?.beginGen('final');
+    const tFin0 = performance.now();
     const fin = await runFinalPass(env, state);
+    gpuProfile?.setPhase('finalPass', (performance.now() - tFin0) / 1000);
+    const tOut0 = performance.now();
     const cacheStats = battleCache.stats();
     if (cacheStats.hits + cacheStats.misses > 0) {
       log(
@@ -62,6 +99,7 @@ export async function runEvolution(csvPath, opts = {}) {
     const result = buildResult(env, state, csvPath, fin);
     if (opts.battleCacheFile) result.battleCacheStats.diskHitsInGenerations = diskHitsInGenerations;
     writeOutputs(env, result);
+    if (gpuProfile) { gpuProfile.setPhase('outputs', (performance.now() - tOut0) / 1000); gpuProfile.write(); }
     return result;
   } finally {
     if (executor) await closeExecutor(executor, profileDir, log);

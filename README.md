@@ -41,6 +41,7 @@ scripts/sim.sh your-collection.csv --name mine --threads 4 --hours 1
 
 The report is written to `out/evolve-mine/my-teams-evolve.md` and `.html`.
 `fixtures/sample-pokegenie.csv` is a small collection for trying it out.
+With an NVIDIA GPU and `uv`, battles run on the GPU by default; `--cpu-only` runs them on the CPU workers only (see RUNBOOK.md and the wiki page GPU).
 
 Other commands:
 ```

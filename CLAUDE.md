@@ -29,7 +29,7 @@ rank → 3v3-battle them against an evolving opponent pool (both sides run a GA)
   `curl -s "https://raw.githubusercontent.com/wiki/Gidntsquia/pogo-gbl-team-generator/<Page>.md"`
   (pages: Running-the-CLI, How-Scoring-Works, Build-Costs-and-Evolutions,
   Evolutionary-Team-Search, Shared-Collections, Development-and-Tests,
-  MCP-Server, MCP-Server-Token-Costs).
+  MCP-Server, MCP-Server-Token-Costs, GPU, GPU-Experiments).
 
 ### Invariants
 
