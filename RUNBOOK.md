@@ -146,6 +146,7 @@ Flags and variables (all optional):
 - `POGO_GPU_STUDY=cap` + `POGO_GPU_CAP=N` (opt-in, off by default): bounds the lookahead pool; 192 is the measured value
   that passed the agreement gate; it can change winners. Each launch logs `gpu cap -- N of M battles hit the pool cap C`.
 - `POGO_GPU_CPU_BELOW=N` (experimental, off): steps with fewer than N battles run on the CPU workers.
+- `POGO_GPU_RERUN=after` (experimental, off): hold flagged rows until every launch of a step returned, then re-run them on the CPU workers. Default re-runs them beside the next launch. 30-gen A/B: no gain (docs Round 12, "Host overlap").
 - Removed in round 12: `POGO_GPU_STUDY=lean|stack|occ|tail` and `POGO_GPU_LEAN` (setting one logs `gpu: POGO_GPU_... is gone,
   lean 6 is the kernel`). Earlier width/kernel/scheduler variables (`POGO_GPU_KERNEL`, `POGO_GPU_WIDTH`, `POGO_GPU_ISLAND`,
   `POGO_GPU_STREAMS`, ...) are unchanged and documented, with every measurement, in `docs/gpu-viability.md`.

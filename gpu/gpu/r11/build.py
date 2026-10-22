@@ -40,7 +40,7 @@ def j11(p, default=None):
 
 
 def sessions():
-    rs = [r for r in S10.runs() if r["session"] in ("s2", "s3", "s4") and r["complete"]]  # round 12 sessions (s5, s6, ...) live in gpu/gpu/r12
+    rs = [r for r in S10.runs() if r["session"] in ("s2", "s3", "s4", "s8") and r["complete"]]  # round 12 sessions (s5, s6, s7, ...) live in gpu/gpu/r12
     out = {}
     for r in rs:
         out.setdefault(r["session"], {}).setdefault(r["variant"], []).append(r)

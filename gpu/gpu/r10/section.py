@@ -87,7 +87,7 @@ def full100(L):
 
 
 def ab30(L):
-    rs = [r for r in runs() if r["session"] not in (None, "full", "s2", "s3", "s4", "s5", "s6", "s7") and r["complete"]]
+    rs = [r for r in runs() if r["session"] not in (None, "full", "s2", "s3", "s4", "s5", "s6", "s7", "s8") and r["complete"]]
     out = {}
     cap = tload("cap-value.txt").strip() or "?"
     for s in sorted({r["session"] for r in rs}):

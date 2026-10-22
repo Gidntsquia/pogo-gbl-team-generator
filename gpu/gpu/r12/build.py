@@ -20,7 +20,7 @@ O12 = os.path.join(R, "out/gpu/r12")
 DOC = S10.DOC
 HEAD = "## Round 12: lean 6 as the only kernel, GPU by default, 100-gen run, CPU split"
 LABEL = {"default": "share 0 (default)", "auto": "share auto (refit)", "share05": "share 0.05", "share10": "share 0.10",
-         "below500": "CPU below 500", "below2000": "CPU below 2000"}
+         "below500": "CPU below 500", "below2000": "CPU below 2000", "rerunafter": "flagged rows re-run after the launches (serial)"}
 ORDER = list(LABEL)
 
 
@@ -34,17 +34,17 @@ def j12(p, d=None):
     return json.load(open(p)) if os.path.exists(p) else d
 
 
-def s6():
+def s6(sess="s6"):
     out = {}
     for r in S10.runs():
-        if r["session"] == "s6" and r["complete"]:
+        if r["session"] == sess and r["complete"]:
             out.setdefault(r["variant"], []).append(r)
     return out
 
 
-def proof(v, n):
-    t = t12("det-s6.txt")
-    same = len(re.findall(rf"^r10-s6-{v}-\d vs r10-s6-default-\d: IDENTICAL", t, re.M))
+def proof(v, n, sess="s6"):
+    t = t12(f"det-{sess}.txt")
+    same = len(re.findall(rf"^r10-{sess}-{v}-\d vs r10-{sess}-default-\d: IDENTICAL", t, re.M))
     s = f"{same}/{n} runs 30/30 identical"
     fin = j12("finalists-s6.json")
     if same < n and fin:
@@ -71,6 +71,23 @@ def section_100(L):
                  f"{ids}/2 round 10 default runs: 100/100 identical |")
 
 
+def table(L, sess, what, only=None):
+    by = s6(sess)
+    dv = [r["warm_s_per_gen"] for r in sorted(by.get("default", []), key=lambda r: r["pass"])]
+    if len(dv) < 3:
+        return
+    first = min((r for v in by.values() for r in v), key=lambda r: r["start_epoch"])
+    L.append(f"Session {sess}, start {S10.et(first['start_et'])}, 3 passes, each pass the {what}:")
+    L.append("| variant | warm s/gen, runs | mean | spread | vs default | verdict | proof | run starts ET |")
+    L.append("|---|---|---|---|---|---|---|---|")
+    for v in [x for x in ORDER if x in by]:
+        rr = sorted(by[v], key=lambda r: r["pass"])
+        vals = [r["warm_s_per_gen"] for r in rr]
+        vd, gain = ("-", None) if v == "default" else B11.verdict_row(vals, dv)
+        L.append(f"| {LABEL[v]} | {' / '.join(f'{x:.2f}' for x in vals)} | {S10.mean(vals):.2f} | {S10.spread(vals):.2f} | {'-' if gain is None else f'{-gain:+.2f}'} | "
+                 f"{vd} | {'-' if v == 'default' else proof(v, len(rr), sess)} | {', '.join(S10.et(r['start_et'])[:5] for r in rr)} |")
+
+
 def build():
     px = S10.jload("ptxas.json", {}) or json.load(open(os.path.join(O12, "ptxas.json")))
     p = px["lean6"]
@@ -94,24 +111,14 @@ def build():
     L.append("### CPU share (R10)")
     L.append("`node gpu/fit-share.mjs` on two 8-gen lean 6 runs (share 0.01 for the GPU side, 0.05 for the CPU side; `gpu/gpu/r12/fitdata/`): "
              + dec.get("fit", "see fitdata") + "")
-    by = s6()
-    dv = [r["warm_s_per_gen"] for r in sorted(by.get("default", []), key=lambda r: r["pass"])]
-    if len(dv) >= 3:
-        first = min((r for v in by.values() for r in v), key=lambda r: r["start_epoch"])
-        L.append(f"Session s6, start {S10.et(first['start_et'])}, 3 passes, each pass the share-0 default then the variants:")
-        L.append("| variant | warm s/gen, runs | mean | spread | vs default | verdict | proof | run starts ET |")
-        L.append("|---|---|---|---|---|---|---|---|")
-        for v in [x for x in ORDER if x in by]:
-            rr = sorted(by[v], key=lambda r: r["pass"])
-            vals = [r["warm_s_per_gen"] for r in rr]
-            vd, gain = ("-", None) if v == "default" else B11.verdict_row(vals, dv)
-            L.append(f"| {LABEL[v]} | {' / '.join(f'{x:.2f}' for x in vals)} | {S10.mean(vals):.2f} | {S10.spread(vals):.2f} | {'-' if gain is None else f'{-gain:+.2f}'} | "
-                     f"{vd} | {'-' if v == 'default' else proof(v, len(rr))} | {', '.join(S10.et(r['start_et'])[:5] for r in rr)} |")
+    table(L, "s6", "share-0 default then the variants")
     L.append("")
     L.append("### Host overlap (R11)")
     for k in ("overlap_a", "overlap_b", "overlap_c"):
         if k in dec:
             L.append("- " + dec[k])
+        if k == "overlap_a":
+            table(L, "s7", "default then POGO_GPU_RERUN=after")
     L.append("")
     L.append("### Nsight Compute, lean 6 (standard) and lean 6 + cap192 (`out/gpu/r10/ncu/summary.json`)")
     nc = S10.jload("ncu/summary.json", {})

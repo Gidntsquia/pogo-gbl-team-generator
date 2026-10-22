@@ -48,7 +48,7 @@ def main():
             want = "wins" if gain > (max(defs) - min(defs)) else "no gain"
             m = re.search(rf"^\| {v} \|.*\| (wins|no gain) \|$", built, re.M)
             check(m is not None and m.group(1) == want, f"100-gen verdict for {v} is '{want}' (gain {gain:+.3f}, default spread {max(defs) - min(defs):.3f})")
-    sess = sorted({r["session"] for r in runs.values() if r["session"] not in (None, "full", "s2", "s3", "s4", "s5", "s6", "s7")})
+    sess = sorted({r["session"] for r in runs.values() if r["session"] not in (None, "full", "s2", "s3", "s4", "s5", "s6", "s7", "s8")})
     check(bool(sess), "a 30-gen A/B session exists")
     for s in sess:
         by = {}

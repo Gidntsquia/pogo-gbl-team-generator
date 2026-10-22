@@ -37,6 +37,12 @@ export const GPU_RATE_MODEL = { gpuFixedS: 0.58, gpuPerBattleS: 0, cpuFixedS: 0.
  * ~0.2% of winners (the agreement gate applies).
  */
 export const GPU_CPU_BELOW = Math.max(0, Number.parseInt(process.env.POGO_GPU_CPU_BELOW ?? '0', 10) || 0);
+/**
+ * EXPERIMENTAL (round 12 R11a, off by default): POGO_GPU_RERUN=after holds flagged rows until every launch of the step has
+ * returned and only then re-runs them on the CPU workers (the serial version). Default re-runs each launch's flagged rows
+ * while the next launch is in flight. Same results either way; it exists to A/B the overlap.
+ */
+export const GPU_RERUN_AFTER = process.env.POGO_GPU_RERUN === 'after';
 /** Battles per sidecar message (the sidecar also splits on its own if GPU memory runs out). */
 export const GPU_BATCH_LIMIT = 36000;
 /**
@@ -215,7 +221,9 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
       const cpuP = cpuI.length ? cpuExecutor.run(cpuI.map((i) => specs[i])).then((r) => { cpuDone = performance.now(); return r; }) : Promise.resolve([]);
       // flagged rows of a launch: queued on the CPU executor right away (behind the CPU share), awaited at the end
       let flaggedDone = t0;
-      const rerun = (ks) => cpuExecutor.run(ks.map((k) => specs[gpuI[k]])).then((r) => { flaggedDone = performance.now(); return { ks, r }; });
+      const rerunNow = (ks) => cpuExecutor.run(ks.map((k) => specs[gpuI[k]])).then((r) => { flaggedDone = performance.now(); return { ks, r }; });
+      const held = [];
+      const rerun = GPU_RERUN_AFTER ? (ks) => new Promise((res, rej) => held.push({ ks, res, rej })) : rerunNow;
       let g;
       try {
         g = gpuI.length ? await runGpu(gpuI.map((i) => specs[i]), rerun) : { results: [], flaggedIdx: [], reruns: [], launches: [], mapMs: 0, ms: 0 };
@@ -224,6 +232,7 @@ export async function createGpuExecutor({ ctx, cpuExecutor, cpuShare = DEFAULT_G
         throw gpuError(err);
       }
       const gpuDone = performance.now();
+      for (const h of held) rerunNow(h.ks).then(h.res, h.rej);
       const cpuSlots = await cpuP;
       const cpuShareDone = performance.now();
       const reruns = await Promise.all(g.reruns);

@@ -512,6 +512,11 @@ Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed)
 | default | 9.24 / 9.54 / 9.58 | 9.46 | 0.34 | - | - | 28/36 | - | 16:00, 16:15, 16:29 |
 | lean 1 | 8.89 / 9.07 / 9.31 | 9.09 | 0.43 | -0.37 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:05, 16:20, 16:34 |
 | lean 2q | 7.99 / 8.26 / 8.81 | 8.35 | 0.82 | -1.11 | insufficient: 3 runs, needs 3 more | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:10, 16:25, 16:39 |
+### 30-gen session s8: start 16:00 EDT, passes interleaved, each pass default then the variants, same seed
+| variant | warm s/gen, runs | mean | spread | vs default | verdict | spill st/ld B | proof | run starts ET |
+|---|---|---|---|---|---|---|---|---|
+| default | 9.91 / 9.94 / 9.84 | 9.90 | 0.10 | - | - | 28/36 | - | 16:00, 16:19, 16:29 |
+| lean 2q | 9.15 / 9.01 / 9.30 | 9.15 | 0.29 | -0.75 | wins | 0/0 | 3/3 runs 30/30 identical; verify 100.00% / 0 flagged | 16:10, 16:24, 16:35 |
 
 ### Nsight Compute (`out/gpu/r10/ncu/summary.json`; 5k = batch 7, 10k = batch 6; base clocks, kernel replay)
 | launch | variant | kernel s | occupancy | long_scoreboard | top stall | local GB | issue-slot use |
@@ -539,7 +544,7 @@ Branch `gpu`, 2026-10-21. Numbers come only from `out/gpu/r10/runs.json` (speed)
 | 10k | stack | 10.92 | 15.4% | 42% | long_scoreboard 42% | 1906 | 13.3% |
 | 10k | leancap | 6.65 | 15.8% | 32% | no_instruction 32% | 1747 | 13.7% |
 
-Unresolved at the end of the budget: lean 1 (session s2: insufficient: 3 runs, needs 3 more; session s4: insufficient: 3 runs, needs 3 more); lean 2q (session s2: insufficient: 3 runs, needs 3 more; session s4: insufficient: 3 runs, needs 3 more)
+Unresolved at the end of the budget: lean 1 (session s2: insufficient: 3 runs, needs 3 more; session s4: insufficient: 3 runs, needs 3 more)
 
 ### Top 3 ideas to implement (ranked by s/gen saved; a 100-gen run is the 30-gen mean x 100)
 1. **lean 6**: saves 3.11 s/gen (mean 6.50, spread 0.14 vs default 9.61, spread 0.20, session s3) = 5.2 min per 100-gen run. Proof: 3/3 runs 30/30 identical; verify 100.00% / 0 flagged. Change: make LEAN_STEPS "6" (compact2 fields, binary-search queue, turn-keyed int queue, noinline cold helpers) the kernel the standard run builds, via POGO_GPU_STUDY=lean POGO_GPU_LEAN=6 becoming the default in gpu/gpu/study/lean/variant.py and the run wrapper. Targets long_scoreboard: the turn is read from the key, so no dependent pool load per queue slot. Interacts: Supersedes lean 3 and lean 5; spills 48/76 B like lean 3. Cap can sit on top (untested with step 6).
@@ -577,7 +582,12 @@ Session s6, start 03:20 EDT, 3 passes, each pass the share-0 default then the va
 | CPU below 2000 | 29.81 / 35.74 / 25.50 | 30.35 | 10.24 | +23.94 | no gain | 0/3 runs 30/30 identical | 04:28, 06:03, 07:51 |
 
 ### Host overlap (R11)
-- (a) rerun of flagged rows overlapped with the next launch: already how the executor works (flagged rows go to the CPU workers as soon as a launch returns, while the next launch runs), so there is no serial version left to compare against; no change, no A/B.
+- (a) flagged rows re-run while the next launch is in flight: this is the executor's default; flag `POGO_GPU_RERUN=after` (added in round 12) holds them until every launch returned, the serial version. The standard run flags 0 rows (`0 flagged re-runs` in every s7 log), so the overlap has nothing to hide; A/B below.
+Session s7, start 15:38 EDT, 3 passes, each pass the default then POGO_GPU_RERUN=after:
+| variant | warm s/gen, runs | mean | spread | vs default | verdict | proof | run starts ET |
+|---|---|---|---|---|---|---|---|
+| share 0 (default) | 6.20 / 6.48 / 6.92 | 6.53 | 0.71 | - | - | - | 15:38, 15:45, 15:52 |
+| flagged rows re-run after the launches (serial) | 6.36 / 6.68 / 7.01 | 6.68 | 0.65 | +0.15 | no gain | 3/3 runs 30/30 identical | 15:41, 15:48, 15:56 |
 - (b) host packing overlapped with the launch: cut, no time left to build and A/B it before the deadline; stays as it is.
 - (c) POGO_GPU_CPU_BELOW=500 or 2000 (steps with fewer battles run only on the CPU): 500 is insufficient (+0.09 s/gen inside the spreads), 2000 is 24 s/gen slower; both stay off (env variable, default off).
 
@@ -590,6 +600,6 @@ Session s6, start 03:20 EDT, 3 passes, each pass the share-0 default then the va
 | 10k | lean6cap | 5.05 | 15.9% | 36% | 1690 | 16.5% |
 
 ### What became default (R12)
-- nothing besides lean 6 and the GPU engine; share 0.05, share 0.10, share auto and CPU-below 2000 are slower (no gain), CPU-below 500 is insufficient, so every share and overlap candidate stays off with its flag documented.
+- nothing besides lean 6 and the GPU engine; share 0.05, share 0.10, share auto, CPU-below 2000 and the serial re-run are not faster (no gain), CPU-below 500 is insufficient, so every share and overlap candidate stays off with its flag documented (the re-run overlap stays on, it is the default).
 
 Glossary: **share** = the fraction of each step's battles the CPU workers run beside the GPU (`--gpu-cpu-share`); **stack**, **occ**, **lean**, **cap**, **spill** as in Round 11.
